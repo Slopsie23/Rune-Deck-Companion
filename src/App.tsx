@@ -3049,12 +3049,12 @@ function JudgeView() {
 
   return (
     <div className="flex-1 flex flex-col h-full max-w-4xl mx-auto w-full p-2 sm:p-4 overflow-visible relative group/ruxa">
-      {/* Peeking Ruxa effect */}
-      <div className="absolute -left-16 bottom-24 w-32 h-32 pointer-events-none z-0 hidden lg:block opacity-40 group-hover/ruxa:opacity-100 transition-opacity duration-1000">
+      {/* Peeking Ruxa effect - Moved further left and made more visible */}
+      <div className="absolute -left-96 bottom-0 w-[600px] h-full pointer-events-none z-0 hidden lg:block opacity-30 group-hover/ruxa:opacity-100 transition-all duration-1000 transform -translate-x-10 group-hover/ruxa:translate-x-0">
         <img 
           src="/ruxa.png" 
           alt="Peeking Ruxa" 
-          className="w-full h-full object-contain -rotate-12 scale-x-[-1]" 
+          className="w-full h-full object-contain -rotate-6 scale-x-[-1]" 
           onError={(e) => (e.currentTarget.style.display = 'none')}
         />
       </div>
@@ -3162,7 +3162,7 @@ function JudgeView() {
                 onChange={(e) => setInput(e.target.value)}
                 placeholder="Stel een regelsvraag aan Ruxa..."
                 disabled={isProcessing || waitingForSelection}
-                className="flex-1 bg-green-500/[0.03] border border-green-500/10 rounded-2xl px-6 py-4 text-xs font-sans text-green-100 placeholder:text-green-500/20 outline-none focus:border-green-500/40 focus:bg-green-500/[0.05] transition-all disabled:opacity-50"
+                className="flex-1 bg-green-500/[0.03] border border-green-500/10 rounded-2xl px-6 py-4 text-base sm:text-xs font-sans text-green-100 placeholder:text-green-500/20 outline-none focus:border-green-500/40 focus:bg-green-500/[0.05] transition-all disabled:opacity-50"
               />
               <button 
                 type="submit"
