@@ -42,7 +42,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
-import logo from './rune_bear.png';
+import { logoSvg as logo } from './logo';
 
 import { 
   ORANGE_ACCENT, 
