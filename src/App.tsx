@@ -91,7 +91,17 @@ const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let ai: GoogleGenAI | null = null;
+try {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (apiKey) {
+    ai = new GoogleGenAI({ apiKey });
+  } else {
+    console.warn("GEMINI_API_KEY is mist. AI functies zullen niet werken tenzij je dit instelt als environment variable.");
+  }
+} catch (e) {
+  console.error("Fout bij het initialiseren van Gemini AI:", e);
+}
 
 const BearIcon = PawPrint;
 
@@ -808,6 +818,10 @@ Rules for tags:
 
 Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
+      if (!ai) {
+        showMessage("Je moet een Gemini API Key instellen in Vercel om deze AI functie te gebruiken.", "error");
+        return;
+      }
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: prompt,
