@@ -3048,8 +3048,18 @@ function JudgeView() {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full max-w-4xl mx-auto w-full p-2 sm:p-4 overflow-hidden">
-      <div className="rune-panel flex-1 flex flex-col rounded-[2.5rem] overflow-hidden border-green-500/10 shadow-[0_0_50px_rgba(16,185,129,0.05)] bg-[#020402]/80 backdrop-blur-xl">
+    <div className="flex-1 flex flex-col h-full max-w-4xl mx-auto w-full p-2 sm:p-4 overflow-visible relative group/ruxa">
+      {/* Peeking Ruxa effect */}
+      <div className="absolute -left-16 bottom-24 w-32 h-32 pointer-events-none z-0 hidden lg:block opacity-40 group-hover/ruxa:opacity-100 transition-opacity duration-1000">
+        <img 
+          src="/ruxa.png" 
+          alt="Peeking Ruxa" 
+          className="w-full h-full object-contain -rotate-12 scale-x-[-1]" 
+          onError={(e) => (e.currentTarget.style.display = 'none')}
+        />
+      </div>
+
+      <div className="rune-panel flex-1 flex flex-col rounded-[2.5rem] overflow-hidden border-green-500/10 shadow-[0_0_50px_rgba(16,185,129,0.05)] bg-[#020402]/80 backdrop-blur-xl relative z-10">
         {/* Header */}
         <div className="p-6 border-b border-green-500/10 flex items-center justify-between bg-green-950/10">
           <div className="flex items-center gap-4">
@@ -3080,7 +3090,7 @@ function JudgeView() {
                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border 
                   ${msg.role === 'user' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}
                 >
-                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <div className="text-sm">🐻</div>}
+                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <img src="/ruxa.png" alt="R" className="w-6 h-6 object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />}
                 </div>
                 <div className={`p-4 rounded-3xl text-xs font-sans leading-relaxed shadow-sm
                   ${msg.role === 'user' 
@@ -3088,8 +3098,8 @@ function JudgeView() {
                     : 'bg-green-500/5 border border-green-500/10 text-green-50 rounded-tl-none'}`}
                 >
                    {msg.role === 'assistant' && i === 0 && (
-                     <div className="mb-4 rounded-2xl overflow-hidden border border-green-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
-                       <img src="/rune_bear.png" alt="Ruxa, Bear Judge" className="w-full h-auto object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                     <div className="mb-4 rounded-2xl overflow-hidden border border-green-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)] hidden">
+                       <img src="/ruxa.png" alt="Ruxa" className="w-full h-auto object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
                      </div>
                    )}
                    {msg.content}
