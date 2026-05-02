@@ -68,34 +68,41 @@ async function startServer() {
 
   // Proxy for TappedOut to avoid CORS and get txt format
   app.get("/api/to/:id", async (req, res) => {
+    const deckId = req.params.id;
+    const commonHeaders = {
+      "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    };
+
     // 1. Try JSON API first
     try {
-      const apiResponse = await axios.get(`https://tappedout.net/api/v1/decks/${req.params.id}/`, {
+      const apiResponse = await axios.get(`https://tappedout.net/api/v1/decks/${deckId}/`, {
         headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          ...commonHeaders,
           "Accept": "application/json",
-        }
+        },
+        timeout: 5000
       });
-      if (apiResponse.data) {
+      if (apiResponse.data && apiResponse.data.inventory) {
         return res.json(apiResponse.data);
       }
     } catch (e) {
-      console.error("TappedOut API failed:", e instanceof Error ? e.message : e);
+      // JSON API often fails or returns 404 even if deck exists in HTML
+      console.log(`TappedOut JSON API failed for ${deckId}, falling back to scraping`);
     }
 
     try {
-      const headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-      };
-
-      // 2. Fetch HTML to extract name and commander 
-      let deckName = req.params.id;
+      // 2. Fetch HTML to extract name, commander and card list
+      let deckName = deckId;
       let commanders: string[] = [];
+      let scrapedCards: any[] = [];
 
       try {
-        const htmlResponse = await axios.get(`https://tappedout.net/mtg-decks/${req.params.id}/`, { 
-          headers, 
-          responseType: 'text' 
+        const htmlResponse = await axios.get(`https://tappedout.net/mtg-decks/${deckId}/`, { 
+          headers: commonHeaders, 
+          responseType: 'text',
+          timeout: 10000
         });
         const html = htmlResponse.data;
         
@@ -107,46 +114,73 @@ async function startServer() {
           const title = $('title').text().trim();
           if (title) deckName = title.split('(')[0].replace('MTG Deck', '').trim();
         }
-        if (!deckName) deckName = req.params.id;
 
-        $('h3').each((i, el) => {
-          const text = $(el).text().trim();
-          if (text.includes("Commander")) {
-            $(el).next().find('.card-hover').each((_, cardEl) => {
-              const name = $(cardEl).attr('data-name');
-              if (name) commanders.push(name);
-            });
-            $(el).next('ul').find('a.board-link').each((_, cardEl) => {
-              const name = $(cardEl).text().trim();
-              if (name && !commanders.includes(name)) commanders.push(name);
+        // Commanders extraction
+        $('[id="board-commander"] a.board-link').each((_, el) => {
+          commanders.push($(el).text().trim());
+        });
+        
+        if (commanders.length === 0) {
+          $('.board-link[data-board="commander"]').each((_, el) => {
+            const name = $(el).text().trim();
+            if (name) commanders.push(name);
+          });
+        }
+
+        // Card list extraction from HTML (backup if txt fails)
+        $('.board-col .boardlist a.board-link').each((_, el) => {
+          const name = $(el).text().trim();
+          const qtyText = $(el).parent().text().match(/^(\d+)x/);
+          const qty = qtyText ? parseInt(qtyText[1]) : 1;
+          const board = $(el).closest('.board-col').find('h3').text().toLowerCase();
+          
+          if (name && !board.includes('maybeboard')) {
+            scrapedCards.push({
+              card: { oracleCard: { name: name } },
+              quantity: qty,
+              categories: board.includes('sideboard') ? ['sideboard'] : (board.includes('commander') ? ['commander'] : [])
             });
           }
         });
 
-        if (commanders.length === 0) {
-          $('[id="board-commander"] a.board-link').each((i, el) => {
-            commanders.push($(el).text().trim());
-          });
-        }
       } catch (e) {
-        console.error("Failed to parse HTML for commanders:", e instanceof Error ? e.message : e);
+        console.error("Failed to parse HTML for deck info:", e instanceof Error ? e.message : e);
       }
 
       // 3. TappedOut .txt download endpoint
-      const response = await axios.get(`https://tappedout.net/mtg-decks/${req.params.id}/?fmt=txt`, {
-        headers,
-        responseType: 'text'
-      });
+      let rawText = "";
+      try {
+        const response = await axios.get(`https://tappedout.net/mtg-decks/${deckId}/?fmt=txt`, {
+          headers: commonHeaders,
+          responseType: 'text',
+          timeout: 8000
+        });
+        rawText = response.data;
+      } catch (e) {
+        console.log(`TappedOut TXT format failed for ${deckId}, using scraped cards if available`);
+      }
       
-      const data = response.data;
-      if (typeof data === 'string' && (data.includes("<html") || data.includes("<!DOCTYPE"))) {
+      if (!rawText && scrapedCards.length === 0) {
         return res.status(404).json({ error: "Deck not found or private on TappedOut" });
       }
 
-      res.json({ rawText: data, id: req.params.id, deckName, commanders });
-    } catch (error) {
-      console.error("TappedOut Proxy Error:", error);
-      res.status(500).json({ error: "Failed to fetch deck from TappedOut" });
+      if (rawText && (rawText.includes("<html") || rawText.includes("<!DOCTYPE"))) {
+        // If txt returns HTML, it usually means redirect to login/error
+        if (scrapedCards.length > 0) {
+          return res.json({ inventory: scrapedCards, id: deckId, deckName, commanders });
+        }
+        return res.status(404).json({ error: "Deck not found (might be private) on TappedOut" });
+      }
+
+      if (rawText) {
+        res.json({ rawText, id: deckId, deckName, commanders });
+      } else {
+        res.json({ inventory: scrapedCards, id: deckId, deckName, commanders });
+      }
+    } catch (error: any) {
+      console.error("TappedOut Proxy Error:", error.message);
+      const status = error.response?.status || 500;
+      res.status(status).json({ error: `Failed to fetch from TappedOut: ${error.message}` });
     }
   });
 

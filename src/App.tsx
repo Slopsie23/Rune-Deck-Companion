@@ -346,32 +346,14 @@ export default function App() {
   const [isViewingDeck, setIsViewingDeck] = useState(false);
   const [hoveredPreviewCard, setHoveredPreviewCard] = useState<string | null>(null);
 
-  const groupedDeckCards = useMemo(() => {
+  const flatDeckCards = useMemo(() => {
     if (!viewingDeckCards) return [];
     
-    // Group by category, default to "Uncategorized"
-    const groupsMap = new Map<string, any[]>();
-    
-    viewingDeckCards.forEach((dc: any) => {
-        let cat = "Uncategorized";
-        if (Array.isArray(dc.categories) && dc.categories.length > 0) {
-            cat = dc.categories[0]; 
-        }
-        
-        if (!groupsMap.has(cat)) {
-            groupsMap.set(cat, []);
-        }
-        groupsMap.get(cat)!.push(dc);
+    return [...viewingDeckCards].sort((a, b) => {
+      const nameA = a.card?.oracleCard?.name || a.card?.name || "";
+      const nameB = b.card?.oracleCard?.name || b.card?.name || "";
+      return nameA.localeCompare(nameB);
     });
-    
-    return Array.from(groupsMap.entries()).map(([name, cards]) => ({
-      name,
-      cards: cards.sort((a, b) => {
-        const nameA = a.card?.oracleCard?.name || a.card?.name || "";
-        const nameB = b.card?.oracleCard?.name || b.card?.name || "";
-        return nameA.localeCompare(nameB);
-      })
-    })).sort((a, b) => a.name.localeCompare(b.name));
   }, [viewingDeckCards]);
   
   // Check if it's the first time logged in to show onboarding
@@ -864,11 +846,10 @@ export default function App() {
           });
           parsedCards = cards;
         } else if (data.inventory) {
-          parsedCards = data.inventory.map((item: any) => ({
-             card: { oracleCard: { name: item.card.name } },
-             quantity: item.q || 1,
-             categories: item.b === 'sideboard' ? ['sideboard'] : []
-          }));
+          parsedCards = data.inventory.filter((item: any) => {
+             const categories = (item.categories || []).map((cat: string) => cat.toLowerCase());
+             return !categories.includes('sideboard') && !categories.includes('maybeboard');
+          });
         }
       } else {
         const { data } = await axios.get(`/api/ad/${id}`);
@@ -888,6 +869,57 @@ export default function App() {
         deckName = data.name || "Deck List";
       }
       
+      // Batch fetch missing images from Scryfall
+      const cardsWithoutImages = parsedCards.filter(c => {
+         const scryfallId = c.card?.scryfall_id || c.card?.scryfallId || c.card?.uids?.scryfall || c.card?.scryfallData?.id || c.card?.scryfall_data?.id;
+         const sfData = c.card?.scryfallData || c.card?.scryfall_data;
+         const img = c.card?.edition?.imageUrl || c.card?.edition?.image_url || sfData?.image_uris?.normal || sfData?.image_uris?.large || sfData?.imageUris?.normal;
+         return !img && !scryfallId;
+      });
+
+      if (cardsWithoutImages.length > 0) {
+        try {
+          const BATCH_SIZE = 75;
+          const namesToFetch = Array.from(new Set(cardsWithoutImages.map(c => (c.card?.oracleCard?.name || c.card?.name || "").split(' // ')[0]).filter(Boolean))) as string[];
+          const sfMap = new Map();
+          
+          for(let i = 0; i < namesToFetch.length; i += BATCH_SIZE) {
+             const batch = namesToFetch.slice(i, i + BATCH_SIZE);
+             const identifiers = batch.map(name => ({ name }));
+             const { data: sfData } = await axios.post('https://api.scryfall.com/cards/collection', { identifiers });
+             if (sfData && sfData.data) {
+               sfData.data.forEach((sfCard: any) => {
+                  if (sfCard && sfCard.name) {
+                    sfMap.set(sfCard.name.toLowerCase(), sfCard);
+                    if (sfCard.name.includes(' // ')) {
+                       sfMap.set(sfCard.name.split(' // ')[0].toLowerCase(), sfCard);
+                    }
+                  }
+               });
+             }
+             if (i + BATCH_SIZE < namesToFetch.length) await new Promise(r => setTimeout(r, 100));
+          }
+          
+          parsedCards = parsedCards.map(c => {
+             const name = (c.card?.oracleCard?.name || c.card?.name || "").toLowerCase();
+             const cleanName = name.split(' // ')[0];
+             const sfCard = sfMap.get(name) || sfMap.get(cleanName);
+             if (sfCard) {
+               return {
+                 ...c,
+                 card: {
+                   ...c.card,
+                   scryfallData: sfCard
+                 }
+               }
+             }
+             return c;
+          });
+        } catch(e) {
+          console.error("Scryfall batch fetch failed:", e);
+        }
+      }
+
       setViewingDeckCards(parsedCards);
       setViewingDeckName(deckName);
       setIsViewingDeck(true);
@@ -2224,113 +2256,94 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
                <div className="flex flex-1 bg-[#050505] rounded-b-3xl overflow-hidden relative">
                  <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-32 no-scrollbar border-t border-white/[0.05]">
-                   <div className="columns-1 sm:columns-2 md:columns-3 lg:columns-4 xl:columns-5 gap-4 sm:gap-6">
-                     {groupedDeckCards.map((group) => (
-                        <div key={group.name} className="break-inside-avoid mb-6 flex flex-col bg-white/[0.02] rounded-2xl border border-white/[0.05] p-2">
-                           <div className="flex items-center justify-between px-2 pb-2 mb-2 border-b border-white/[0.05]">
-                             <h3 className="text-white/80 font-magic font-extrabold text-[12px] uppercase tracking-wider">{group.name}</h3>
-                             <span className="text-white/40 text-[10px] font-bold">{group.cards.reduce((acc: number, c: any) => acc + (c.quantity || 1), 0)} cards</span>
-                           </div>
-                           
-                           <div className={`flex w-full ${group.name.toLowerCase().includes('commander') ? 'flex-row -space-x-12 justify-center' : 'flex-col'}`}>
-                             {group.cards.map((dc: any, idx: number) => {
-                                const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                const qty = dc.quantity || 1;
-                                const isFoil = dc.modifier === 'Foil' || dc.modifier === 'Etched Foil';
-                                
-                                const edition = dc.card?.edition;
-                                const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
-                                const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                
-                                let img = edition?.imageUrl || edition?.image_url || edition?.image_uris?.normal || edition?.imageUris?.normal;
-                                const scryfallId = dc.card?.scryfall_id || dc.card?.scryfallId || dc.card?.uids?.scryfall || scryfall?.id || dc.uids?.scryfall;
-                                
-                                if (!img && scryfallId) {
-                                   img = `https://cards.scryfall.io/normal/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
-                                }
-                                if (!img) {
-                                   img = scryfall?.image_uris?.normal || scryfall?.image_uris?.large || scryfall?.imageUris?.normal;
-                                }
-                                if (!img) {
-                                   img = oracle?.scryfallData?.image_uris?.normal || oracle?.image_uris?.normal || oracle?.imageUris?.normal;
-                                }
-                                if (!img && scryfall?.card_faces?.length > 0) {
-                                   img = scryfall.card_faces[0].image_uris?.normal || scryfall.card_faces[0].imageUris?.normal;
-                                }
+                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
+                     {flatDeckCards.map((dc: any, idx: number) => {
+                        const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                        const qty = dc.quantity || 1;
+                        const isFoil = dc.modifier === 'Foil' || dc.modifier === 'Etched Foil';
+                        
+                        const edition = dc.card?.edition;
+                        const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                        const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                        
+                        let img = edition?.imageUrl || edition?.image_url || edition?.image_uris?.normal || edition?.imageUris?.normal;
+                        const scryfallId = dc.card?.scryfall_id || dc.card?.scryfallId || dc.card?.uids?.scryfall || scryfall?.id || dc.uids?.scryfall;
+                        
+                        if (!img && scryfallId) {
+                           img = `https://cards.scryfall.io/normal/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
+                        }
+                        if (!img) {
+                           img = scryfall?.image_uris?.normal || scryfall?.image_uris?.large || scryfall?.imageUris?.normal;
+                        }
+                        if (!img) {
+                           img = oracle?.scryfallData?.image_uris?.normal || oracle?.image_uris?.normal || oracle?.imageUris?.normal;
+                        }
+                        if (!img && scryfall?.card_faces?.length > 0) {
+                           img = scryfall.card_faces[0].image_uris?.normal || scryfall.card_faces[0].imageUris?.normal;
+                        }
 
-                                if (img && typeof img === 'string' && !img.startsWith('http')) {
-                                  if (img.includes('scryfall.com') || img.includes('cards.scryfall.io')) {
-                                     img = `https:${img.startsWith('//') ? '' : '//'}${img}`;
-                                  } else if (img.startsWith('/')) {
-                                     img = `https://archidekt.com${img}`;
-                                  } else {
-                                     img = undefined;
+                        if (img && typeof img === 'string' && !img.startsWith('http')) {
+                          if (img.includes('scryfall.com') || img.includes('cards.scryfall.io')) {
+                             img = `https:${img.startsWith('//') ? '' : '//'}${img}`;
+                          } else if (img.startsWith('/')) {
+                             img = `https://archidekt.com${img}`;
+                          } else {
+                             img = undefined;
+                          }
+                        }
+                        
+                        const cardName = c?.name || dc.card?.name || 'Unknown Card';
+                        
+                        // Check if it's a commander
+                        const isCommander = dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander'));
+                        
+                        return (
+                          <div 
+                            key={`${cardName}-${idx}`} 
+                            className={`group relative aspect-[0.71] w-full bg-white/[0.03] rounded-lg sm:rounded-xl overflow-hidden shadow-[0_4px_12px_rgba(0,0,0,0.8)] border border-white/5 transition-all duration-300 cursor-pointer hover:-translate-y-2 hover:-translate-x-1 hover:border-cyan-400/50 hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] ${isCommander ? 'border-orange-500/50 shadow-[0_0_15px_rgba(249,115,22,0.3)] hover:border-orange-400 hover:shadow-[0_0_25px_rgba(249,115,22,0.6)]' : ''}`}
+                            onMouseEnter={() => setHoveredPreviewCard(img || null)}
+                            onMouseLeave={() => setHoveredPreviewCard(null)}
+                          >
+                            <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-2 sm:p-4 z-0">
+                                <span className="text-[10px] sm:text-xs font-magic font-extrabold text-white/30 truncate px-1 uppercase tracking-wider">{cardName}</span>
+                                <div className="mt-2 w-8 h-px bg-white/10" />
+                            </div>
+                            
+                            {img && (
+                              <img 
+                                src={img} 
+                                className="w-full h-full object-cover relative z-10 transition-opacity duration-500 opacity-100" 
+                                alt={cardName} 
+                                loading="lazy" 
+                                referrerPolicy="no-referrer"
+                                onError={(e) => {
+                                  const target = e.target as HTMLImageElement;
+                                  // Avoid infinite loops
+                                  if (target.src.includes('api.scryfall.com/cards/named')) {
+                                    target.style.opacity = '0';
+                                    return;
                                   }
-                                }
-                                
-                                const cardName = c?.name || dc.card?.name || 'Unknown Card';
-                                if (!img) {
-                                   const safeName = cardName.split(' // ')[0];
-                                   img = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(safeName)}&format=image&version=normal`;
-                                }
-                                
-                                const editionCode = edition?.editioncode || 'MTG';
-                                const isCommanderGrp = group.name.toLowerCase().includes('commander');
-                                
-                                return (
-                                  <div 
-                                    key={`${cardName}-${idx}`} 
-                                    className={`group relative aspect-[0.71] rounded-lg sm:rounded-xl overflow-hidden shadow-[0_-4px_12px_rgba(0,0,0,0.8)] border border-[#222] transition-all duration-300 cursor-pointer hover:-translate-y-2 hover:-translate-x-1 hover:border-cyan-400 hover:shadow-[0_0_20px_rgba(6,182,212,0.6)] ${isCommanderGrp ? 'w-32 sm:w-40 hover:scale-105 shadow-[0_0_20px_rgba(249,115,22,0.4)] border-orange-500/50 hover:border-orange-400 hover:shadow-[0_0_30px_rgba(249,115,22,0.8)]' : 'w-full'}`}
-                                    style={{ 
-                                       marginTop: (idx === 0 || isCommanderGrp) ? '0' : '-112%', 
-                                       zIndex: isCommanderGrp ? group.cards.length - idx : idx 
-                                    }}
-                                    onMouseEnter={() => setHoveredPreviewCard(img || null)}
-                                    onMouseLeave={() => setHoveredPreviewCard(null)}
-                                  >
-                                    {img ? (
-                                      <img 
-                                        src={img} 
-                                        className="w-full h-full object-cover" 
-                                        alt={cardName} 
-                                        loading="lazy" 
-                                        referrerPolicy="no-referrer"
-                                        onError={(e) => {
-                                          const target = e.target as HTMLImageElement;
-                                          const fallbackUrl = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(cardName.split(' // ')[0])}&format=image&version=normal`;
-                                          if (target.src !== fallbackUrl && !target.src.includes('api.scryfall.com')) {
-                                            target.src = fallbackUrl;
-                                          } else {
-                                            target.style.display = 'none';
-                                            target.parentElement?.classList.add('bg-white/[0.02]', 'flex', 'items-center', 'justify-center');
-                                          }
-                                        }} 
-                                      />
-                                    ) : (
-                                      <div className="w-full h-full flex flex-col items-center justify-center text-center p-4 bg-[#111]">
-                                        <Package className="w-6 h-6 text-white/10 mb-2" />
-                                        <span className="text-[10px] font-magic font-bold text-white/30 truncate w-full px-2">{cardName}</span>
-                                      </div>
-                                    )}
-                                    
-                                    <div className="absolute top-1 left-0 flex flex-col gap-1">
-                                       {qty > 1 && (
-                                         <div className="bg-black/90 backdrop-blur-md px-2 py-0.5 text-[11px] font-black text-orange-500 rounded-r-md border-y border-r border-orange-500/30 shadow-lg">
-                                            {qty}x
-                                         </div>
-                                       )}
-                                       {isFoil && (
-                                         <div className="bg-gradient-to-r from-purple-500/90 to-blue-500/90 backdrop-blur-md px-2 py-0.5 text-[9px] font-black text-white uppercase tracking-tighter rounded-r-md border-y border-r border-white/20 shadow-lg">
-                                            Foil
-                                         </div>
-                                       )}
-                                    </div>
-                                  </div>
-                                );
-                             })}
-                           </div>
-                        </div>
-                     ))}
+                                  const safeName = cardName.split(' // ')[0];
+                                  target.src = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(safeName)}&format=image&version=normal`;
+                                }} 
+                              />
+                            )}
+                            
+                            <div className="absolute top-1 left-0 flex flex-col gap-1 z-20">
+                               {qty > 1 && (
+                                 <div className="bg-black/90 backdrop-blur-md px-2 py-0.5 text-[11px] font-black text-orange-500 rounded-r-md border-y border-r border-orange-500/30 shadow-lg">
+                                    {qty}x
+                                 </div>
+                               )}
+                               {isFoil && (
+                                 <div className="bg-gradient-to-r from-purple-500/90 to-blue-500/90 backdrop-blur-md px-2 py-0.5 text-[9px] font-black text-white uppercase tracking-tighter rounded-r-md border-y border-r border-white/20 shadow-lg">
+                                    Foil
+                                 </div>
+                               )}
+                            </div>
+                          </div>
+                        );
+                     })}
                    </div>
                  </div>
                  
