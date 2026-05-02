@@ -42,7 +42,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
-const logo = "/rune_bear.png";
+const logo = "https://raw.githubusercontent.com/Slopsie23/Rune-Deck-Companion/main/public/rune_bear.png";
 
 import { 
   ORANGE_ACCENT, 
