@@ -472,7 +472,7 @@ export default function App() {
     if (!id.trim()) return;
     setLoading(true);
     try {
-      const { data } = await axios.get(`/api/ad/${id}/`);
+      const { data } = await axios.get(`https://archidekt.com/api/decks/${id}/`);
       
       const commanderNames: string[] = [];
       const existingNames = new Set<string>();
@@ -718,7 +718,7 @@ export default function App() {
   const viewDeckDetails = async (id: string) => {
     setLoading(true);
     try {
-      const { data } = await axios.get(`/api/ad/${id}/`);
+      const { data } = await axios.get(`https://archidekt.com/api/decks/${id}/`);
       const cards = data.cards || (data.data && data.data.cards);
       
       if (!cards) {
