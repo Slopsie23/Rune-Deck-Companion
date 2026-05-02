@@ -1,0 +1,70 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-magic: "Space Grotesk", sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+@layer utilities {
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .rune-bg {
+    background-color: #0c0c0c;
+    background-image: 
+      radial-gradient(circle at 50% 50%, rgba(20, 20, 20, 1) 0%, rgba(5, 5, 5, 1) 100%),
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 100% 100%, 40px 40px, 40px 40px;
+    background-position: center center;
+  }
+
+  .rune-panel {
+    @apply relative bg-[#121212] border border-[#2a2a2a] shadow-[inset_0_0_20px_rgba(0,0,0,0.8),0_10px_30px_rgba(0,0,0,0.6)];
+  }
+
+  .rune-panel::before, .rune-panel::after {
+    content: '';
+    @apply absolute w-6 h-6 border-cyan-500/40 transition-colors duration-500 pointer-events-none z-10;
+  }
+
+  .rune-panel::before {
+    @apply top-0 left-0 border-t-2 border-l-2;
+  }
+
+  .rune-panel::after {
+    @apply bottom-0 right-0 border-b-2 border-r-2;
+  }
+
+  .rune-panel:hover::before, .rune-panel:hover::after {
+    @apply border-orange-500/80;
+  }
+  
+  .rune-book-spine {
+    @apply absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-[#00A8E8]/20 via-[#00A8E8]/5 to-transparent border-r border-[#00A8E8]/20 hidden md:block;
+  }
+}
+
+body {
+  @apply bg-[#0c0c0c] text-white antialiased font-sans;
+}
+
+h1, h2, .magic-text {
+  @apply font-magic font-bold uppercase tracking-tight;
+}
+
+/* Force lighter weights for all elements to answer user request for "less bold" design */
+.font-black, .font-extrabold, .font-bold {
+  font-weight: 500 !important;
+}
+
+.font-magic {
+  font-weight: 600 !important;
+}

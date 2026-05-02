@@ -1,0 +1,71 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "Public and private information about a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The unique identifier for the user (UID from Firebase Auth)" },
+        "email": { "type": "string", "format": "email", "description": "The user's email address" },
+        "displayName": { "type": "string", "description": "The user's display name" }
+      },
+      "required": ["userId", "email"]
+    },
+    "Deck": {
+      "title": "Deck Profile",
+      "description": "Metadata and tags for a saved MTG deck.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "description": "Archidekt ID or internal unique ID" },
+        "userId": { "type": "string", "description": "The UID of the owner" },
+        "name": { "type": "string", "description": "Name of the deck" },
+        "tags": { 
+          "type": "array", 
+          "items": { "type": "string" },
+          "description": "Custom search tags for the deck" 
+        },
+        "commanders": { 
+          "type": "array", 
+          "items": { "type": "string" },
+          "description": "Names of the commanders" 
+        },
+        "art_crops": { 
+          "type": "array", 
+          "items": { "type": "string" },
+          "description": "Art crop URLs for headers" 
+        },
+        "ci": { "type": "string", "description": "Color identity string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "name", "tags", "commanders", "art_crops", "ci", "createdAt", "updatedAt"]
+    },
+    "SelectedCard": {
+      "title": "Selected Card",
+      "description": "A card currently in the user's active selection (deckbox).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "thumb": { "type": "string" },
+        "from_deck": { "type": "string" },
+        "qty": { "type": "integer" }
+      },
+      "required": ["userId", "name", "thumb", "from_deck", "qty"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile data"
+    },
+    "/users/{userId}/decks/{deckId}": {
+      "schema": "Deck",
+      "description": "User's saved decks"
+    },
+    "/users/{userId}/deckbox/{cardId}": {
+      "schema": "SelectedCard",
+      "description": "User's active selection panel items"
+    }
+  }
+}
