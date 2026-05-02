@@ -42,7 +42,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
-const logo = "https://raw.githubusercontent.com/Slopsie23/Rune-Deck-Companion/main/public/rune_bear.png";
+// IMPORTANT: DO NOT CHANGE THE LOGO PATH. 
+// The rune_bear.png file is located in the /public folder of the project.
+// Using a local path ensures the logo remains visible even if external repos change.
+const logo = "/rune_bear.png";
 
 import { 
   ORANGE_ACCENT, 
@@ -846,10 +849,14 @@ export default function App() {
           });
           parsedCards = cards;
         } else if (data.inventory) {
+          // If inventory already comes in the correct format (e.g. from our proxy's HTML scraping)
           parsedCards = data.inventory.filter((item: any) => {
              const categories = (item.categories || []).map((cat: string) => cat.toLowerCase());
              return !categories.includes('sideboard') && !categories.includes('maybeboard');
-          });
+          }).map((item: any) => ({
+             ...item,
+             card: item.card || { oracleCard: { name: item.name } }
+          }));
         }
       } else {
         const { data } = await axios.get(`/api/ad/${id}`);
