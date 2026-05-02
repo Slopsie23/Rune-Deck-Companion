@@ -1,12 +1,12 @@
 {
   "rewrites": [
     {
-      "source": "/api/sf/:match*",
-      "destination": "https://api.scryfall.com/:match*"
+      "source": "/api/ad/:match*",
+      "destination": "https://archidekt.com/api/decks/:match*"
     },
     {
-      "source": "/api/ad/:id",
-      "destination": "https://archidekt.com/api/decks/:id/"
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ]
 }

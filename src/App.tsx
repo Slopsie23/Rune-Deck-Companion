@@ -169,7 +169,7 @@ export default function App() {
   useEffect(() => {
     const fetchSets = async () => {
       try {
-        const res = await axios.get('/api/sf/sets');
+        const res = await axios.get('https://api.scryfall.com/sets');
         let sortedSets = res.data.data
           .filter((s: any) => 
             ['expansion', 'commander', 'core', 'masters', 'draft_innovation', 'funny', 'arsenal'].includes(s.set_type) && !s.digital && !s.name.toLowerCase().includes('omenpaths') && !s.name.toLowerCase().includes('pioneer')
@@ -472,7 +472,7 @@ export default function App() {
     if (!id.trim()) return;
     setLoading(true);
     try {
-      const { data } = await axios.get(`/api/ad/${id}`);
+      const { data } = await axios.get(`/api/ad/${id}/`);
       
       const commanderNames: string[] = [];
       const existingNames = new Set<string>();
@@ -488,7 +488,7 @@ export default function App() {
       // Fetch commander details for CI and images
       const commanderDetails = await Promise.all(
         commanderNames.map(name => 
-          axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(name)}`)
+          axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`)
             .catch(err => {
               console.error(`Commander ${name} not found on Scryfall`, err);
               return { data: null };
@@ -632,7 +632,7 @@ export default function App() {
         query += ` (o:"${searchQuery}" OR t:"${searchQuery}" OR "${searchQuery}")`;
       }
 
-      const url = `/api/sf/cards/search?q=${encodeURIComponent(query)}&order=released&dir=desc`;
+      const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=released&dir=desc`;
       console.log("Searching Scryfall:", url);
       const { data } = await axios.get(url);
       setAllCards(data.data || []);
@@ -718,7 +718,7 @@ export default function App() {
   const viewDeckDetails = async (id: string) => {
     setLoading(true);
     try {
-      const { data } = await axios.get(`/api/ad/${id}`);
+      const { data } = await axios.get(`/api/ad/${id}/`);
       const cards = data.cards || (data.data && data.data.cards);
       
       if (!cards) {
@@ -784,7 +784,7 @@ export default function App() {
       // Fetch card details for all commanders
       const cardData = await Promise.all(
         validNames.map(name => 
-          axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(name)}`)
+          axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`)
             .then(r => r.data)
             .catch(() => null)
         )
