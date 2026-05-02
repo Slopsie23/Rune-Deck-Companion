@@ -38,7 +38,9 @@ import {
   Shield,
   Flame,
   Skull,
-  Users
+  Users,
+  Gavel,
+  Scale
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
@@ -370,7 +372,7 @@ export default function App() {
   const [currentCI, setCurrentCI] = useState("");
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [viewMode, setViewMode] = useState<'cards' | 'manage_decks' | 'sets' | 'calendar' | 'sheriff'>('cards');
+  const [viewMode, setViewMode] = useState<'cards' | 'manage_decks' | 'sets' | 'calendar' | 'sheriff' | 'judge'>('cards');
   
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -1431,6 +1433,16 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 <Shield className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-amber-500/80 group-hover:text-amber-500" />
                 <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-amber-500/80 group-hover:text-amber-400">Sheriff</span>
               </button>
+              <button 
+                onClick={() => {
+                  setViewMode('judge');
+                  setSearchQuery("");
+                }}
+                className="flex flex-col items-center justify-center p-3.5 rune-panel text-green-500/60 hover:text-green-400 font-magic hover:border-green-500/50 transition-all group z-10"
+              >
+                <Gavel className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-green-500/80 group-hover:text-green-500" />
+                <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-green-500/80 group-hover:text-green-400">Judge</span>
+              </button>
             </div>
           </section>
         </div>
@@ -2117,6 +2129,8 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 </div>
               </div>
             </div>
+          ) : viewMode === 'judge' ? (
+             <JudgeView />
           ) : viewMode === 'manage_decks' ? (
             <div className="space-y-6">
               <div className="flex flex-col sm:flex-row items-center gap-6 p-6 rune-panel rounded-xl">
@@ -2845,6 +2859,316 @@ function AdminChamber({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
            </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// MTG Judge Component
+function JudgeView() {
+  const [messages, setMessages] = useState<any[]>([
+    { role: 'assistant', content: "Hallo! Mijn naam is Ruxa, Bear Judge. Ik help je graag met de complexe regels van ons mooie spel. Waar kan ik m'n tanden in zetten?" }
+  ]);
+  const [input, setInput] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [waitingForSelection, setWaitingForSelection] = useState(false);
+  const [suggestions, setSuggestions] = useState<Record<string, string[]>>({});
+  const [selectedCards, setSelectedCards] = useState<Record<string, string>>({});
+  const [pendingQuery, setPendingQuery] = useState("");
+  const [lastExtracted, setLastExtracted] = useState<Set<string>>(new Set());
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isProcessing]);
+
+  const fetchCardSuggestions = async (query: string): Promise<string[]> => {
+    try {
+      const res = await axios.get(`https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(query)}`);
+      return res.data.data.slice(0, 5);
+    } catch (e) { return []; }
+  };
+
+  const fetchCardContext = async (name: string): Promise<string> => {
+    try {
+      const res = await axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`);
+      const data = res.data;
+      const typeLine = data.type_line || 'Type: Unknown';
+      const cmc = data.cmc !== undefined ? `Mana Value: ${data.cmc}` : '';
+      const pt = (data.power && data.toughness) ? `P/T: ${data.power}/${data.toughness}` : '';
+      const oracle = data.oracle_text || 'No oracle text found.';
+      const colors = data.color_identity?.join(', ') || 'Colorless';
+      return `**Kaart: ${data.name}**\n**Metadata:** ${typeLine} | ${cmc} | ${pt}\n**Color Identity:** ${colors}\n**Regeltekst:** ${oracle}\n`;
+    } catch (e) { return `**Kaart: ${name}**\n*Kon kaartdata niet vinden.*\n`; }
+  };
+
+  const handleSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!input.trim() || isProcessing) return;
+
+    const queryStr = input.trim();
+    setMessages(prev => [...prev, { role: 'user', content: queryStr }]);
+    setInput("");
+    setIsProcessing(true);
+    setPendingQuery(queryStr);
+
+    try {
+      // 1. Extract card names
+      const systemPrompt = `Je bent een gespecialiseerde Magic: The Gathering kaartnaam extractor. Extraheer ALLE MTG kaartnamen uit de tekst van de gebruiker. 
+      Geef ALLEEN de namen terug als een komma-gescheiden lijst. 
+      Let op: Zelfs gedeeltelijke namen of bijnamen moeten worden herkend als MTG kaarten als ze duidelijk daarnaar verwijzen.
+      Als er geen kaarten zijn, geef dan een lege string terug.`;
+      
+      if (!ai) {
+        throw new Error("AI not initialized. Check GEMINI_API_KEY.");
+      }
+
+      // Using gemini-flash-latest as a stable alias
+      const response = await (ai as any).models.generateContent({
+        model: "gemini-flash-latest",
+        contents: queryStr,
+        config: {
+          systemInstruction: systemPrompt
+        }
+      });
+      
+      const text = response.text || "";
+      const extracted = text.split(',').map((n: string) => n.trim()).filter((n: string) => n.length > 2);
+      
+      // 2. Validate cards and check for ambiguity
+      const newSuggestions: Record<string, string[]> = {};
+      const validNames: string[] = [];
+
+      for (const name of extracted) {
+         try {
+           const scryRes = await axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`);
+           validNames.push(scryRes.data.name);
+         } catch (err) {
+           const sug = await fetchCardSuggestions(name);
+           if (sug.length > 0) {
+             newSuggestions[name] = sug;
+           }
+         }
+      }
+
+      if (Object.keys(newSuggestions).length > 0) {
+        setSuggestions(newSuggestions);
+        setWaitingForSelection(true);
+        setLastExtracted(new Set(validNames));
+        setIsProcessing(false);
+      } else {
+        await generateRuling(queryStr, validNames);
+      }
+
+    } catch (err: any) {
+      console.error(err);
+      let errorMsg = "Oei, mijn mentale archief is even onbereikbaar. Probeer het over een momentje opnieuw.";
+      if (err.message && err.message.includes("AI not initialized")) {
+        errorMsg = "Mijn excuses, de archieven zijn nog niet ontsloten. Configureer de GEMINI_API_KEY om mijn wijsheid te raadplegen.";
+      }
+      setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
+      setIsProcessing(false);
+    }
+  };
+
+  const generateRuling = async (query: string, confirmedNames: string[]) => {
+    setIsProcessing(true);
+    try {
+      let context = "";
+      for (const name of confirmedNames) {
+        context += await fetchCardContext(name) + "\n";
+      }
+
+      const systemPrompt = `Je bent Ruxa, een deskundige maar bondige Magic: The Gathering Judge. 
+      
+      MISSIE:
+      Beantwoord regelsvragen van de gebruiker direct en trefzeker. Gebruik de meegeleverde context als bron.
+      
+      STIJL:
+      - Antwoord in het NEDERLANDS.
+      - Wees bondig. Geef het antwoord in maximaal een paar zinnen.
+      - Leg de achterliggende regels (zoals specifieke CR-artikelen of Layers) ALLEEN uit als de gebruiker er specifiek naar vraagt (zoals "waarom?" of "leg uit").
+      - Een subtiele humoristische opmerking of een kleine dad-joke mag, maar overdrijf het niet. 
+      - Behoud een wijze, professionele uitstraling.`;
+      
+      const userMessage = `--- CONTEXT VAN KAARTEN ---\n${context}\n\n--- REGELSVRAAG ---\n${query}\n\nWat is je uitspraak? (Kort en bondig in het Nederlands):`;
+
+      let modelId = "gemini-flash-latest"; // Default fallback
+      // The user mentioned gen-lang-client-0386737975
+      const preferredModel = "gen-lang-client-0386737975";
+      
+      let ruling = "";
+      try {
+        console.log(`Poberen met voorkeursmodel: ${preferredModel}`);
+        const response = await (ai as any).models.generateContent({
+          model: preferredModel,
+          contents: userMessage,
+          config: {
+            systemInstruction: systemPrompt
+          }
+        });
+        ruling = response.text || "";
+      } catch (e) {
+        console.warn("Voorkeursmodel mislukt of niet gevonden, terugval naar flash", e);
+        const response = await (ai as any).models.generateContent({
+          model: modelId,
+          contents: userMessage,
+          config: {
+            systemInstruction: systemPrompt
+          }
+        });
+        ruling = response.text || "";
+      }
+
+      setMessages(prev => [...prev, 
+        { role: 'assistant', content: `Gevonden kaarten: ${confirmedNames.join(", ") || "Geen"}` },
+        { role: 'assistant', content: ruling }
+      ]);
+    } catch (err) {
+      console.error(err);
+      setMessages(prev => [...prev, { role: 'assistant', content: "Mijn excuses, de archieven zijn tijdelijk verzegeld." }]);
+    }
+    setIsProcessing(false);
+    setWaitingForSelection(false);
+    setSuggestions({});
+    setSelectedCards({});
+    setLastExtracted(new Set());
+  };
+
+  const handleSelectionConfirm = () => {
+    const finalCards = [...lastExtracted];
+    Object.values(selectedCards).forEach(name => {
+      if (!(name as string).includes("Negeer")) finalCards.push(name as string);
+    });
+    generateRuling(pendingQuery, finalCards);
+  };
+
+  return (
+    <div className="flex-1 flex flex-col h-full max-w-4xl mx-auto w-full p-2 sm:p-4 overflow-hidden">
+      <div className="rune-panel flex-1 flex flex-col rounded-[2.5rem] overflow-hidden border-green-500/10 shadow-[0_0_50px_rgba(16,185,129,0.05)] bg-[#020402]/80 backdrop-blur-xl">
+        {/* Header */}
+        <div className="p-6 border-b border-green-500/10 flex items-center justify-between bg-green-950/10">
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-2xl bg-green-500/10 flex items-center justify-center border border-green-500/20 shadow-[0_0_20px_rgba(16,185,129,0.1)]">
+              <Gavel className="w-6 h-6 text-green-400" />
+            </div>
+            <div>
+              <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-green-400">Ruxa's Court</h2>
+              <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">Bear Judge Protocol</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 px-3 py-1 bg-green-500/5 rounded-full border border-green-500/10">
+            <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+            <span className="text-[8px] font-mono uppercase text-green-500/60 font-black tracking-widest">Connected</span>
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+          {messages.map((msg, i) => (
+            <motion.div 
+              key={i}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+            >
+              <div className={`max-w-[85%] flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border 
+                  ${msg.role === 'user' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}
+                >
+                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <div className="text-sm">🐻</div>}
+                </div>
+                <div className={`p-4 rounded-3xl text-xs font-sans leading-relaxed shadow-sm
+                  ${msg.role === 'user' 
+                    ? 'bg-orange-500/5 border border-orange-500/10 text-orange-100 rounded-tr-none' 
+                    : 'bg-green-500/5 border border-green-500/10 text-green-50 rounded-tl-none'}`}
+                >
+                   {msg.role === 'assistant' && i === 0 && (
+                     <div className="mb-4 rounded-2xl overflow-hidden border border-green-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                       <img src="/rune_bear.png" alt="Ruxa, Bear Judge" className="w-full h-auto object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                     </div>
+                   )}
+                   {msg.content}
+                </div>
+              </div>
+            </motion.div>
+          ))}
+          {isProcessing && (
+            <div className="flex justify-start">
+               <div className="bg-green-500/5 border border-green-500/10 p-4 rounded-3xl rounded-tl-none flex items-center gap-3">
+                  <div className="flex gap-1">
+                    <div className="w-1.5 h-1.5 bg-green-500/40 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                    <div className="w-1.5 h-1.5 bg-green-500/40 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                    <div className="w-1.5 h-1.5 bg-green-500/40 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                  </div>
+                  <span className="text-[10px] font-magic font-black uppercase text-green-500/40 tracking-widest">Consulting Rules...</span>
+               </div>
+            </div>
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Ambient Selection UI */}
+        {waitingForSelection && (
+          <div className="px-6 py-4 bg-green-500/5 border-t border-green-500/10 animate-in slide-in-from-bottom-2">
+             <div className="flex items-center gap-2 mb-4">
+                <Scale className="w-3.5 h-3.5 text-green-400" />
+                <span className="text-[9px] font-magic font-black text-green-400 uppercase tracking-widest">Verify Identifiers</span>
+             </div>
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {Object.entries(suggestions).map(([term, choices]) => (
+                  <div key={term} className="space-y-1">
+                    <p className="text-[8px] font-bold text-green-500/40 uppercase pl-1">For "{term}":</p>
+                    <select 
+                      onChange={(e) => setSelectedCards(prev => ({ ...prev, [term]: e.target.value }))}
+                      className="w-full bg-black/60 border border-green-500/20 rounded-xl px-4 py-2.5 text-[10px] text-green-100 outline-none focus:border-green-400 transition-all cursor-pointer"
+                    >
+                      <option value="">Select Match...</option>
+                      {(choices as string[]).map(c => <option key={c} value={c}>{c}</option>)}
+                      <option value={`Negeer ${term}`}>Negeer "{term}"</option>
+                    </select>
+                  </div>
+                ))}
+             </div>
+             <button 
+                onClick={handleSelectionConfirm}
+                className="mt-4 w-full py-3 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all"
+             >
+               Finalize Counsel
+             </button>
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="p-6 border-t border-green-500/10 bg-black/40">
+           <form onSubmit={handleSubmit} className="flex gap-3">
+              <input 
+                type="text" 
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                placeholder="Stel een regelsvraag aan Ruxa..."
+                disabled={isProcessing || waitingForSelection}
+                className="flex-1 bg-green-500/[0.03] border border-green-500/10 rounded-2xl px-6 py-4 text-xs font-sans text-green-100 placeholder:text-green-500/20 outline-none focus:border-green-500/40 focus:bg-green-500/[0.05] transition-all disabled:opacity-50"
+              />
+              <button 
+                type="submit"
+                disabled={isProcessing || waitingForSelection || !input.trim()}
+                className="w-14 h-14 rounded-2xl bg-green-500/10 border border-green-500/20 flex items-center justify-center text-green-400 hover:bg-green-500/20 transition-all disabled:opacity-20 active:scale-95 group"
+              >
+                <div className="group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform">
+                   <ChevronRight className="w-6 h-6" />
+                </div>
+              </button>
+           </form>
+           <p className="text-[8px] text-green-500/20 font-black uppercase tracking-[0.2em] mt-4 text-center">
+             Bear Judge Ruxa is an AI assistant. Verify rulings with current Comprehensive Rules for competitive play.
+           </p>
+        </div>
+      </div>
     </div>
   );
 }
