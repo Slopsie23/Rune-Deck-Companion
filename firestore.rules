@@ -11,6 +11,10 @@ service cloud.firestore {
       return request.auth != null;
     }
 
+    function isAdmin() {
+      return isSignedIn() && request.auth.token.email == 'sdebeer@gmail.com';
+    }
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
@@ -27,9 +31,9 @@ service cloud.firestore {
       return resource.data;
     }
 
-    function isValidDeck(data) {
+    function isValidDeck(data, ownerId) {
       return data.id is string && data.id.size() <= 100
-        && data.userId == request.auth.uid
+        && data.userId == ownerId
         && data.name is string && data.name.size() <= 200
         && data.tags is list && data.tags.size() <= 50
         && data.commanders is list && data.commanders.size() <= 5
@@ -39,9 +43,9 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
-    function isValidCard(data) {
+    function isValidCard(data, ownerId) {
       return data.name is string && data.name.size() <= 200
-        && data.userId == request.auth.uid
+        && data.userId == ownerId
         && data.thumb is string
         && data.from_deck is string
         && data.qty is int && data.qty >= 0 && data.qty <= 999;
@@ -49,38 +53,31 @@ service cloud.firestore {
 
     // --- Users ---
     match /users/{userId} {
-      allow get: if isOwner(userId);
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
       allow create: if isOwner(userId) 
         && incoming().userId == userId
         && incoming().email is string
         && incoming().keys().size() <= 8;
-      allow update: if isOwner(userId)
-        && incoming().userId == userId;
+      allow update: if isOwner(userId) || isAdmin();
 
       // --- Decks ---
       match /decks/{deckId} {
-        allow list, get: if isOwner(userId);
+        allow list, get: if isOwner(userId) || isAdmin();
         allow create: if isOwner(userId) 
-          && isValidDeck(incoming())
+          && isValidDeck(incoming(), userId)
           && incoming().createdAt == request.time
           && incoming().updatedAt == request.time;
-        allow update: if isOwner(userId)
-          && isValidDeck(incoming())
-          && incoming().createdAt == existing().createdAt
-          && incoming().updatedAt == request.time
-          && (
-            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'tags', 'commanders', 'art_crops', 'ci', 'updatedAt'])
-          );
-        allow delete: if isOwner(userId);
+        allow update: if isOwner(userId) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
       }
 
       // --- Deckbox (Selection) ---
       match /deckbox/{cardId} {
-        allow list, get: if isOwner(userId);
-        allow create: if isOwner(userId) && isValidCard(incoming());
-        allow update: if isOwner(userId) && isValidCard(incoming())
-          && incoming().diff(existing()).affectedKeys().hasOnly(['qty']);
-        allow delete: if isOwner(userId);
+        allow list, get: if isOwner(userId) || isAdmin();
+        allow create: if (isOwner(userId) || isAdmin()) && isValidCard(incoming(), userId);
+        allow update: if isOwner(userId) || isAdmin();
+        allow delete: if isOwner(userId) || isAdmin();
       }
     }
   }

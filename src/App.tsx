@@ -45,7 +45,7 @@ import axios from 'axios';
 // IMPORTANT: DO NOT CHANGE THE LOGO PATH. 
 // The rune_bear.png file is located in the /public folder of the project.
 // Using a local path ensures the logo remains visible even if external repos change.
-const logo = "/rune_bear.png";
+const logo = "/rune_bear.png?v=" + new Date().getTime();
 
 import { 
   ORANGE_ACCENT, 
@@ -56,11 +56,9 @@ import {
   CARD_BG, 
   MANA_SYMBOL_URIS 
 } from './constants';
-import { initializeApp } from 'firebase/app';
+import { db, auth, googleProvider } from './lib/firebase';
 import { 
-  getAuth, 
   signInWithPopup, 
-  GoogleAuthProvider, 
   onAuthStateChanged, 
   signOut,
   setPersistence,
@@ -68,7 +66,6 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import { 
-  getFirestore, 
   doc, 
   setDoc, 
   getDoc, 
@@ -84,14 +81,7 @@ import {
   increment,
   writeBatch
 } from 'firebase/firestore';
-import firebaseConfig from '../firebase-applet-config.json';
 import { Card, DeckCard, SavedDeck } from './types';
-
-const app = initializeApp(firebaseConfig);
-const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-const auth = getAuth();
-const googleProvider = new GoogleAuthProvider();
-googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 
 let ai: GoogleGenAI | null = null;
@@ -110,6 +100,8 @@ const BearIcon = PawPrint;
 
 export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showAdminChamber, setShowAdminChamber] = useState(false);
 
   // Performance and reliability for mobile
   useEffect(() => {
@@ -221,6 +213,7 @@ export default function App() {
       setAuthLoading(false);
       
       if (u) {
+        setIsAdmin(u.email === 'sdebeer@gmail.com');
         // Init profile
         const userRef = doc(db, 'users', u.uid);
         const userSnap = await getDoc(userRef);
@@ -1546,6 +1539,18 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                      </div>
 
                      <div className="pt-4 border-t border-white/5">
+                        {isAdmin && (
+                          <button 
+                            onClick={() => {
+                              setShowAdminChamber(true);
+                              setIsSettingsOpen(false);
+                            }}
+                            className="w-full flex items-center justify-center gap-2 py-4 mb-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest border border-emerald-500/20 transition-all shadow-[0_0_15px_rgba(16,185,129,0.1)]"
+                          >
+                            <Shield className="w-3.5 h-3.5" />
+                            Admin Chamber
+                          </button>
+                        )}
                         <button 
                           onClick={logout}
                           className="w-full flex items-center justify-center gap-2 py-4 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest border border-red-500/20 transition-all"
@@ -2580,6 +2585,264 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 <p className="text-white/20 text-[10px] font-bold mt-2 uppercase tracking-widest">Searching the Multiverse...</p>
               </div>
             </div>
+        </div>
+      )}
+      {/* Admin Chamber Modal */}
+      <AnimatePresence>
+        {showAdminChamber && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300]"
+          >
+            <AdminChamber isOpen={showAdminChamber} onClose={() => setShowAdminChamber(false)} />
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+    </div>
+  );
+}
+
+// Admin Chamber Component
+function AdminChamber({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
+  const [users, setUsers] = useState<any[]>([]);
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [userDecks, setUserDecks] = useState<any[]>([]);
+  const [userDeckbox, setUserDeckbox] = useState<any[]>([]);
+  const [localLoading, setLocalLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      const fetchUsers = async () => {
+        setLocalLoading(true);
+        try {
+          const snap = await getDocs(query(collection(db, 'users')));
+          setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+        } catch (e) { console.error(e); }
+        setLocalLoading(false);
+      };
+      fetchUsers();
+    }
+  }, [isOpen]);
+
+  const loadUserData = async (u: any) => {
+    setSelectedUser(u);
+    setLocalLoading(true);
+    try {
+      const decksSnap = await getDocs(collection(db, 'users', u.id, 'decks'));
+      const deckboxSnap = await getDocs(collection(db, 'users', u.id, 'deckbox'));
+      setUserDecks(decksSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+      setUserDeckbox(deckboxSnap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) { console.error(e); }
+    setLocalLoading(false);
+  };
+
+  const deleteUserDeck = async (deckId: string) => {
+     if (!selectedUser) return;
+     if (!window.confirm("Are you sure you want to purge this record from the Archives?")) return;
+     setLocalLoading(true);
+     try {
+       await deleteDoc(doc(db, 'users', selectedUser.id, 'decks', deckId));
+       setUserDecks(prev => prev.filter(d => d.id !== deckId));
+     } catch (e) {
+       console.error("Purge failed:", e);
+       alert("Manifest extraction failed. Check security permissions.");
+     }
+     setLocalLoading(false);
+  };
+
+  const clearUserDeckbox = async () => {
+     if (!selectedUser) return;
+     if (!window.confirm("Purge the entire Deckbox essence of this Seeker?")) return;
+     setLocalLoading(true);
+     try {
+       const q = query(collection(db, 'users', selectedUser.id, 'deckbox'));
+       const snap = await getDocs(q);
+       const batch = writeBatch(db);
+       snap.docs.forEach(doc => batch.delete(doc.ref));
+       await batch.commit();
+       setUserDeckbox([]);
+     } catch (e) { console.error(e); }
+     setLocalLoading(false);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[300] bg-[#020402] flex flex-col overflow-hidden text-emerald-100 font-sans border border-emerald-500/20 m-2 rounded-3xl shadow-[0_0_50px_rgba(16,185,129,0.15)]">
+      {/* Header */}
+      <div className="flex items-center justify-between p-6 border-b border-emerald-500/20 bg-emerald-950/20">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30 shadow-[0_0_25px_rgba(16,185,129,0.2)]">
+            <Shield className="w-6 h-6 text-emerald-400" />
+          </div>
+          <div>
+            <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-emerald-400">Admin Archive</h2>
+            <p className="text-[10px] uppercase tracking-widest opacity-40 font-bold">Seeker Oversight Protocol</p>
+          </div>
+        </div>
+        <button onClick={onClose} className="p-3 hover:bg-emerald-500/10 rounded-2xl transition-all border border-transparent hover:border-emerald-500/20 group">
+          <X className="w-6 h-6 text-emerald-400 transition-transform group-hover:rotate-90" />
+        </button>
+      </div>
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* User List Sidebar */}
+        <div className="w-72 border-r border-emerald-500/10 overflow-y-auto bg-black/60 custom-scrollbar">
+          <div className="p-6">
+             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500/50 mb-6 flex items-center gap-2">
+               <Users className="w-4 h-4" /> Active Souls
+             </p>
+             <div className="space-y-2">
+                {users.map(u => (
+                  <button 
+                    key={u.id}
+                    onClick={() => loadUserData(u)}
+                    className={`w-full flex flex-col p-4 rounded-2xl transition-all border text-left group
+                      ${selectedUser?.id === u.id 
+                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]' 
+                        : 'hover:bg-emerald-500/5 border-transparent text-emerald-100/60 hover:text-emerald-100'}`}
+                  >
+                    <span className="text-[11px] font-bold truncate w-full group-hover:tracking-wider transition-all uppercase">{u.displayName || 'Unnamed Seeker'}</span>
+                    <span className="text-[8px] opacity-30 truncate w-full font-mono mt-1">{u.email}</span>
+                  </button>
+                ))}
+             </div>
+          </div>
+        </div>
+
+        {/* User Content */}
+        <div className="flex-1 overflow-y-auto p-8 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.08),transparent)] custom-scrollbar">
+          {selectedUser ? (
+            <div className="max-w-5xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
+               <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-emerald-500/10 pb-8">
+                  <div>
+                    <h1 className="text-4xl font-magic font-black text-white mb-2 uppercase tracking-tighter">{selectedUser.displayName}</h1>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded-md border border-emerald-500/20 font-mono tracking-widest">{selectedUser.id}</span>
+                      <span className="text-[9px] text-white/30 font-bold uppercase tracking-widest ml-2">{selectedUser.email}</span>
+                    </div>
+                  </div>
+                  <div className="flex gap-8">
+                     <div className="flex flex-col items-center md:items-end">
+                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Stored Rites</span>
+                       <span className="text-3xl font-magic font-black text-emerald-400">{userDecks.length}</span>
+                     </div>
+                     <div className="flex flex-col items-center md:items-end">
+                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Deckbox Essence</span>
+                       <span className="text-3xl font-magic font-black text-emerald-400">{userDeckbox.length}</span>
+                     </div>
+                  </div>
+               </header>
+
+               {/* Decks Grid */}
+               <section>
+                 <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-sm font-magic font-black text-emerald-400 uppercase tracking-[0.3em] flex items-center gap-3">
+                      <LayoutDashboard className="w-4 h-4" /> User Deck Archives
+                    </h3>
+                 </div>
+                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {userDecks.map(deck => (
+                      <div key={deck.id} className="bg-black/60 border border-emerald-500/10 rounded-3xl p-5 flex items-center justify-between group hover:border-emerald-500/40 hover:bg-black/40 transition-all duration-300">
+                        <div className="flex items-center gap-4">
+                           <div className="w-16 h-16 rounded-2xl bg-black/60 border border-emerald-500/10 overflow-hidden group-hover:scale-105 transition-transform">
+                              {deck.art_crops?.[0] ? 
+                                <img src={deck.art_crops[0]} className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500" /> : 
+                                <div className="w-full h-full flex items-center justify-center bg-emerald-500/5 text-emerald-500/20 font-magic text-xs">NO IMG</div>
+                              }
+                           </div>
+                           <div>
+                             <h4 className="text-[12px] font-black uppercase text-emerald-100 tracking-[0.1em] mb-2">{deck.name}</h4>
+                             <div className="flex flex-wrap gap-1.5">
+                               {deck.tags?.map((t: string) => (
+                                 <span key={t} className="text-[8px] bg-emerald-500/5 text-emerald-400/70 px-2 py-0.5 rounded-lg border border-emerald-500/10 font-bold uppercase">{t}</span>
+                               ))}
+                             </div>
+                           </div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button 
+                              onClick={() => deleteUserDeck(deck.id)}
+                              className="p-3 bg-red-500/5 hover:bg-red-500/20 text-red-400 rounded-xl border border-red-500/10 transition-all"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                            <button className="p-3 bg-emerald-500/5 hover:bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/10 transition-all">
+                              <Eye className="w-4 h-4" />
+                            </button>
+                        </div>
+                      </div>
+                    ))}
+                    {userDecks.length === 0 && (
+                      <div className="col-span-full py-16 flex flex-col items-center justify-center border-2 border-dashed border-emerald-500/10 rounded-[3rem] bg-emerald-500/[0.01]">
+                        <Database className="w-10 h-10 text-emerald-500/20 mb-4" />
+                        <p className="text-[11px] uppercase font-black text-emerald-500/40 tracking-[0.3em]">No decks discovered in this Seeker's path</p>
+                      </div>
+                    )}
+                 </div>
+               </section>
+
+               {/* Deckbox Content */}
+               <section>
+                 <div className="flex items-center justify-between mb-6">
+                    <h3 className="text-sm font-magic font-black text-emerald-400 uppercase tracking-[0.3em] flex items-center gap-3">
+                      <Layers className="w-4 h-4" /> Current Selection (Deckbox)
+                    </h3>
+                    <button 
+                      onClick={clearUserDeckbox}
+                      className="text-[9px] font-black uppercase text-red-500/50 hover:text-red-500 flex items-center gap-2 border border-red-500/10 hover:border-red-500/30 px-3 py-1.5 rounded-xl transition-all"
+                    >
+                      <Trash2 className="w-3 h-3" /> Purge Deckbox
+                    </button>
+                 </div>
+                 <div className="bg-emerald-500/[0.02] border border-emerald-500/5 rounded-[2.5rem] p-8">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4">
+                       {userDeckbox.map(card => (
+                         <div key={card.id || card.name} className="relative aspect-[0.71] rounded-xl overflow-hidden border border-emerald-500/10 group shadow-lg hover:border-emerald-500/40 hover:shadow-emerald-500/10 transition-all">
+                            <img src={card.thumb} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-115 grayscale group-hover:grayscale-0" />
+                            <div className="absolute inset-x-0 bottom-0 p-2 bg-black/90 backdrop-blur-md border-t border-emerald-500/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
+                               <p className="text-[9px] font-black truncate uppercase text-white tracking-widest">{card.name}</p>
+                               <div className="flex items-center justify-between mt-1">
+                                 <span className="text-[8px] text-emerald-400/60 font-mono">Q: {card.qty}</span>
+                                 <Copy className="w-2.5 h-2.5 text-emerald-500/40 cursor-pointer hover:text-emerald-400" />
+                               </div>
+                            </div>
+                         </div>
+                       ))}
+                       {userDeckbox.length === 0 && (
+                        <div className="col-span-full py-20 text-center">
+                          <p className="text-[11px] uppercase font-black text-emerald-500/20 tracking-[0.5em]">Inventory Vacant</p>
+                        </div>
+                       )}
+                    </div>
+                 </div>
+               </section>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col items-center justify-center">
+               <div className="relative mb-8">
+                  <div className="absolute inset-0 bg-emerald-500/10 blur-[60px] animate-pulse rounded-full" />
+                  <Database className="w-32 h-32 relative text-emerald-500/20 animate-bounce transition-all duration-1000" />
+               </div>
+               <p className="font-magic font-black uppercase tracking-[0.6em] text-2xl text-emerald-100/30">Archive Repository</p>
+               <p className="text-[10px] mt-4 font-black uppercase tracking-[0.2em] text-emerald-500/40 border border-emerald-500/10 px-6 py-2 rounded-full">Select a Seeker to commence inspection</p>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {localLoading && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[400] flex items-center justify-center">
+           <div className="flex flex-col items-center gap-6">
+              <div className="relative">
+                <RotateCw className="w-16 h-16 text-emerald-400 animate-spin transition-all duration-300" />
+                <Shield className="absolute inset-0 m-auto w-6 h-6 text-emerald-400/50" />
+              </div>
+              <p className="text-[11px] font-magic font-black uppercase tracking-[0.4em] text-emerald-400 animate-pulse">Syncing with Archivists</p>
+           </div>
         </div>
       )}
     </div>
