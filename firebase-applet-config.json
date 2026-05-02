@@ -1,10 +1,9 @@
 {
-  "projectId": "gen-lang-client-0386737975",
-  "appId": "1:30491140785:web:9886f20c1116a3e84bb890",
-  "apiKey": "AIzaSyDN3-q78HsCJM0F4viQePUiFvXsMeqmprw",
-  "authDomain": "gen-lang-client-0386737975.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-6f1a7e9b-97f6-4121-8b80-4a4b506edc95",
-  "storageBucket": "gen-lang-client-0386737975.firebasestorage.app",
-  "messagingSenderId": "30491140785",
-  "measurementId": ""
+  "apiKey": "AIzaSyCDbgBPTKJtFC5mtnFobEHEyRY_v6DfS4o",
+  "authDomain": "rune-deck-c2ad3.firebaseapp.com",
+  "projectId": "rune-deck-c2ad3",
+  "storageBucket": "rune-deck-c2ad3.firebasestorage.app",
+  "messagingSenderId": "617077627569",
+  "appId": "1:617077627569:web:1747ed7ec44c854b9d6090",
+  "firestoreDatabaseId": "(default)"
 }

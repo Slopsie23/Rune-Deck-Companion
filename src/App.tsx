@@ -93,7 +93,7 @@ googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 let ai: GoogleGenAI | null = null;
 try {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (apiKey) {
     ai = new GoogleGenAI({ apiKey });
   } else {
@@ -320,8 +320,9 @@ export default function App() {
   const login = async () => {
     try {
       await signInWithPopup(auth, googleProvider);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Login failed", error);
+      showMessage("Login mislukt: " + error.message, "error");
     }
   };
 
