@@ -1,20 +1,10 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
-</div>
+# Rune Deck Companion
 
-# Run and deploy your AI Studio app
+Welkom bij de Rune Deck Companion! (Te bezoeken via www.metsjors.nl)
 
-This contains everything you need to run your app locally.
+**Hoe het werkt:**
+1. **Voeg een deck toe:** Vul de Archidekt ID van je deck in.
+2. **Bekijk je kaarten:** De app haalt je deck direct op uit Archidekt en laadt de juiste kaartafbeeldingen in via Scryfall.
+3. **Beheer & Speel:** Wissel eenvoudig tussen je opgeslagen decks en gebruik de interface tijdens het spelen.
 
-View your app in AI Studio: https://ai.studio/apps/6f1a7e9b-97f6-4121-8b80-4a4b506edc95
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+Veel speelplezier!

@@ -93,7 +93,7 @@ googleProvider.setCustomParameters({ prompt: 'select_account' });
 
 let ai: GoogleGenAI | null = null;
 try {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (apiKey) {
     ai = new GoogleGenAI({ apiKey });
   } else {
@@ -468,6 +468,101 @@ export default function App() {
     return card.image_uris || card.card_faces?.[0]?.image_uris || {};
   };
 
+  const initializeDeckState = async (
+    id: string, 
+    deckName: string, 
+    commanderNames: string[], 
+    existingNames: Set<string>
+  ) => {
+    // Fetch commander details for CI and images
+    const commanderDetails = await Promise.all(
+      commanderNames.map(name => 
+        axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`)
+          .catch(err => {
+            console.error(`Commander ${name} not found on Scryfall`, err);
+            return { data: null };
+          })
+      )
+    );
+
+    const ciSet = new Set<string>();
+    const commandersData: {name: string, art_crop: string, isBackground: boolean}[] = [];
+    const artCrops: string[] = [];
+    const commanderUrls: string[] = [];
+
+    commanderDetails.forEach((res, index) => {
+      const c = res.data;
+      if (!c) {
+        // If Scryfall failed, we at least keep the name but won't have images/CI
+        commandersData.push({ 
+          name: commanderNames[index], 
+          art_crop: "", 
+          isBackground: false 
+        });
+        return;
+      }
+      c.color_identity?.forEach((color: string) => ciSet.add(color));
+      const imgs: any = getCardImages(c);
+      if (imgs.normal) commanderUrls.push(imgs.normal);
+      
+      const isBackground = c.type_line?.toLowerCase().includes("background");
+      const crop = imgs.art_crop || imgs.normal;
+      
+      if (crop) {
+        artCrops.push(crop);
+        commandersData.push({ 
+          name: c.name, 
+          art_crop: crop,
+          isBackground: !!isBackground
+        });
+      }
+    });
+
+    // Sort commanders so Backgrounds are always last
+    commandersData.sort((a, b) => (a.isBackground ? 1 : 0) - (b.isBackground ? 1 : 0));
+
+    const sortedCommanderUrls = commandersData.map(c => c.art_crop);
+    const ciStr = Array.from(ciSet).sort().join("").toLowerCase() || "c";
+
+    // Update saved decks in Firestore
+    if (user) {
+      const deckRef = doc(db, 'users', user.uid, 'decks', id);
+      const existingSnap = await getDoc(deckRef);
+      const existingData = existingSnap.exists() ? existingSnap.data() : null;
+      
+      const deckData = {
+        id,
+        userId: user.uid,
+        name: deckName,
+        tags: existingData?.tags || [],
+        commanders: commanderNames,
+        art_crops: sortedCommanderUrls,
+        ci: ciStr,
+        createdAt: existingData?.createdAt || serverTimestamp(),
+        updatedAt: serverTimestamp()
+      };
+      
+      await setDoc(deckRef, deckData, { merge: true })
+        .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${id}`));
+    }
+
+    setActiveDeckId(id);
+    setActiveDeckName(deckName);
+    setExistingInDeck(existingNames);
+    setCommanders(commandersData);
+    setCurrentCI(ciStr);
+    
+    // Reset filters when loading a new deck
+    setTypeFilter("Any");
+    setRarityFilter("Any");
+    setSetFilter("Any");
+    setArchFilter("Any");
+    setColorFilter("Any");
+    
+    // Perform initial search after loading deck
+    performSearch({ ciOverride: ciStr });
+  };
+
   const fetchArchidektDeck = async (id: string) => {
     if (!id.trim()) return;
     setLoading(true);
@@ -485,99 +580,109 @@ export default function App() {
         }
       });
 
-      // Fetch commander details for CI and images
-      const commanderDetails = await Promise.all(
-        commanderNames.map(name => 
-          axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`)
-            .catch(err => {
-              console.error(`Commander ${name} not found on Scryfall`, err);
-              return { data: null };
-            })
-        )
-      );
-
-      const ciSet = new Set<string>();
-      const commandersData: {name: string, art_crop: string, isBackground: boolean}[] = [];
-      const artCrops: string[] = [];
-      const commanderUrls: string[] = [];
-
-      commanderDetails.forEach((res, index) => {
-        const c = res.data;
-        if (!c) {
-          // If Scryfall failed, we at least keep the name but won't have images/CI
-          commandersData.push({ 
-            name: commanderNames[index], 
-            art_crop: "", 
-            isBackground: false 
-          });
-          return;
-        }
-        c.color_identity?.forEach((color: string) => ciSet.add(color));
-        const imgs: any = getCardImages(c);
-        if (imgs.normal) commanderUrls.push(imgs.normal);
-        
-        const isBackground = c.type_line?.toLowerCase().includes("background");
-        const crop = imgs.art_crop || imgs.normal;
-        
-        if (crop) {
-          artCrops.push(crop);
-          commandersData.push({ 
-            name: c.name, 
-            art_crop: crop,
-            isBackground: !!isBackground
-          });
-        }
-      });
-
-      // Sort commanders so Backgrounds are always last
-      commandersData.sort((a, b) => (a.isBackground ? 1 : 0) - (b.isBackground ? 1 : 0));
-
-      const sortedCommanderUrls = commandersData.map(c => c.art_crop); // Using art_crop for both since it's the focused eye version
-      const ciStr = Array.from(ciSet).sort().join("").toLowerCase() || "c";
       const deckName = data.name || `Deck ${id}`;
-
-      // Update saved decks in Firestore
-      if (user) {
-        const deckRef = doc(db, 'users', user.uid, 'decks', id);
-        const existingSnap = await getDoc(deckRef);
-        const existingData = existingSnap.exists() ? existingSnap.data() : null;
-        
-        const deckData = {
-          id,
-          userId: user.uid,
-          name: deckName,
-          tags: existingData?.tags || [],
-          commanders: commanderNames,
-          art_crops: sortedCommanderUrls,
-          ci: ciStr,
-          createdAt: existingData?.createdAt || serverTimestamp(),
-          updatedAt: serverTimestamp()
-        };
-        
-        await setDoc(deckRef, deckData, { merge: true })
-          .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${id}`));
-      }
-
-      setActiveDeckId(id);
-      setActiveDeckName(deckName);
-      setExistingInDeck(existingNames);
-      setCommanders(commandersData);
-      setCurrentCI(ciStr);
       
-      // Reset filters when loading a new deck
-      setTypeFilter("Any");
-      setRarityFilter("Any");
-      setSetFilter("Any");
-      setArchFilter("Any");
-      setColorFilter("Any");
-      
-      // Perform initial search after loading deck
-      performSearch({ ciOverride: ciStr });
-    } catch (error) {
+      await initializeDeckState(id, deckName, commanderNames, existingNames);
+    } catch (error: any) {
       console.error(error);
-      showMessage("Failed to load deck from Archidekt");
+      const msg = error.response?.data?.error || "Failed to load deck from Archidekt";
+      showMessage(msg, "error");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const fetchTappedOutDeck = async (id: string) => {
+    if (!id.trim()) return;
+    setLoading(true);
+    try {
+      const { data } = await axios.get(`/api/to/${id}`);
+      if (data.error) throw new Error(data.error);
+
+      // We might get JSON or a rawText string fallback
+      let rawText = data.rawText;
+      const commanderNames: string[] = data.commanders || [];
+      const existingNames = new Set<string>();
+      let deckName = data.deckName || data.name || `TappedOut Deck ${id}`;
+
+      if (rawText) {
+        const lines = rawText.split('\n');
+        lines.forEach((line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('#')) return;
+          
+          let cardName = trimmed;
+          let isCommander = false;
+
+          // Some TappedOut exports put *CMDR* for the commander
+          if (cardName.includes('*CMDR*')) {
+            isCommander = true;
+            cardName = cardName.replace('*CMDR*', '').trim();
+          }
+
+          // Format is typically: "1x Card Name"
+          const match = cardName.match(/^(\d+)x?\s+(.+)$/);
+          if (match) {
+            cardName = match[2].trim();
+          }
+
+          if (cardName) {
+             existingNames.add(cardName);
+             if (isCommander && !commanderNames.includes(cardName)) {
+               commanderNames.push(cardName);
+             }
+          }
+        });
+      } else if (data.inventory) {
+        // Just in case we hit the actual API format
+        data.inventory.forEach((item: any) => {
+           let cardName = item.card.name;
+           existingNames.add(cardName);
+           if (item.b === 'commander' && !commanderNames.includes(cardName)) {
+             commanderNames.push(cardName);
+           }
+        });
+      }
+
+      await initializeDeckState(id, deckName, commanderNames, existingNames);
+    } catch (error: any) {
+      console.error(error);
+      const msg = error.response?.data?.error || "Failed to load deck from TappedOut";
+      showMessage(msg, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchAnyDeck = async (input: string) => {
+    const trimmed = input.trim();
+    if (!trimmed) return;
+
+    // Detect if URL or direct ID
+    let deckId = trimmed;
+    let source = "archidekt";
+
+    if (trimmed.includes("tappedout.net")) {
+      source = "tappedout";
+      const match = trimmed.match(/mtg-decks\/([^/]+)/);
+      if (match) deckId = match[1];
+    } else if (trimmed.includes("archidekt.com")) {
+      source = "archidekt";
+      const match = trimmed.match(/decks\/(\d+)/);
+      if (match) deckId = match[1];
+    } else {
+      // If no url, detect by format: Archidekt IDs are usually numeric
+      if (/^\d+$/.test(deckId)) {
+        source = "archidekt";
+      } else {
+        source = "tappedout";
+      }
+    }
+
+    if (source === "archidekt") {
+      await fetchArchidektDeck(deckId);
+    } else {
+      await fetchTappedOutDeck(deckId);
     }
   };
 
@@ -715,30 +820,81 @@ export default function App() {
     if (activeDeckId === id) setActiveDeckId(null);
   };
 
-  const viewDeckDetails = async (id: string) => {
+  const viewDeckDetails = async (id: string, source?: string) => {
     setLoading(true);
     try {
-      const { data } = await axios.get(`/api/ad/${id}`);
-      const cards = data.cards || (data.data && data.data.cards);
-      
-      if (!cards) {
-        throw new Error("No cards found in deck response");
+      if (!source) {
+        source = /^\d+$/.test(id) ? "archidekt" : "tappedout";
       }
 
-      // More robust filtering
-      const filteredCards = cards.filter((dc: any) => {
-        const categories = (dc.categories || []).map((cat: any) => 
-          typeof cat === 'string' ? cat.toLowerCase() : cat
-        );
-        return !categories.includes("sideboard") && !categories.includes("maybeboard");
-      });
+      let parsedCards: any[] = [];
+      let deckName = "Deck List";
+
+      if (source === "tappedout") {
+        const { data } = await axios.get(`/api/to/${id}`);
+        if (data.error) throw new Error(data.error);
+
+        deckName = data.deckName || data.name || `TappedOut Deck ${id}`;
+        
+        if (data.rawText) {
+          const lines = data.rawText.split('\n');
+          const cards: any[] = [];
+          lines.forEach((line: string) => {
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('#')) return;
+            
+            let cardName = trimmed;
+            let qty = 1;
+
+            if (cardName.includes('Sideboard:')) return; 
+
+            if (cardName.includes('*CMDR*')) {
+              cardName = cardName.replace('*CMDR*', '').trim();
+            }
+
+            const match = cardName.match(/^(\d+)x?\s+(.+)$/);
+            if (match) {
+              qty = parseInt(match[1]);
+              cardName = match[2].trim();
+            }
+
+            if (cardName) {
+               cards.push({ card: { oracleCard: { name: cardName } }, quantity: qty });
+            }
+          });
+          parsedCards = cards;
+        } else if (data.inventory) {
+          parsedCards = data.inventory.map((item: any) => ({
+             card: { oracleCard: { name: item.card.name } },
+             quantity: item.q || 1,
+             categories: item.b === 'sideboard' ? ['sideboard'] : []
+          }));
+        }
+      } else {
+        const { data } = await axios.get(`/api/ad/${id}`);
+        const cards = data.cards || (data.data && data.data.cards);
+        
+        if (!cards) {
+          throw new Error("No cards found in deck response");
+        }
+        
+        // More robust filtering
+        parsedCards = cards.filter((dc: any) => {
+          const categories = (dc.categories || []).map((cat: any) => 
+            typeof cat === 'string' ? cat.toLowerCase() : cat
+          );
+          return !categories.includes("sideboard") && !categories.includes("maybeboard");
+        });
+        deckName = data.name || "Deck List";
+      }
       
-      setViewingDeckCards(filteredCards);
-      setViewingDeckName(data.name || "Deck List");
+      setViewingDeckCards(parsedCards);
+      setViewingDeckName(deckName);
       setIsViewingDeck(true);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to fetch deck details", err);
-      showMessage("Failed to load deck details", "error");
+      const msg = err.response?.data?.error || "Failed to load deck details";
+      showMessage(msg, "error");
     } finally {
       setLoading(false);
     }
@@ -820,7 +976,7 @@ Rules for tags:
 Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
       if (!ai) {
-        showMessage("Je moet een Gemini API Key instellen in Vercel om deze AI functie te gebruiken.", "error");
+        showMessage("Geen Gemini API Key beschikbaar. Configuratiefout.", "error");
         return;
       }
       const response = await ai.models.generateContent({
@@ -1043,7 +1199,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
               <div className="relative group">
                 <select 
                   className="w-full appearance-none rune-panel rounded-sm px-5 py-4 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
-                  onChange={(e) => fetchArchidektDeck(e.target.value)}
+                  onChange={(e) => fetchAnyDeck(e.target.value)}
                   value={activeDeckId || ""}
                 >
                   <option value="" disabled className="bg-[#0A0A0A]">Select a Deck...</option>
@@ -1928,14 +2084,14 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                   <div className="flex gap-2">
                     <input 
                       type="text" 
-                      placeholder="Archidekt ID..."
+                      placeholder="Archidekt or TappedOut ID/URL..."
                       className="bg-black/60 border border-[#2a2a2a] shadow-[inset_0_1px_5px_rgba(0,0,0,0.8)] rounded-sm px-4 py-2 text-[11px] flex-1 focus:border-cyan-500/50 outline-none placeholder:text-white/20 text-cyan-400 font-magic transition-colors"
                       value={newDeckIdInput}
                       onChange={(e) => setNewDeckIdInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && fetchArchidektDeck(newDeckIdInput)}
+                      onKeyDown={(e) => e.key === 'Enter' && fetchAnyDeck(newDeckIdInput)}
                     />
                     <button 
-                      onClick={() => fetchArchidektDeck(newDeckIdInput)}
+                      onClick={() => fetchAnyDeck(newDeckIdInput)}
                       className="rune-panel px-4 py-2 text-cyan-500/80 font-black text-[10px] items-center gap-2 flex transition-all active:scale-95 font-magic uppercase hover:text-cyan-400 hover:border-cyan-500/30 z-10"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -2014,7 +2170,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
                       <div className="flex gap-2 pt-2 mt-auto">
                         <button 
-                          onClick={() => fetchArchidektDeck(deck.id)}
+                          onClick={() => fetchAnyDeck(deck.id)}
                           className="flex-1 py-2 bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.04] shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] rounded-2xl text-orange-500 font-magic font-extrabold text-[10px] transition-all uppercase tracking-widest active:scale-95"
                         >
                           Select
@@ -2238,7 +2394,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                     </div>
                     <div>
                       <p className="text-xs font-magic font-bold text-white uppercase tracking-wider mb-1">The Vault</p>
-                      <p className="text-[10px] text-white/40 leading-relaxed font-sans">Connect your Archidekt decks via their ID to access your collection instantly.</p>
+                      <p className="text-[10px] text-white/40 leading-relaxed font-sans">Connect your Archidekt or TappedOut decks via their ID or URL to access your collection instantly.</p>
                     </div>
                   </div>
                   
