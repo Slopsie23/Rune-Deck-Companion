@@ -68,55 +68,71 @@ async function startServer() {
 
   // Proxy for TappedOut to avoid CORS and get txt format
   app.get("/api/to/:id", async (req, res) => {
+    // 1. Try JSON API first
+    try {
+      const apiResponse = await axios.get(`https://tappedout.net/api/v1/decks/${req.params.id}/`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+          "Accept": "application/json",
+        }
+      });
+      if (apiResponse.data) {
+        return res.json(apiResponse.data);
+      }
+    } catch (e) {
+      console.error("TappedOut API failed:", e instanceof Error ? e.message : e);
+    }
+
     try {
       const headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
       };
 
-      // 1. Fetch HTML to extract name and commander 
-      const htmlResponse = await axios.get(`https://tappedout.net/mtg-decks/${req.params.id}/`, { 
-        headers, 
-        responseType: 'text' 
-      });
-      const html = htmlResponse.data;
-      
-      const cheerio = await import('cheerio');
-      const $ = cheerio.load(html);
-      
-      let deckName = $('.h1-name').text().trim();
-      if (!deckName) {
-        const title = $('title').text().trim();
-        if (title) deckName = title.split('(')[0].replace('MTG Deck', '').trim();
-      }
-      if (!deckName) deckName = req.params.id;
-
+      // 2. Fetch HTML to extract name and commander 
+      let deckName = req.params.id;
       let commanders: string[] = [];
-      
-      $('h3').each((i, el) => {
-        const text = $(el).text().trim();
-        if (text.includes("Commander")) {
-          // TappedOut sometimes has commander as images 
-          $(el).next().find('.card-hover').each((_, cardEl) => {
-            const name = $(cardEl).attr('data-name');
-            if (name) commanders.push(name);
-          });
-          
-          // Fallback if it is a list
-          $(el).next('ul').find('a.board-link').each((_, cardEl) => {
-            const name = $(cardEl).text().trim();
-            if (name && !commanders.includes(name)) commanders.push(name);
+
+      try {
+        const htmlResponse = await axios.get(`https://tappedout.net/mtg-decks/${req.params.id}/`, { 
+          headers, 
+          responseType: 'text' 
+        });
+        const html = htmlResponse.data;
+        
+        const cheerio = await import('cheerio');
+        const $ = cheerio.load(html);
+        
+        deckName = $('.h1-name').text().trim();
+        if (!deckName) {
+          const title = $('title').text().trim();
+          if (title) deckName = title.split('(')[0].replace('MTG Deck', '').trim();
+        }
+        if (!deckName) deckName = req.params.id;
+
+        $('h3').each((i, el) => {
+          const text = $(el).text().trim();
+          if (text.includes("Commander")) {
+            $(el).next().find('.card-hover').each((_, cardEl) => {
+              const name = $(cardEl).attr('data-name');
+              if (name) commanders.push(name);
+            });
+            $(el).next('ul').find('a.board-link').each((_, cardEl) => {
+              const name = $(cardEl).text().trim();
+              if (name && !commanders.includes(name)) commanders.push(name);
+            });
+          }
+        });
+
+        if (commanders.length === 0) {
+          $('[id="board-commander"] a.board-link').each((i, el) => {
+            commanders.push($(el).text().trim());
           });
         }
-      });
-
-      if (commanders.length === 0) {
-        // Try id="board-commander"
-        $('[id="board-commander"] a.board-link').each((i, el) => {
-          commanders.push($(el).text().trim());
-        });
+      } catch (e) {
+        console.error("Failed to parse HTML for commanders:", e instanceof Error ? e.message : e);
       }
 
-      // 2. TappedOut .txt download endpoint
+      // 3. TappedOut .txt download endpoint
       const response = await axios.get(`https://tappedout.net/mtg-decks/${req.params.id}/?fmt=txt`, {
         headers,
         responseType: 'text'
