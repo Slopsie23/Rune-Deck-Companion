@@ -451,6 +451,7 @@ export default function App() {
   
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
+  const [contextQuery, setContextQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("Any");
   const [rarityFilter, setRarityFilter] = useState("Any");
   const [setFilter, setSetFilter] = useState("Any");
@@ -704,7 +705,7 @@ export default function App() {
     setColorFilter("Any");
     
     // Perform initial search after loading deck
-    performSearch({ ciOverride: ciStr, skipViewChange: !autoSelect });
+    performSearch({ ciOverride: ciStr, queryOverride: "", skipViewChange: !autoSelect });
   };
 
   const onSelectCommander = (selectedNames: string[]) => {
@@ -948,6 +949,26 @@ export default function App() {
     }
   };
 
+  const clearDeckSelection = () => {
+    setActiveDeckId(null);
+    setActiveDeckName("");
+    setExistingInDeck(new Set());
+    setCurrentCI("");
+    setCommanders([]);
+  };
+
+  const handleFunModeClick = (mode: 'sets' | 'calendar' | 'sheriff' | 'judge' | 'radio') => {
+    clearDeckSelection();
+    setViewMode(mode);
+    setSearchQuery("");
+    setContextQuery("");
+    setTypeFilter("Any");
+    setRarityFilter("Any");
+    setSetFilter("Any");
+    setColorFilter("Any");
+    setArchFilter("Any");
+  };
+
   const performSearch = async (options?: { 
     queryOverride?: string, 
     ciOverride?: string,
@@ -962,12 +983,33 @@ export default function App() {
     setLoading(true);
     setHasSearched(true);
     try {
-      const ci = options?.ciOverride !== undefined ? options.ciOverride : currentCI;
-      const type = options?.typeOverride !== undefined ? options.typeOverride : typeFilter;
-      const rarity = options?.rarityOverride !== undefined ? options.rarityOverride : rarityFilter;
-      const set = options?.setOverride !== undefined ? options.setOverride : setFilter;
-      const color = options?.colorOverride !== undefined ? options.colorOverride : colorFilter;
-      const arch = options?.archOverride !== undefined ? options.archOverride : archFilter;
+      let ci = options?.ciOverride !== undefined ? options.ciOverride : currentCI;
+      let type = options?.typeOverride !== undefined ? options.typeOverride : typeFilter;
+      let rarity = options?.rarityOverride !== undefined ? options.rarityOverride : rarityFilter;
+      let set = options?.setOverride !== undefined ? options.setOverride : setFilter;
+      let color = options?.colorOverride !== undefined ? options.colorOverride : colorFilter;
+      let arch = options?.archOverride !== undefined ? options.archOverride : archFilter;
+
+      let activeContext = contextQuery;
+
+      // If a queryOverride is provided, we assume we're entering a funmode/set selection (or clearing it if empty string)
+      if (options?.queryOverride !== undefined) {
+        setContextQuery(options.queryOverride);
+        activeContext = options.queryOverride;
+        // Reset dropdown filters unless explicitly overridden
+        type = options.typeOverride !== undefined ? options.typeOverride : "Any";
+        rarity = options.rarityOverride !== undefined ? options.rarityOverride : "Any";
+        set = options.setOverride !== undefined ? options.setOverride : "Any";
+        color = options.colorOverride !== undefined ? options.colorOverride : "Any";
+        arch = options.archOverride !== undefined ? options.archOverride : "Any";
+        
+        setTypeFilter(type);
+        setRarityFilter(rarity);
+        setSetFilter(set);
+        setColorFilter(color);
+        setArchFilter(arch);
+        setSearchQuery("");
+      }
 
       const baseFilters = [
         "game:paper",
@@ -994,9 +1036,10 @@ export default function App() {
       }
 
       let query = baseFilters.join(" ");
-      if (options?.queryOverride) {
-        query += ` ${options.queryOverride}`;
-      } else if (searchQuery.trim()) {
+      if (activeContext) {
+        query += ` ${activeContext}`;
+      }
+      if (!options?.queryOverride && searchQuery.trim()) {
         query += ` (o:"${searchQuery}" OR t:"${searchQuery}" OR "${searchQuery}")`;
       }
 
@@ -1499,7 +1542,21 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
           >
             <X className="w-5 h-5" />
           </button>
-                 <div className="w-24 h-24 mb-4 hover:scale-105 transition-transform cursor-pointer group relative">
+          <div 
+            className="w-24 h-24 mb-4 hover:scale-105 transition-transform cursor-pointer group relative"
+            onClick={() => {
+              clearDeckSelection();
+              setSearchQuery("");
+              setContextQuery("");
+              setTypeFilter("Any");
+              setRarityFilter("Any");
+              setSetFilter("Any");
+              setColorFilter("Any");
+              setArchFilter("Any");
+              setViewMode('manage_decks');
+              performSearch({ queryOverride: "", skipCI: true, skipViewChange: true });
+            }}
+          >
             <div className="absolute inset-0 bg-orange-500/20 blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
             <img 
               src={logo} 
@@ -1521,8 +1578,14 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             <div className="space-y-4">
               <button 
                 onClick={() => {
-                  setActiveDeckId(null);
+                  clearDeckSelection();
                   setSearchQuery("");
+                  setContextQuery("");
+                  setTypeFilter("Any");
+                  setRarityFilter("Any");
+                  setSetFilter("Any");
+                  setColorFilter("Any");
+                  setArchFilter("Any");
                   setViewMode('manage_decks');
                 }}
                 className="w-full flex items-center justify-center gap-2 py-4 rune-panel rounded-sm text-[9px] font-magic font-extrabold uppercase tracking-[0.1em] text-cyan-500/60 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
@@ -1534,6 +1597,11 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                   className="w-full appearance-none rune-panel rounded-sm px-5 py-4 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
                   onChange={(e) => {
                     const deckId = e.target.value;
+                    if (!deckId) {
+                      clearDeckSelection();
+                      performSearch({ queryOverride: "" });
+                      return;
+                    }
                     const deck = savedDecks.find(d => d.id === deckId);
                     if (deck) {
                       setActiveDeckId(deck.id);
@@ -1543,7 +1611,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                       // For now, at least switch view and set CI
                       setCurrentCI(deck.ci || "c");
                       setViewMode('cards');
-                      performSearch({ ciOverride: deck.ci || "c" });
+                      performSearch({ ciOverride: deck.ci || "c", queryOverride: "" });
                       
                       // Also fetch full commander data for the sidebar visuals
                       const cmdNames = deck.commanderNames || deck.commanders || [];
@@ -1552,7 +1620,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                   }}
                   value={activeDeckId || ""}
                 >
-                  <option value="" disabled className="bg-[#0A0A0A]">Select a Deck...</option>
+                  <option value="" className="bg-[#0A0A0A]">Select a Deck...</option>
                   {savedDecks.map(deck => (
                     <option key={deck.id} value={deck.id} className="bg-[#0A0A0A]">{deck.name}</option>
                   ))}
@@ -1613,7 +1681,6 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                     Tag Based Search
                   </button>
                 )}
-
                 <div className="flex gap-2">
                   <input 
                     type="text" 
@@ -1647,7 +1714,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                         setSearchQuery("");
                         setArchFilter(role.label);
                         setViewMode('cards');
-                        performSearch({ archOverride: role.label, queryOverride: "" });
+                        performSearch({ archOverride: role.label });
                       }}
                       className={`py-3 rune-panel rounded-sm text-[8px] font-black transition-all font-magic uppercase tracking-widest z-10 ${archFilter === role.label ? 'text-cyan-400 border-cyan-500/50 bg-cyan-500/10 shadow-[inset_0_1px_5px_rgba(6,182,212,0.2)]' : 'text-white/40 hover:text-cyan-400 hover:border-cyan-500/30 hover:bg-cyan-500/5'}`}
                     >
@@ -1663,7 +1730,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                       setArchFilter(val);
                       setSearchQuery("");
                       setViewMode('cards');
-                      performSearch({ archOverride: val, queryOverride: "" });
+                      performSearch({ archOverride: val });
                     }}
                     className="w-full appearance-none rune-panel rounded-sm px-5 py-3.5 text-[8px] font-magic font-black uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
                   >
@@ -1707,10 +1774,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             </div>
             <div className="grid grid-cols-2 gap-2">
               <button 
-                onClick={() => {
-                  setViewMode('sets');
-                  setSearchQuery("");
-                }}
+                onClick={() => handleFunModeClick('sets')}
                 className="flex flex-col items-center justify-center p-3.5 rune-panel text-white/40 hover:text-cyan-400 font-magic hover:border-cyan-500/30 transition-all group z-10"
               >
                 <Library className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform" />
@@ -1718,6 +1782,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
               </button>
               <button 
                 onClick={() => {
+                  clearDeckSelection();
                   setSearchQuery("");
                   setSetFilter("Any");
                   setArchFilter("Any");
@@ -1730,40 +1795,28 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 <span className="text-[8px] font-magic font-bold uppercase tracking-widest">Bears</span>
               </button>
               <button 
-                onClick={() => {
-                  setViewMode('calendar');
-                  setSearchQuery("");
-                }}
+                onClick={() => handleFunModeClick('calendar')}
                 className="flex flex-col items-center justify-center p-3.5 rune-panel text-white/40 hover:text-orange-500 font-magic hover:border-orange-500/30 transition-all group z-10"
               >
                 <Calendar className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-orange-500/80 group-hover:text-orange-500" />
                 <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-orange-500/80 group-hover:text-orange-500">Calendar</span>
               </button>
               <button 
-                onClick={() => {
-                  setViewMode('sheriff');
-                  setSearchQuery("");
-                }}
+                onClick={() => handleFunModeClick('sheriff')}
                 className="flex flex-col items-center justify-center p-3.5 rune-panel text-amber-500/60 hover:text-amber-400 font-magic hover:border-amber-500/50 transition-all group z-10"
               >
                 <Shield className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-amber-500/80 group-hover:text-amber-500" />
                 <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-amber-500/80 group-hover:text-amber-400">Sheriff</span>
               </button>
               <button 
-                onClick={() => {
-                  setViewMode('judge');
-                  setSearchQuery("");
-                }}
+                onClick={() => handleFunModeClick('judge')}
                 className="flex flex-col items-center justify-center p-3.5 rune-panel text-green-500/60 hover:text-green-400 font-magic hover:border-green-500/50 transition-all group z-10"
               >
                 <Gavel className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-green-500/80 group-hover:text-green-500" />
                 <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-green-500/80 group-hover:text-green-400">Judge</span>
               </button>
               <button 
-                onClick={() => {
-                  setViewMode('radio');
-                  setSearchQuery("");
-                }}
+                onClick={() => handleFunModeClick('radio')}
                 className="flex flex-col items-center justify-center p-3.5 rune-panel text-purple-500/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10"
               >
                 <Radio className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-purple-500/80 group-hover:text-purple-500" />
@@ -2129,7 +2182,10 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-lg px-6">
                          <button 
-                          onClick={() => setViewMode('manage_decks')}
+                          onClick={() => {
+                            clearDeckSelection();
+                            setViewMode('manage_decks');
+                          }}
                           className="flex flex-col items-center gap-4 p-6 rune-panel rounded-sm hover:border-orange-500/30 transition-all group z-10"
                          >
                             <div className="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
@@ -2142,7 +2198,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                          </button>
 
                          <button 
-                          onClick={() => setViewMode('sets')}
+                          onClick={() => handleFunModeClick('sets')}
                           className="flex flex-col items-center gap-4 p-6 rune-panel rounded-sm hover:border-orange-500/30 transition-all group z-10"
                          >
                             <div className="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
@@ -3158,7 +3214,7 @@ function AdminChamber({
                           setExistingInDeck(new Set(deck.existingNames));
                           setCurrentCI(deck.ci || "c");
                           setViewMode('cards');
-                          performSearch({ ciOverride: deck.ci || "c" });
+                          performSearch({ ciOverride: deck.ci || "c", queryOverride: "" });
                           const cmdNames = deck.commanderNames || deck.commanders || [];
                           initializeDeckState(deck.id, deck.name, cmdNames, new Set(deck.existingNames), deck.totalCost || 0, true);
                         }}
