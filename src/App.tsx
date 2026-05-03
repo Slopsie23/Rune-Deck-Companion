@@ -130,10 +130,10 @@ export default function App() {
       }, { merge: true });
       if (updates.userTitle !== undefined) setUserTitle(updates.userTitle);
       if (updates.cardsPerRow !== undefined) setCardsPerRow(updates.cardsPerRow);
-      showMessage("Settings updated", "success");
+      showMessage("Instellingen bijgewerkt", "success");
     } catch (err) {
       console.error("Failed to save settings", err);
-      showMessage("Failed to save settings", "error");
+      showMessage("Fout bij opslaan instellingen", "error");
     }
   };
   const [authLoading, setAuthLoading] = useState(true);
@@ -142,7 +142,7 @@ export default function App() {
   const [deckbox, setDeckbox] = useState<DeckCard[]>([]);
   const [savedDecks, setSavedDecks] = useState<SavedDeck[]>([]);
 
-  const [mtgSets, setMtgSets] = useState<{code: string, name: string, icon_svg_uri?: string, isFuture: boolean}[]>([]);
+  const [mtgSets, setMtgSets] = useState<{code: string, name: string, icon_svg_uri?: string, isFuture: boolean, parent_set_code?: string, set_type?: string, released_at?: string}[]>([]);
 
   const DECK_ROLES = [
     { label: "Card Draw", query: 'o:"draw"' },
@@ -157,9 +157,11 @@ export default function App() {
   ];
 
   const KNOWN_FUTURE_SETS = [
-    { code: 'hob', name: 'The Hobbit', released_at: '2026-08-01', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/default.svg' },
-    { code: 'rf', name: 'Reality Fracture', released_at: '2026-10-01', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/default.svg' },
-    { code: 'trek', name: 'Star Trek', released_at: '2026-11-01', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/default.svg' }
+    { code: 'ltr', name: 'The Hobbit', released_at: '2023-06-23', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/ltr.svg' },
+    { code: 'fdn', name: 'Foundations', released_at: '2024-11-15', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/fdn.svg' },
+    { code: 'dft', name: 'Aetherdrift', released_at: '2025-02-14', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/dft.svg' },
+    { code: 'tdb', name: 'Dragonstorm', released_at: '2025-04-11', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/tdb.svg' },
+    { code: 'fin', name: 'Final Fantasy', released_at: '2025-06-01', set_type: 'expansion', icon_svg_uri: 'https://svgs.scryfall.io/sets/fin.svg' }
   ];
 
   useEffect(() => {
@@ -203,6 +205,12 @@ export default function App() {
     fetchSets();
   }, []);
 
+  const getSetSymbolUrl = (setCode: string, originalUri?: string) => {
+    if (originalUri && originalUri.includes('scryfall.io')) return originalUri;
+    // Fallback for missing symbols - can be expanded
+    return `https://svgs.scryfall.io/sets/${setCode.toLowerCase()}.svg`;
+  };
+
   const [cardsPerRow, setCardsPerRow] = useState<number>(0); // 0 means 'auto' (~220px)
   const [userTitle, setUserTitle] = useState("Planeswalker");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -224,6 +232,7 @@ export default function App() {
             const data = userSnap.data();
             if (data.userTitle) setUserTitle(data.userTitle);
             if (data.cardsPerRow !== undefined) setCardsPerRow(data.cardsPerRow);
+
           }
 
           await setDoc(userRef, {
@@ -360,15 +369,53 @@ export default function App() {
   const [viewingDeckName, setViewingDeckName] = useState("");
   const [isViewingDeck, setIsViewingDeck] = useState(false);
   const [hoveredPreviewCard, setHoveredPreviewCard] = useState<string | null>(null);
+  const [hoveredPreviewPrice, setHoveredPreviewPrice] = useState<string | null>(null);
 
-  const flatDeckCards = useMemo(() => {
-    if (!viewingDeckCards) return [];
+  const groupedDeckCards = useMemo(() => {
+    if (!viewingDeckCards) return {};
     
-    return [...viewingDeckCards].sort((a, b) => {
-      const nameA = a.card?.oracleCard?.name || a.card?.name || "";
-      const nameB = b.card?.oracleCard?.name || b.card?.name || "";
-      return nameA.localeCompare(nameB);
+    // Define ordering for groups
+    const categoryOrder = ["Commanders", "Creatures", "Planeswalkers", "Instants", "Sorceries", "Enchantments", "Artifacts", "Lands", "Other"];
+    const groups: { [key: string]: any[] } = {};
+    categoryOrder.forEach(c => groups[c] = []);
+
+    viewingDeckCards.forEach((dc: any) => {
+      const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+      const type = (c?.type_line || "").toLowerCase();
+      
+      const isCommander = dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander'));
+      
+      if (isCommander) {
+        groups["Commanders"].push(dc);
+      } else if (type.includes("creature")) {
+        groups["Creatures"].push(dc);
+      } else if (type.includes("planeswalker")) {
+        groups["Planeswalkers"].push(dc);
+      } else if (type.includes("instant")) {
+        groups["Instants"].push(dc);
+      } else if (type.includes("sorcery")) {
+        groups["Sorceries"].push(dc);
+      } else if (type.includes("enchantment")) {
+        groups["Enchantments"].push(dc);
+      } else if (type.includes("artifact")) {
+        groups["Artifacts"].push(dc);
+      } else if (type.includes("land")) {
+        groups["Lands"].push(dc);
+      } else {
+        groups["Other"].push(dc);
+      }
     });
+
+    // Sort each group alphabetically
+    Object.keys(groups).forEach(key => {
+      groups[key].sort((a, b) => {
+        const nameA = a.card?.oracleCard?.name || a.card?.name || "";
+        const nameB = b.card?.oracleCard?.name || b.card?.name || "";
+        return nameA.localeCompare(nameB);
+      });
+    });
+
+    return groups;
   }, [viewingDeckCards]);
   
   // Check if it's the first time logged in to show onboarding
@@ -469,12 +516,34 @@ export default function App() {
     id: string, 
     deckName: string, 
     commanderNames: string[], 
-    existingNames: Set<string>
+    existingNames: Set<string>,
+    totalCost?: number,
+    autoSelect: boolean = true
   ) => {
+    // If no commanders found, try to infer from existing names (look for legendary creatures)
+    let finalCommanderNames = [...commanderNames];
+    if (finalCommanderNames.length === 0 && existingNames.size > 0) {
+      // Small optimization: don't search all 100 cards, just some likely candidates
+      const candidates = Array.from(existingNames).slice(0, 10);
+      try {
+        const identifiers = candidates.map(name => ({ name }));
+        const { data: sfData } = await axios.post('https://api.scryfall.com/cards/collection', { identifiers });
+        const likelyCommander = sfData.data.find((c: any) => c && c.type_line?.includes("Legendary") && c.type_line?.includes("Creature"));
+        if (likelyCommander) {
+          finalCommanderNames = [likelyCommander.name];
+        } else if (sfData.data[0]) {
+          // Fallback to first card if no legendary creature found
+          finalCommanderNames = [sfData.data[0].name];
+        }
+      } catch (e) {
+        console.error("Failed to infer commander", e);
+      }
+    }
+
     // Fetch commander details for CI and images
     const commanderDetails = await Promise.all(
-      commanderNames.map(name => 
-        axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`)
+      finalCommanderNames.map(name => 
+        axios.get(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`)
           .catch(err => {
             console.error(`Commander ${name} not found on Scryfall`, err);
             return { data: null };
@@ -484,15 +553,12 @@ export default function App() {
 
     const ciSet = new Set<string>();
     const commandersData: {name: string, art_crop: string, isBackground: boolean}[] = [];
-    const artCrops: string[] = [];
-    const commanderUrls: string[] = [];
 
     commanderDetails.forEach((res, index) => {
       const c = res.data;
       if (!c) {
-        // If Scryfall failed, we at least keep the name but won't have images/CI
         commandersData.push({ 
-          name: commanderNames[index], 
+          name: finalCommanderNames[index], 
           art_crop: "", 
           isBackground: false 
         });
@@ -500,13 +566,10 @@ export default function App() {
       }
       c.color_identity?.forEach((color: string) => ciSet.add(color));
       const imgs: any = getCardImages(c);
-      if (imgs.normal) commanderUrls.push(imgs.normal);
-      
       const isBackground = c.type_line?.toLowerCase().includes("background");
-      const crop = imgs.art_crop || imgs.normal;
+      const crop = imgs.art_crop || imgs.normal || imgs.large || "";
       
       if (crop) {
-        artCrops.push(crop);
         commandersData.push({ 
           name: c.name, 
           art_crop: crop,
@@ -517,8 +580,7 @@ export default function App() {
 
     // Sort commanders so Backgrounds are always last
     commandersData.sort((a, b) => (a.isBackground ? 1 : 0) - (b.isBackground ? 1 : 0));
-
-    const sortedCommanderUrls = commandersData.map(c => c.art_crop);
+    const sortedCommanderUrls = commandersData.map(c => c.art_crop).filter(url => !!url);
     const ciStr = Array.from(ciSet).sort().join("").toLowerCase() || "c";
 
     // Update saved decks in Firestore
@@ -527,6 +589,13 @@ export default function App() {
       const existingSnap = await getDoc(deckRef);
       const existingData = existingSnap.exists() ? existingSnap.data() : null;
       
+      // Calculate ranking based on commander popularity or other metrics if available
+      // For now, use Scryfall's edhrec_rank as a proxy if we have it
+      let rank = existingData?.ranking || "N/A";
+      if (commanderDetails[0]?.data?.edhrec_rank) {
+        rank = `#${commanderDetails[0].data.edhrec_rank}`;
+      }
+
       const deckData = {
         id,
         userId: user.uid,
@@ -535,6 +604,8 @@ export default function App() {
         commanders: commanderNames,
         art_crops: sortedCommanderUrls,
         ci: ciStr,
+        totalCost: totalCost || existingData?.totalCost || 0,
+        ranking: rank,
         createdAt: existingData?.createdAt || serverTimestamp(),
         updatedAt: serverTimestamp()
       };
@@ -543,11 +614,13 @@ export default function App() {
         .catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${id}`));
     }
 
-    setActiveDeckId(id);
-    setActiveDeckName(deckName);
-    setExistingInDeck(existingNames);
-    setCommanders(commandersData);
-    setCurrentCI(ciStr);
+    if (autoSelect) {
+      setActiveDeckId(id);
+      setActiveDeckName(deckName);
+      setExistingInDeck(existingNames);
+      setCommanders(commandersData);
+      setCurrentCI(ciStr);
+    }
     
     // Reset filters when loading a new deck
     setTypeFilter("Any");
@@ -560,7 +633,7 @@ export default function App() {
     performSearch({ ciOverride: ciStr });
   };
 
-  const fetchArchidektDeck = async (id: string) => {
+  const fetchArchidektDeck = async (id: string, autoSelect: boolean = true) => {
     if (!id.trim()) return;
     setLoading(true);
     try {
@@ -568,18 +641,65 @@ export default function App() {
       
       const commanderNames: string[] = [];
       const existingNames = new Set<string>();
+      const cardLists: string[] = [];
 
       data.cards.forEach((dc: any) => {
-        const name = dc.card.oracleCard.name;
+        const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+        const name = c?.name || dc.card?.name;
+        if (!name) return;
+        
         existingNames.add(name);
-        if (dc.categories?.includes("Commander")) {
+        const qty = dc.quantity || 1;
+        for (let i = 0; i < qty; i++) cardLists.push(name);
+
+        if (dc.categories?.some((cat: string) => cat.toLowerCase().includes("commander"))) {
           commanderNames.push(name);
         }
       });
 
       const deckName = data.name || `Deck ${id}`;
-      
-      await initializeDeckState(id, deckName, commanderNames, existingNames);
+      let totalCost = 0;
+      const fetchedCards: any[] = [];
+
+      // Fetch accurate prices and details from Scryfall
+      if (cardLists.length > 0) {
+        const BATCH_SIZE = 75;
+        const uniqueNames = Array.from(new Set(cardLists));
+        const qtyMap = new Map();
+        cardLists.forEach(n => qtyMap.set(n, (qtyMap.get(n) || 0) + 1));
+        const commandersSet = new Set(commanderNames);
+
+        for (let i = 0; i < uniqueNames.length; i += BATCH_SIZE) {
+          const batchNames = uniqueNames.slice(i, i + BATCH_SIZE);
+          const identifiers = batchNames.map(name => ({ name }));
+          try {
+            const { data: sfData } = await axios.post('https://api.scryfall.com/cards/collection', { identifiers });
+            if (sfData && sfData.data) {
+              sfData.data.forEach((card: any) => {
+                if (card) {
+                  const qty = qtyMap.get(card.name) || qtyMap.get(card.name.split(' // ')[0]) || 0;
+                  const eurStr = card.prices?.eur || card.prices?.eur_foil;
+                  if (eurStr) totalCost += parseFloat(eurStr) * qty;
+
+                  fetchedCards.push({
+                    card,
+                    quantity: qty,
+                    categories: Array.from(commandersSet).some(cn => cn.toLowerCase() === card.name.toLowerCase() || card.name.toLowerCase().startsWith(cn.toLowerCase())) ? ['Commander'] : []
+                  });
+                }
+              });
+            }
+          } catch (e) {
+            console.error("Batch fetch failed", e);
+          }
+        }
+      }
+
+      await initializeDeckState(id, deckName, commanderNames, existingNames, totalCost, autoSelect);
+      if (fetchedCards.length > 0 && autoSelect) {
+        setViewingDeckCards(fetchedCards);
+        setIsViewingDeck(true);
+      }
     } catch (error: any) {
       console.error(error);
       const msg = error.response?.data?.error || "Failed to load deck from Archidekt";
@@ -589,7 +709,7 @@ export default function App() {
     }
   };
 
-  const fetchTappedOutDeck = async (id: string) => {
+  const fetchTappedOutDeck = async (id: string, autoSelect: boolean = true) => {
     if (!id.trim()) return;
     setLoading(true);
     try {
@@ -601,6 +721,9 @@ export default function App() {
       const commanderNames: string[] = data.commanders || [];
       const existingNames = new Set<string>();
       let deckName = data.deckName || data.name || `TappedOut Deck ${id}`;
+      let totalCost = 0;
+
+      const cardLists: string[] = [];
 
       if (rawText) {
         const lines = rawText.split('\n');
@@ -610,38 +733,86 @@ export default function App() {
           
           let cardName = trimmed;
           let isCommander = false;
+          let qty = 1;
 
-          // Some TappedOut exports put *CMDR* for the commander
           if (cardName.includes('*CMDR*')) {
             isCommander = true;
             cardName = cardName.replace('*CMDR*', '').trim();
           }
 
-          // Format is typically: "1x Card Name"
           const match = cardName.match(/^(\d+)x?\s+(.+)$/);
           if (match) {
+            qty = parseInt(match[1]);
             cardName = match[2].trim();
           }
 
           if (cardName) {
              existingNames.add(cardName);
+             for(let i=0; i<qty; i++) cardLists.push(cardName);
              if (isCommander && !commanderNames.includes(cardName)) {
                commanderNames.push(cardName);
              }
           }
         });
       } else if (data.inventory) {
-        // Just in case we hit the actual API format
         data.inventory.forEach((item: any) => {
-           let cardName = item.card.name;
+           let cardName = item.card?.oracleCard?.name || item.card?.name || item.name;
+           if (!cardName) return;
+           const qty = item.quantity || 1;
            existingNames.add(cardName);
-           if (item.b === 'commander' && !commanderNames.includes(cardName)) {
+           for(let i=0; i<qty; i++) cardLists.push(cardName);
+           const cats = item.categories || [];
+           if ((item.b === 'commander' || cats.some((c: string) => c.toLowerCase().includes('commander'))) && !commanderNames.includes(cardName)) {
              commanderNames.push(cardName);
            }
         });
       }
 
-      await initializeDeckState(id, deckName, commanderNames, existingNames);
+      // Fetch prices and card data for the viewer
+      const fetchedCards: any[] = [];
+      if (cardLists.length > 0) {
+        try {
+          const BATCH_SIZE = 75;
+          const uniqueNames = Array.from(new Set(cardLists.map(n => n.split(' // ')[0])));
+          const qtyMap = new Map();
+          cardLists.forEach(n => {
+            const clean = n.split(' // ')[0];
+            qtyMap.set(clean, (qtyMap.get(clean) || 0) + 1);
+          });
+
+          const commandersSet = new Set(commanderNames);
+
+          for (let i = 0; i < uniqueNames.length; i += BATCH_SIZE) {
+            const batchNames = uniqueNames.slice(i, i + BATCH_SIZE);
+            const identifiers = batchNames.map(name => ({ name }));
+            const { data: sfData } = await axios.post('https://api.scryfall.com/cards/collection', { identifiers });
+            if (sfData && sfData.data) {
+              sfData.data.forEach((card: any) => {
+                if (card) {
+                  const qty = qtyMap.get(card.name) || qtyMap.get(card.name.split(' // ')[0]) || 0;
+                  if (card.prices?.eur || card.prices?.eur_foil) {
+                    totalCost += parseFloat(card.prices.eur || card.prices.eur_foil) * qty;
+                  }
+                  
+                  fetchedCards.push({
+                    card: card,
+                    quantity: qty,
+                    categories: Array.from(commandersSet).some(cn => cn.toLowerCase() === card.name.toLowerCase() || card.name.toLowerCase().startsWith(cn.toLowerCase())) ? ['Commander'] : []
+                  });
+                }
+              });
+            }
+          }
+        } catch (e) {
+          console.error("Failed to calculate deck cost", e);
+        }
+      }
+
+      await initializeDeckState(id, deckName, commanderNames, existingNames, totalCost, autoSelect);
+      if (fetchedCards.length > 0 && autoSelect) {
+        setViewingDeckCards(fetchedCards);
+        setIsViewingDeck(true);
+      }
     } catch (error: any) {
       console.error(error);
       const msg = error.response?.data?.error || "Failed to load deck from TappedOut";
@@ -651,35 +822,44 @@ export default function App() {
     }
   };
 
-  const fetchAnyDeck = async (input: string) => {
+  const fetchAnyDeck = async (input: string, autoSelect: boolean = true) => {
     const trimmed = input.trim();
     if (!trimmed) return;
 
     // Detect if URL or direct ID
-    let deckId = trimmed;
-    let source = "archidekt";
+    const ids = trimmed.split(/[;,]/).map(s => s.trim()).filter(s => s);
+    if (ids.length === 0) return;
 
-    if (trimmed.includes("tappedout.net")) {
-      source = "tappedout";
-      const match = trimmed.match(/mtg-decks\/([^/]+)/);
-      if (match) deckId = match[1];
-    } else if (trimmed.includes("archidekt.com")) {
-      source = "archidekt";
-      const match = trimmed.match(/decks\/(\d+)/);
-      if (match) deckId = match[1];
-    } else {
-      // If no url, detect by format: Archidekt IDs are usually numeric
-      if (/^\d+$/.test(deckId)) {
-        source = "archidekt";
-      } else {
+    for (const rawId of ids) {
+      let deckId = rawId;
+      let source = "archidekt";
+
+      if (rawId.includes("tappedout.net")) {
         source = "tappedout";
+        const match = rawId.match(/mtg-decks\/([^/]+)/);
+        if (match) deckId = match[1];
+      } else if (rawId.includes("archidekt.com")) {
+        source = "archidekt";
+        const match = rawId.match(/decks\/(\d+)/);
+        if (match) deckId = match[1];
+      } else {
+        // If no url, detect by format: Archidekt IDs are usually numeric
+        if (/^\d+$/.test(deckId)) {
+          source = "archidekt";
+        } else {
+          source = "tappedout";
+        }
+      }
+
+      if (source === "archidekt") {
+        await fetchArchidektDeck(deckId, autoSelect);
+      } else {
+        await fetchTappedOutDeck(deckId, autoSelect);
       }
     }
 
-    if (source === "archidekt") {
-      await fetchArchidektDeck(deckId);
-    } else {
-      await fetchTappedOutDeck(deckId);
+    if (!autoSelect) {
+      setNewDeckIdInput("");
     }
   };
 
@@ -768,7 +948,8 @@ export default function App() {
         name: card.name,
         thumb: images.small || "",
         from_deck: activeDeckName || "Manual",
-        qty: 1
+        qty: 1,
+        prices: card.prices || {}
       };
       await setDoc(cardRef, newCard).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/deckbox/${cardId}`));
     }
@@ -1257,7 +1438,24 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
               <div className="relative group">
                 <select 
                   className="w-full appearance-none rune-panel rounded-sm px-5 py-4 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
-                  onChange={(e) => fetchAnyDeck(e.target.value)}
+                  onChange={(e) => {
+                    const deckId = e.target.value;
+                    const deck = savedDecks.find(d => d.id === deckId);
+                    if (deck) {
+                      setActiveDeckId(deck.id);
+                      setActiveDeckName(deck.name);
+                      setExistingInDeck(new Set(deck.existingNames));
+                      // We might need to re-fetch full commander details if not in savedDecks
+                      // For now, at least switch view and set CI
+                      setCurrentCI(deck.ci || "c");
+                      setViewMode('cards');
+                      performSearch({ ciOverride: deck.ci || "c" });
+                      
+                      // Also fetch full commander data for the sidebar visuals
+                      const cmdNames = deck.commanderNames || deck.commanders || [];
+                      initializeDeckState(deck.id, deck.name, cmdNames, new Set(deck.existingNames), deck.totalCost || 0, true);
+                    }
+                  }}
                   value={activeDeckId || ""}
                 >
                   <option value="" disabled className="bg-[#0A0A0A]">Select a Deck...</option>
@@ -1471,33 +1669,35 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
           </section>
         </div>
 
-        {/* Section 6: Legal & Profile */}
-        <div className="p-4 bg-transparent border-t border-white/5">
-          <div className="flex items-center gap-3">
+        {/* Section 6: User & Settings */}
+        <div className="p-5 bg-transparent border-t border-white/5 relative">
+          <div className="flex items-center gap-4">
             <button 
               onClick={() => setIsSettingsOpen(true)}
-              className="flex items-center gap-2.5 p-1.5 h-10 bg-white/[0.03] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-full hover:bg-white/[0.06] transition-all group overflow-hidden"
+              className="group relative flex items-center justify-center shrink-0 w-12 h-12 transition-all duration-300"
             >
-              <div className="w-7 h-7 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center justify-center overflow-hidden shrink-0 group-hover:border-orange-500/50 transition-all">
+              {/* Gear Shape SVG Background */}
+              <div className="absolute inset-0 text-cyan-500/10 group-hover:text-cyan-500/30 group-hover:rotate-90 transition-all duration-1000">
+                <svg viewBox="0 0 100 100" className="w-full h-full fill-current">
+                   <path d="M50 0 L60 10 L75 5 L80 20 L95 25 L90 40 L100 50 L90 60 L95 75 L80 80 L75 95 L60 90 L50 100 L40 90 L25 95 L20 80 L5 75 L10 60 L0 50 L10 40 L5 25 L20 20 L25 5 L40 10 Z" />
+                </svg>
+              </div>
+              <div className="w-9 h-9 rounded-full bg-black border border-cyan-500/20 flex items-center justify-center overflow-hidden shrink-0 group-hover:border-cyan-400 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all relative z-10">
                 {user?.photoURL ? (
                   <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
                 ) : (
-                  <User className="w-3.5 h-3.5 text-orange-500" />
+                  <User className="w-4 h-4 text-cyan-400/80" />
                 )}
-              </div>
-              <div className="flex flex-col items-start truncate leading-tight">
-                <span className="text-[8px] font-magic font-black text-white/40 uppercase tracking-[0.1em] group-hover:text-white transition-colors truncate w-full">{user?.displayName || 'Slinger'}</span>
-                <span className="text-[6.5px] font-sans font-bold text-orange-500/60 uppercase tracking-widest truncate w-full">{userTitle || 'Novice'}</span>
               </div>
             </button>
 
-            <div className="flex-1 p-3 bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] flex flex-col gap-0.5 opacity-20 hover:opacity-100 transition-all duration-700 group">
-              <p className="text-[7px] font-magic font-black uppercase tracking-[0.1em] text-white/40 text-center group-hover:text-orange-500/60 transition-colors leading-none">
-                © {new Date().getFullYear()} Slopsie
-              </p>
-              <p className="font-sans font-bold text-[5px] text-white/10 leading-none uppercase text-center group-hover:text-white/20 transition-colors">
-                Rune Deck is unofficial Fan Content allowed under the Fan Content Policy. Portions of the materials used are property of Wizards of the Coast. © Wizards of the Coast LLC.
-              </p>
+            <div className="flex-1 flex flex-col items-start min-w-0">
+               <span className="text-[8px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">{user?.displayName || 'Seeker'}</span>
+               <span className="text-[7px] font-sans font-black text-orange-500/80 uppercase tracking-widest truncate w-full">{userTitle || 'Novice'}</span>
+               <p className="mt-1 text-[5px] font-sans font-bold text-white/10 uppercase leading-tight group hover:text-white/30 transition-colors cursor-help" title="Rune Deck is unofficial Fan Content allowed under the Fan Content Policy. Portions of the materials used are property of Wizards of the Coast. © Wizards of the Coast LLC.">
+                 © {new Date().getFullYear()} Slopsie. <br/> 
+                 Wizards compliant content.
+               </p>
             </div>
           </div>
         </div>
@@ -1531,7 +1731,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
                   <div className="p-8 space-y-8">
                      <div className="space-y-3">
-                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">Planeswalker Title</label>
+                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">Planeswalker Titel</label>
                         <div className="flex gap-2">
                            <input 
                               type="text"
@@ -1539,17 +1739,17 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                               onChange={(e) => setUserTitle(e.target.value)}
                               onBlur={() => saveUserSettings({ userTitle })}
                               onKeyDown={(e) => e.key === 'Enter' && saveUserSettings({ userTitle })}
-                              placeholder="e.g. Master Brewer"
+                              placeholder="bv. Master Brewer"
                               className="w-full bg-black/40 backdrop-blur-xl shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] border border-white/[0.05] rounded-[1.5rem] px-5 py-3.5 text-xs focus:border-orange-500 outline-none text-white/80 transition-all font-sans"
                            />
                            <button 
                              onClick={() => saveUserSettings({ userTitle })}
                              className="px-5 py-3.5 bg-white/[0.04] shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] border border-white/[0.05] rounded-[1.5rem] text-white/60 hover:text-white hover:bg-white/10 transition-all font-black text-xs uppercase tracking-widest font-magic"
                            >
-                             Save
+                             Opslaan
                            </button>
                         </div>
-                        <p className="text-[8px] text-white/20 uppercase tracking-tighter">This title appears under your name in the armory.</p>
+                        <p className="text-[8px] text-white/20 uppercase tracking-tighter">Deze titel verschijnt onder je naam in de armory.</p>
                      </div>
 
                      <div className="space-y-3">
@@ -1809,6 +2009,15 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                   >
                     <div 
                       onClick={() => toggleCardSelection(card)}
+                      onMouseEnter={() => {
+                        const imgs = getCardImages(card);
+                        setHoveredPreviewCard(imgs.normal || imgs.border_crop || null);
+                        setHoveredPreviewPrice(card.prices?.eur || null);
+                      }}
+                      onMouseLeave={() => {
+                        setHoveredPreviewCard(null);
+                        setHoveredPreviewPrice(null);
+                      }}
                       className={`
                         h-full w-full rounded-[14px] overflow-hidden border-2 transition-all duration-300 cursor-pointer
                         ${isSelected ? 'border-orange-500 shadow-[0_0_40px_rgba(249,115,22,0.5)]' : 'border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(6,182,212,0.4)]'}
@@ -1822,7 +2031,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                         referrerPolicy="no-referrer"
                       />
                     </div>
-                    {isSelected && (
+                                 {isSelected && (
                       <div className="absolute top-2 right-2 bg-orange-500 text-black p-1 rounded-full shadow-lg">
                         <PlusCircle className="w-3.5 h-3.5" />
                       </div>
@@ -1863,20 +2072,32 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                         setOverride: set.code
                       }); 
                     }}
-                    className="group relative flex flex-col items-center justify-center p-1 outline-none"
+                    className="group relative flex flex-col items-center justify-center p-1 outline-none z-10"
                   >
-                        <div className="w-16 h-16 relative flex items-center justify-center p-2.5 bg-[#121212] border border-white/10 rounded-full group-hover:border-cyan-400 cursor-pointer transition-all duration-300 group-hover:shadow-[0_0_15px_rgba(6,182,212,0.6)] shadow-xl overflow-hidden group-hover:scale-110">
-                      {set.icon_svg_uri ? (
+                        <div className="w-16 h-16 relative flex items-center justify-center p-2.5 bg-black/[0.1] border border-white/10 rounded-full group-hover:border-cyan-400 cursor-pointer transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.6)] shadow-xl overflow-hidden group-hover:scale-110 aspect-square">
+                      {getSetSymbolUrl(set.code, set.icon_svg_uri) ? (
                         <img 
-                            src={set.icon_svg_uri} 
+                            src={getSetSymbolUrl(set.code, set.icon_svg_uri)} 
                             alt={set.name}
                             style={{ 
                              filter: set.isFuture ? 'drop-shadow(0 0 6px rgba(249,115,22,0.6)) brightness(1.2)' : 'drop-shadow(0 0 6px rgba(6,182,212,0.6)) brightness(1.2)'
                             }}
+                            onError={(e) => {
+                               const target = e.target as HTMLImageElement;
+                               target.style.display = 'none';
+                               target.parentElement!.classList.add('no-img');
+                            }}
                             className="w-full h-full object-contain filter transition-transform duration-500 invert opacity-90 group-hover:opacity-100" 
                             referrerPolicy="no-referrer"
                         />
-                      ) : (
+                      ) : null}
+                      {(!set.icon_svg_uri || set.icon_svg_uri.includes('default.svg')) && (
+                        <div className="flex flex-col items-center justify-center space-y-1 absolute inset-0 group-[.no-img]:flex hidden">
+                          <Package className={`w-4 h-4 ${set.isFuture ? 'text-orange-500/50' : 'text-cyan-500/50'}`} />
+                          <span className={`${set.isFuture ? 'text-orange-500/80' : 'text-cyan-500/80'} text-[8px] font-magic uppercase tracking-widest`}>{set.code}</span>
+                        </div>
+                      )}
+                      {!set.icon_svg_uri && (
                         <div className="flex flex-col items-center justify-center space-y-1">
                           <Package className={`w-4 h-4 ${set.isFuture ? 'text-orange-500/50' : 'text-cyan-500/50'}`} />
                           <span className={`${set.isFuture ? 'text-orange-500/80' : 'text-cyan-500/80'} text-[8px] font-magic uppercase tracking-widest`}>{set.code}</span>
@@ -1940,21 +2161,41 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                                onClick={() => {
                                  setViewMode('cards');
                                  setSearchQuery("");
-                                 const cCode = set.code.length === 3 ? `${set.code}c` : `w${set.code}`;
-                                 performSearch({ queryOverride: `(set:${set.code} OR set:${cCode} OR set:t${set.code})`, setOverride: "Any", archOverride: "Any" });
+                                 
+                                 // Find all related sets (main set + subsets like commander, extras, etc.)
+                                 const relatedSets = mtgSets.filter(s => s.code === set.code || s.parent_set_code === set.code);
+                                 const setQuery = relatedSets.length > 0 
+                                   ? `(${relatedSets.map(s => `set:${s.code}`).join(" OR ")})`
+                                   : `set:${set.code}`;
+                                 
+                                 performSearch({ 
+                                   queryOverride: `${setQuery} -is:token -is:art_series`, 
+                                   setOverride: "Any", 
+                                   archOverride: "Any",
+                                   skipCI: true 
+                                 });
                                }}
-                               className="w-24 h-24 mb-4 relative flex items-center justify-center p-3 bg-[#080808] border border-white/5 rounded-lg group-hover:border-cyan-400 cursor-pointer transition-all duration-500 group-hover:shadow-[0_0_30px_rgba(6,182,212,0.3)] shadow-2xl overflow-hidden hover:scale-110"
+                               className="w-24 h-24 mb-4 relative flex items-center justify-center p-4 bg-black/60 border border-white/10 rounded-full group-hover:border-cyan-400 cursor-pointer transition-all duration-500 group-hover:shadow-[0_0_40px_rgba(6,182,212,0.4)] shadow-2xl overflow-hidden hover:scale-110 active:scale-95"
                             >
-                               {set.icon_svg_uri ? (
+                               {getSetSymbolUrl(set.code, set.icon_svg_uri) ? (
                                  <img 
-                                   src={set.icon_svg_uri} 
+                                   src={getSetSymbolUrl(set.code, set.icon_svg_uri)} 
                                    alt={set.name} 
                                    style={{ 
                                     filter: set.isFuture ? 'drop-shadow(0 0 8px rgba(249,115,22,0.6)) brightness(1.2)' : 'drop-shadow(0 0 8px rgba(6,182,212,0.6)) brightness(1.2)'
                                    }}
+                                   onError={(e) => {
+                                      (e.target as HTMLImageElement).style.display = 'none';
+                                      (e.target as HTMLImageElement).parentElement!.classList.add('no-img');
+                                   }}
                                    className="w-full h-full object-contain filter group-hover:scale-110 transition-transform duration-500 invert opacity-80 group-hover:opacity-100" 
                                  />
-                               ) : (
+                               ) : null}
+                               <div className="flex flex-col items-center justify-center space-y-1 absolute inset-0 group-[.no-img]:flex hidden">
+                                 <Package className="w-6 h-6 text-orange-500/50" />
+                                 <span className="text-orange-500/80 text-[10px] font-magic uppercase tracking-widest">{set.code}</span>
+                               </div>
+                               {!set.icon_svg_uri && (
                                  <div className="flex flex-col items-center justify-center space-y-1">
                                    <Package className="w-6 h-6 text-orange-500/50" />
                                    <span className="text-orange-500/80 text-[10px] font-magic uppercase tracking-widest">{set.code}</span>
@@ -2170,10 +2411,10 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                       className="bg-black/60 border border-[#2a2a2a] shadow-[inset_0_1px_5px_rgba(0,0,0,0.8)] rounded-sm px-4 py-2 text-[11px] flex-1 focus:border-cyan-500/50 outline-none placeholder:text-white/20 text-cyan-400 font-magic transition-colors"
                       value={newDeckIdInput}
                       onChange={(e) => setNewDeckIdInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && fetchAnyDeck(newDeckIdInput)}
+                      onKeyDown={(e) => e.key === 'Enter' && fetchAnyDeck(newDeckIdInput, false)}
                     />
                     <button 
-                      onClick={() => fetchAnyDeck(newDeckIdInput)}
+                      onClick={() => fetchAnyDeck(newDeckIdInput, false)}
                       className="rune-panel px-4 py-2 text-cyan-500/80 font-black text-[10px] items-center gap-2 flex transition-all active:scale-95 font-magic uppercase hover:text-cyan-400 hover:border-cyan-500/30 z-10"
                     >
                       <Plus className="w-3.5 h-3.5" />
@@ -2201,8 +2442,21 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                     <div className="p-5 flex-1 flex flex-col gap-4">
                       <div className="space-y-3">
                         <div className="flex flex-col">
-                          <h3 className="font-magic font-bold line-clamp-1 group-hover:text-orange-500 transition-colors uppercase">{deck.name}</h3>
-                          <p className="text-[10px] text-white/30 uppercase font-black tracking-widest font-mono">Commander Deck</p>
+                          <div className="flex items-start justify-between">
+                            <h3 className="font-magic font-bold line-clamp-1 group-hover:text-orange-500 transition-colors uppercase flex-1">{deck.name}</h3>
+                            {deck.totalCost ? (
+                              <div className="ml-2 flex flex-col items-end gap-1">
+                                <div className="flex items-center bg-[#0055a4] px-1.5 py-0.5 rounded-sm shadow-[0_0_15px_rgba(0,85,164,0.3)] border border-[#00aeef]/20 group-hover:border-[#00aeef]/50 transition-all">
+                                  <div className="w-1.5 h-1.5 rounded-full bg-white mr-1.5 animate-pulse" />
+                                  <span className="text-[7.5px] text-white font-magic font-bold tracking-widest uppercase mr-1 opacity-80">CM</span>
+                                  <span className="text-[10px] text-[#00aeef] bg-black/40 px-1.5 py-0.5 rounded-sm font-mono font-black border border-white/5 shadow-inner">€{deck.totalCost.toFixed(2)}</span>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                          <div className="flex items-center gap-2">
+                              <p className="text-[10px] text-white/30 uppercase font-black tracking-widest font-mono">Commander Deck</p>
+                          </div>
                         </div>
                         
                         <div className="flex items-center justify-between gap-3 bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] p-3 rounded-2xl">
@@ -2296,8 +2550,8 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             >
                <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
                   <div className="flex flex-col">
-                    <h2 className="text-xl font-magic font-black text-orange-500 uppercase tracking-tighter truncate max-w-md">{viewingDeckName || 'Deck Manifest'}</h2>
-                    <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em]">{viewingDeckCards.length} Cards in Manifest</p>
+                    <h2 className="text-xl font-magic font-black text-orange-500 uppercase tracking-tighter truncate max-w-md">{viewingDeckName || 'Manifest overzicht'}</h2>
+                    <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em]">{viewingDeckCards.length} Kaarten in Manifest</p>
                   </div>
                   <button onClick={() => { setIsViewingDeck(false); setViewingDeckCards(null); }} className="p-3 hover:bg-white/5 rounded-full transition-colors border border-white/5 group">
                     <X className="w-6 h-6 text-white/40 group-hover:text-white" />
@@ -2305,103 +2559,116 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                </div>
 
                <div className="flex flex-1 bg-[#050505] rounded-b-3xl overflow-hidden relative">
-                 <div className="flex-1 overflow-y-auto p-4 sm:p-6 pb-32 no-scrollbar border-t border-white/[0.05]">
-                   <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3 sm:gap-4">
-                     {flatDeckCards.map((dc: any, idx: number) => {
-                        const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                        const qty = dc.quantity || 1;
-                        const isFoil = dc.modifier === 'Foil' || dc.modifier === 'Etched Foil';
-                        
-                        const edition = dc.card?.edition;
-                        const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
-                        const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                        
-                        let img = edition?.imageUrl || edition?.image_url || edition?.image_uris?.normal || edition?.imageUris?.normal;
-                        const scryfallId = dc.card?.scryfall_id || dc.card?.scryfallId || dc.card?.uids?.scryfall || scryfall?.id || dc.uids?.scryfall;
-                        
-                        if (!img && scryfallId) {
-                           img = `https://cards.scryfall.io/normal/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
-                        }
-                        if (!img) {
-                           img = scryfall?.image_uris?.normal || scryfall?.image_uris?.large || scryfall?.imageUris?.normal;
-                        }
-                        if (!img) {
-                           img = oracle?.scryfallData?.image_uris?.normal || oracle?.image_uris?.normal || oracle?.imageUris?.normal;
-                        }
-                        if (!img && scryfall?.card_faces?.length > 0) {
-                           img = scryfall.card_faces[0].image_uris?.normal || scryfall.card_faces[0].imageUris?.normal;
-                        }
+                     <div className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 pb-32 border-t border-white/[0.05]">
+                       <div className="space-y-16">
+                         {Object.entries(groupedDeckCards)
+                           .filter(([_, cards]) => (cards as any[]).length > 0)
+                           .map(([category, cards]) => (
+                             <div key={category} className="space-y-6">
+                               <div className="flex items-center gap-3">
+                                 <h3 className="text-[10px] font-magic font-black text-white/40 uppercase tracking-[0.4em]">{category}</h3>
+                                 <div className="h-px bg-white/10 flex-1" />
+                                 <span className="text-[10px] font-mono text-cyan-400/40 font-bold">{(cards as any[]).length}</span>
+                               </div>
+                               
+                               <div className="grid grid-cols-5 gap-y-0 gap-x-2">
+                                 {/* Full art stacked grid - 5 columns tight */}
+                                 {(() => {
+                                   const commanderCards = (cards as any[]).filter(dc => dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander')));
+                                   const otherCards = (cards as any[]).filter(dc => !dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander')));
+                                   
+                                   const renderCard = (dc: any, isFull: boolean = true) => {
+                                      const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                      const isFoil = dc.modifier === 'Foil' || dc.modifier === 'Etched Foil';
+                                      const edition = dc.card?.edition;
+                                      const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                      const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                      
+                                      let img = edition?.image_uris?.large || edition?.image_uris?.normal || edition?.imageUrl || edition?.image_url || scryfall?.image_uris?.large || scryfall?.image_uris?.normal || oracle?.image_uris?.large || oracle?.image_uris?.normal;
+                                      const scryfallId = dc.card?.scryfall_id || dc.card?.scryfallId || dc.card?.uids?.scryfall || scryfall?.id || dc.uids?.scryfall;
+                                      
+                                      if (!img && scryfallId) {
+                                         img = `https://cards.scryfall.io/large/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
+                                      }
+                                      
+                                      const cardName = c?.name || dc.card?.name || 'Unknown Card';
+                                      const priceEur = scryfall?.prices?.eur || edition?.prices?.eur || oracle?.prices?.eur || 0;
 
-                        if (img && typeof img === 'string' && !img.startsWith('http')) {
-                          if (img.includes('scryfall.com') || img.includes('cards.scryfall.io')) {
-                             img = `https:${img.startsWith('//') ? '' : '//'}${img}`;
-                          } else if (img.startsWith('/')) {
-                             img = `https://archidekt.com${img}`;
-                          } else {
-                             img = undefined;
-                          }
-                        }
-                        
-                        const cardName = c?.name || dc.card?.name || 'Unknown Card';
-                        
-                        // Check if it's a commander
-                        const isCommander = dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander'));
-                        
-                        return (
-                          <div 
-                            key={`${cardName}-${idx}`} 
-                            className={`group relative aspect-[0.71] w-full bg-white/[0.03] rounded-lg sm:rounded-xl overflow-hidden shadow-[0_4px_12px_rgba(0,0,0,0.8)] border border-white/5 transition-all duration-300 cursor-pointer hover:-translate-y-2 hover:-translate-x-1 hover:border-cyan-400/50 hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] ${isCommander ? 'border-orange-500/50 shadow-[0_0_15px_rgba(249,115,22,0.3)] hover:border-orange-400 hover:shadow-[0_0_25px_rgba(249,115,22,0.6)]' : ''}`}
-                            onMouseEnter={() => setHoveredPreviewCard(img || null)}
-                            onMouseLeave={() => setHoveredPreviewCard(null)}
-                          >
-                            <div className="absolute inset-0 flex flex-col items-center justify-center text-center p-2 sm:p-4 z-0">
-                                <span className="text-[10px] sm:text-xs font-magic font-extrabold text-white/30 truncate px-1 uppercase tracking-wider">{cardName}</span>
-                                <div className="mt-2 w-8 h-px bg-white/10" />
-                            </div>
-                            
-                            {img && (
-                              <img 
-                                src={img} 
-                                className="w-full h-full object-cover relative z-10 transition-opacity duration-500 opacity-100" 
-                                alt={cardName} 
-                                loading="lazy" 
-                                referrerPolicy="no-referrer"
-                                onError={(e) => {
-                                  const target = e.target as HTMLImageElement;
-                                  // Avoid infinite loops
-                                  if (target.src.includes('api.scryfall.com/cards/named')) {
-                                    target.style.opacity = '0';
-                                    return;
-                                  }
-                                  const safeName = cardName.split(' // ')[0];
-                                  target.src = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(safeName)}&format=image&version=normal`;
-                                }} 
-                              />
-                            )}
-                            
-                            <div className="absolute top-1 left-0 flex flex-col gap-1 z-20">
-                               {qty > 1 && (
-                                 <div className="bg-black/90 backdrop-blur-md px-2 py-0.5 text-[11px] font-black text-orange-500 rounded-r-md border-y border-r border-orange-500/30 shadow-lg">
-                                    {qty}x
-                                 </div>
-                               )}
-                               {isFoil && (
-                                 <div className="bg-gradient-to-r from-purple-500/90 to-blue-500/90 backdrop-blur-md px-2 py-0.5 text-[9px] font-black text-white uppercase tracking-tighter rounded-r-md border-y border-r border-white/20 shadow-lg">
-                                    Foil
-                                 </div>
-                               )}
-                            </div>
-                          </div>
-                        );
-                     })}
-                   </div>
-                 </div>
-                 
+                                      return (
+                                        <div 
+                                          key={cardName} 
+                                          className={`group relative aspect-[0.713] w-full bg-[#121212] rounded-lg sm:rounded-xl overflow-hidden shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-white/5 transition-all duration-300 cursor-pointer ${isFull ? 'hover:border-[#00aeef]/50 hover:shadow-[0_0_40px_rgba(6,182,212,0.4)] hover:-translate-y-4' : ''}`}
+                                          style={{ zIndex: isFull ? 50 : 1 }}
+                                          onMouseEnter={() => {
+                                             setHoveredPreviewCard(img || null);
+                                           }}
+                                          onMouseLeave={() => {
+                                             setHoveredPreviewCard(null);
+                                           }}
+                                        >
+                                           {img ? (
+                                             <div className="relative w-full h-full">
+                                               <img src={img} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={cardName} loading="lazy" referrerPolicy="no-referrer" />
+                                               {isFoil && <div className="absolute inset-0 pointer-events-none mix-blend-color-dodge opacity-40 group-hover:opacity-60 transition-opacity" style={{ background: 'linear-gradient(110deg, transparent 20%, rgba(255,255,255,0.4) 50%, transparent 80%)', backgroundSize: '200% 200%', animation: 'holographic 4s linear infinite' }} />}
+                                               
+                                               {/* Card Pricing (Rune Tech) */}
+                                               {priceEur > 0 && (
+                                                <div className="absolute top-1.5 right-1.5 bg-black/80 border border-[#0055a4]/40 rounded-sm px-1 py-0.5 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
+                                                   <div className="absolute top-0 left-0 w-0.5 h-0.5 border-t border-l border-[#00aeef]/60" />
+                                                   <div className="absolute bottom-0 right-0 w-0.5 h-0.5 border-b border-r border-[#00aeef]/60" />
+                                                   <span className="text-[5.5px] text-[#00aeef] font-magic font-extrabold uppercase">CM</span>
+                                                   <span className="text-[7.5px] text-white font-mono font-bold">€{typeof priceEur === 'number' ? priceEur.toFixed(2) : parseFloat(priceEur).toFixed(2)}</span>
+                                                </div>
+                                               )}
+
+                                               <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black via-black/60 to-transparent p-2 pt-6 transition-all duration-300 ${!isFull ? 'translate-y-full group-hover:translate-y-0' : 'translate-y-0'}`}>
+                                                  <div className="flex flex-col items-center gap-1">
+                                                     <p className="text-[7px] font-magic font-bold text-white uppercase tracking-tighter truncate w-full text-center leading-tight">{cardName}</p>
+                                                     {priceEur > 0 && !isFull && (
+                                                       <span className="text-[6.5px] text-cyan-400 font-mono font-black">€{typeof priceEur === 'number' ? priceEur.toFixed(2) : parseFloat(priceEur).toFixed(2)}</span>
+                                                     )}
+                                                  </div>
+                                               </div>
+                                             </div>
+                                           ) : (
+                                             <div className="flex items-center justify-center h-full p-4 text-center">
+                                               <span className="text-[9px] font-magic text-white/20 uppercase">{cardName}</span>
+                                             </div>
+                                           )}
+                                        </div>
+                                      );
+                                   };
+
+                                   const items: React.ReactNode[] = [];
+                                   commanderCards.forEach((dc, i) => items.push(<div key={`cmd-${i}`}>{renderCard(dc, true)}</div>));
+
+                                   // Stack remaining cards in chunks of 5
+                                   for (let i = 0; i < otherCards.length; i += 5) {
+                                     const chunk = otherCards.slice(i, i + 5);
+                                     items.push(
+                                       <div key={`stack-${i}`} className="card-stack">
+                                          {chunk.map((dc, idx) => (
+                                            <div key={`stack-${i}-${idx}`} className="card-stack-item">
+                                               {renderCard(dc, idx === chunk.length - 1)}
+                                            </div>
+                                          ))}
+                                       </div>
+                                     );
+                                   }
+                                   return items;
+                                 })()}
+                               </div>
+                             </div>
+                           ))}
+                       </div>
+                     </div>
                  {/* Desktop Preview Sidebar */}
                  <div className="hidden lg:flex flex-col w-64 xl:w-80 bg-[#0A0A0A] border-l border-white/[0.05] p-6 shrink-0 relative z-10 shadow-[-10px_0_30px_rgba(0,0,0,0.5)] justify-center items-center">
                     <h3 className="absolute top-6 left-6 text-white/30 font-magic text-[10px] uppercase tracking-widest text-center mt-2 w-full pr-12">Card Preview</h3>
                     {hoveredPreviewCard ? (
-                      <img src={hoveredPreviewCard} className="w-full h-auto rounded-xl shadow-[0_0_40px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 transition-all duration-300" />
+                      <div className="relative w-full px-4">
+                        <img src={hoveredPreviewCard} className="w-full h-auto rounded-xl shadow-[0_0_40px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 transition-all duration-300" />
+                      </div>
                     ) : (
                       <div className="w-full aspect-[0.71] rounded-xl border border-white/[0.05] bg-white/[0.02] flex items-center justify-center text-white/20 text-xs font-magic uppercase tracking-widest text-center px-4">
                           Hover a card <br/>to preview
@@ -2419,7 +2686,10 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                      transition={{ duration: 0.15 }}
                      className="lg:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] w-48 sm:w-56 rounded-xl overflow-hidden shadow-[0_0_40px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 pointer-events-none"
                    >
-                     <img src={hoveredPreviewCard} className="w-full h-auto" alt="Preview" />
+                     <div className="relative w-full">
+                       <img src={hoveredPreviewCard} className="w-full h-auto rounded-xl" alt="Preview" />
+                       {/* Price Removed */}
+                     </div>
                    </motion.div>
                  )}
                </AnimatePresence>
@@ -2516,7 +2786,14 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             <div className="flex items-center justify-between relative z-10">
                <div className="flex flex-col">
                   <h2 className="text-xl font-magic font-extrabold text-orange-500 uppercase tracking-tight">Current Selection</h2>
-                  <p className="text-[10px] text-cyan-500/60 font-bold font-mono tracking-widest">{deckbox.reduce((acc, curr) => acc + curr.qty, 0)} CARDS READY</p>
+                  <div className="flex items-center gap-2">
+                     <p className="text-[10px] text-cyan-500/60 font-bold font-mono tracking-widest">{deckbox.reduce((acc, curr) => acc + curr.qty, 0)} CARDS READY</p>
+                     {deckbox.length > 0 && (
+                        <span className="text-[9px] font-mono font-bold text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded border border-emerald-400/20">
+                          € {deckbox.reduce((acc, curr) => acc + (parseFloat(curr.prices?.eur || "0") * curr.qty), 0).toFixed(2)}
+                        </span>
+                     )}
+                  </div>
                </div>
                <button onClick={() => setIsDeckboxOpen(false)} className="p-2 hover:bg-white/5 rounded-sm transition-colors border border-transparent hover:border-cyan-500/30 hover:text-cyan-400 group">
                  <X className="w-5 h-5 text-white/50 group-hover:text-cyan-400" />
@@ -2784,32 +3061,63 @@ function AdminChamber({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
                  </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {userDecks.map(deck => (
-                      <div key={deck.id} className="bg-black/60 border border-emerald-500/10 rounded-3xl p-5 flex items-center justify-between group hover:border-emerald-500/40 hover:bg-black/40 transition-all duration-300">
+                      <div 
+                        key={deck.id} 
+                        onClick={() => {
+                          setActiveDeckId(deck.id);
+                          setActiveDeckName(deck.name);
+                          setExistingInDeck(new Set(deck.existingNames));
+                          setCurrentCI(deck.ci || "c");
+                          setViewMode('cards');
+                          performSearch({ ciOverride: deck.ci || "c" });
+                          const cmdNames = deck.commanderNames || deck.commanders || [];
+                          initializeDeckState(deck.id, deck.name, cmdNames, new Set(deck.existingNames), deck.totalCost || 0, true);
+                        }}
+                        className="bg-black/60 border border-white/5 rounded-2xl p-5 flex items-center justify-between group hover:border-[#00aeef]/40 hover:bg-black/40 transition-all duration-300 cursor-pointer shadow-xl relative overflow-hidden"
+                      >
+                        <div className="absolute top-0 left-0 w-2 h-2 border-t border-l border-white/10" />
+                        <div className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-white/10" />
+
                         <div className="flex items-center gap-4">
-                           <div className="w-16 h-16 rounded-2xl bg-black/60 border border-emerald-500/10 overflow-hidden group-hover:scale-105 transition-transform">
+                           <div className="w-14 h-14 rounded-xl bg-black border border-white/10 overflow-hidden group-hover:scale-105 group-hover:border-[#00aeef]/40 transition-all">
                               {deck.art_crops?.[0] ? 
-                                <img src={deck.art_crops[0]} className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500" /> : 
-                                <div className="w-full h-full flex items-center justify-center bg-emerald-500/5 text-emerald-500/20 font-magic text-xs">NO IMG</div>
+                                <img src={deck.art_crops[0]} className="w-full h-full object-cover grayscale opacity-30 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500" /> : 
+                                <div className="w-full h-full flex items-center justify-center bg-white/5 text-white/10 font-magic text-xs">IMG</div>
                               }
                            </div>
-                           <div>
-                             <h4 className="text-[12px] font-black uppercase text-emerald-100 tracking-[0.1em] mb-2">{deck.name}</h4>
-                             <div className="flex flex-wrap gap-1.5">
-                               {deck.tags?.map((t: string) => (
-                                 <span key={t} className="text-[8px] bg-emerald-500/5 text-emerald-400/70 px-2 py-0.5 rounded-lg border border-emerald-500/10 font-bold uppercase">{t}</span>
+                           <div className="flex flex-col gap-1">
+                             <h4 className="text-[11px] font-black uppercase text-white/60 tracking-[0.1em] group-hover:text-white transition-colors">{deck.name}</h4>
+                             <div className="flex flex-wrap gap-2 items-center">
+                               {deck.totalCost > 0 && (
+                                 <div className="relative bg-[#0055a4]/5 border border-[#0055a4]/30 px-2 py-0.5 rounded-sm shadow-inner flex items-center gap-1.5 group-hover:bg-[#0055a4]/20 transition-all">
+                                   <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/60" />
+                                   <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/60" />
+                                   <span className="text-[6.5px] text-[#00aeef] font-magic font-extrabold uppercase">CM</span>
+                                   <span className="text-[9px] text-white font-mono font-black">€{deck.totalCost.toFixed(2)}</span>
+                                 </div>
+                               )}
+                               {deck.tags?.slice(0, 2).map((t: string) => (
+                                 <span key={t} className="text-[7px] bg-white/5 text-white/30 px-1.5 py-0.5 rounded-sm border border-white/5 font-bold uppercase">{t}</span>
                                ))}
                              </div>
                            </div>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                             <button 
                               onClick={() => deleteUserDeck(deck.id)}
-                              className="p-3 bg-red-500/5 hover:bg-red-500/20 text-red-400 rounded-xl border border-red-500/10 transition-all"
+                              className="p-2.5 bg-red-500/5 hover:bg-red-500/20 text-red-500/40 hover:text-red-500 rounded-lg border border-red-500/10 transition-all"
                             >
-                              <Trash2 className="w-4 h-4" />
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
-                            <button className="p-3 bg-emerald-500/5 hover:bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/10 transition-all">
-                              <Eye className="w-4 h-4" />
+                            <button 
+                              onClick={() => {
+                                 setViewingDeckName(deck.name);
+                                 fetchArchidektDeck(deck.id, false);
+                                 setIsViewingDeck(true);
+                              }}
+                              className="p-2.5 bg-cyan-500/5 hover:bg-cyan-500/20 text-cyan-400 rounded-lg border border-cyan-500/10 transition-all"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
                             </button>
                         </div>
                       </div>
@@ -2837,19 +3145,30 @@ function AdminChamber({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
                     </button>
                  </div>
                  <div className="bg-emerald-500/[0.02] border border-emerald-500/5 rounded-[2.5rem] p-8">
-                    <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4">
-                       {userDeckbox.map(card => (
-                         <div key={card.id || card.name} className="relative aspect-[0.71] rounded-xl overflow-hidden border border-emerald-500/10 group shadow-lg hover:border-emerald-500/40 hover:shadow-emerald-500/10 transition-all">
-                            <img src={card.thumb} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-115 grayscale group-hover:grayscale-0" />
-                            <div className="absolute inset-x-0 bottom-0 p-2 bg-black/90 backdrop-blur-md border-t border-emerald-500/20 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
-                               <p className="text-[9px] font-black truncate uppercase text-white tracking-widest">{card.name}</p>
-                               <div className="flex items-center justify-between mt-1">
-                                 <span className="text-[8px] text-emerald-400/60 font-mono">Q: {card.qty}</span>
-                                 <Copy className="w-2.5 h-2.5 text-emerald-500/40 cursor-pointer hover:text-emerald-400" />
+                     <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4">
+                        {userDeckbox.map(card => (
+                          <div key={card.id || card.name} className="relative aspect-[0.71] rounded-xl overflow-hidden border border-white/5 group shadow-lg hover:border-[#00aeef]/30 transition-all bg-black">
+                             <img src={card.thumb} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 grayscale opacity-40 group-hover:opacity-100 group-hover:grayscale-0" />
+                             
+                             {/* Pricing Badge (Rune Tech) */}
+                             {card.costEur > 0 && (
+                               <div className="absolute top-2 right-2 bg-black/90 border border-[#0055a4]/40 rounded-sm px-1.5 py-0.5 flex items-center gap-1 z-10 backdrop-blur-sm">
+                                  <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/60" />
+                                  <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/60" />
+                                  <span className="text-[6.5px] text-[#00aeef] font-magic font-extrabold uppercase">CM</span>
+                                  <span className="text-[9px] text-white font-mono font-bold">€{card.costEur.toFixed(2)}</span>
                                </div>
-                            </div>
-                         </div>
-                       ))}
+                             )}
+
+                             <div className="absolute inset-x-0 bottom-0 p-2 bg-black/95 backdrop-blur-sm border-t border-white/5 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
+                                <p className="text-[9px] font-black truncate uppercase text-white tracking-widest">{card.name}</p>
+                                <div className="flex items-center justify-between mt-1">
+                                  <span className="text-[8px] text-white/40 font-mono">Q: {card.qty}</span>
+                                  <Copy className="w-3 h-3 text-white/20 cursor-pointer hover:text-cyan-400" />
+                                </div>
+                             </div>
+                          </div>
+                        ))}
                        {userDeckbox.length === 0 && (
                         <div className="col-span-full py-20 text-center">
                           <p className="text-[11px] uppercase font-black text-emerald-500/20 tracking-[0.5em]">Inventory Vacant</p>

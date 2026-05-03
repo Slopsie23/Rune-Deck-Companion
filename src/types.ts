@@ -11,6 +11,10 @@ export interface Card {
     small: string;
     art_crop: string;
   };
+  prices?: {
+    eur?: string;
+    usd?: string;
+  };
   type_line: string;
   rarity: string;
   cmc: number;
@@ -29,6 +33,9 @@ export interface DeckCard {
   thumb: string;
   from_deck: string;
   qty: number;
+  prices?: {
+    eur?: string;
+  };
 }
 
 export interface SavedDeck {
@@ -38,4 +45,6 @@ export interface SavedDeck {
   commanders: string[];
   art_crops: string[];
   ci: string;
+  totalCost?: number;
+  ranking?: string;
 }

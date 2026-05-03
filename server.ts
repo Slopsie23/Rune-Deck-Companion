@@ -116,14 +116,26 @@ async function startServer() {
         }
 
         // Commanders extraction
-        $('[id="board-commander"] a.board-link').each((_, el) => {
+        $('[id="board-commander"] a.board-link, .board-commander a.board-link').each((_, el) => {
           commanders.push($(el).text().trim());
         });
         
         if (commanders.length === 0) {
-          $('.board-link[data-board="commander"]').each((_, el) => {
+          $('.board-link[data-board="commander"], a.board-link[href*="commander"]').each((_, el) => {
             const name = $(el).text().trim();
-            if (name) commanders.push(name);
+            if (name && !commanders.includes(name)) commanders.push(name);
+          });
+        }
+
+        // Try to find in the actual board list if still empty
+        if (commanders.length === 0) {
+          $('h3').each((_, el) => {
+            const h3Text = $(el).text().toLowerCase();
+            if (h3Text.includes('commander')) {
+               $(el).nextUntil('h3').find('a.board-link').each((__, link) => {
+                 commanders.push($(link).text().trim());
+               });
+            }
           });
         }
 
