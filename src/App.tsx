@@ -44,10 +44,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
-// IMPORTANT: DO NOT CHANGE THE LOGO PATH. 
-// The rune_bear.png file is located in the /public folder of the project.
-// Using a local path ensures the logo remains visible even if external repos change.
-const logo = "/rune_bear.png?v=" + new Date().getTime();
+// Art crops for Ruxa and the logo bear to ensure persistence
+const RUXA_IMG = "https://cards.scryfall.io/art_crop/front/e/0/e07b8142-6a49-46e7-b862-41f89a59b894.jpg"; // Ruxa, Patient Professor
+const LOGO_IMG = "https://cards.scryfall.io/art_crop/front/d/1/d1da7a38-5f3a-4412-a246-2f1696816e08.jpg"; // Runeclaw Bear
+const logo = LOGO_IMG;
 
 import { 
   ORANGE_ACCENT, 
@@ -630,7 +630,7 @@ export default function App() {
     setColorFilter("Any");
     
     // Perform initial search after loading deck
-    performSearch({ ciOverride: ciStr });
+    performSearch({ ciOverride: ciStr, skipViewChange: !autoSelect });
   };
 
   const fetchArchidektDeck = async (id: string, autoSelect: boolean = true) => {
@@ -696,10 +696,7 @@ export default function App() {
       }
 
       await initializeDeckState(id, deckName, commanderNames, existingNames, totalCost, autoSelect);
-      if (fetchedCards.length > 0 && autoSelect) {
-        setViewingDeckCards(fetchedCards);
-        setIsViewingDeck(true);
-      }
+      // Removed setIsViewingDeck(true) to stay in context as requested
     } catch (error: any) {
       console.error(error);
       const msg = error.response?.data?.error || "Failed to load deck from Archidekt";
@@ -809,10 +806,7 @@ export default function App() {
       }
 
       await initializeDeckState(id, deckName, commanderNames, existingNames, totalCost, autoSelect);
-      if (fetchedCards.length > 0 && autoSelect) {
-        setViewingDeckCards(fetchedCards);
-        setIsViewingDeck(true);
-      }
+      // Removed setIsViewingDeck(true) to stay in context as requested
     } catch (error: any) {
       console.error(error);
       const msg = error.response?.data?.error || "Failed to load deck from TappedOut";
@@ -871,7 +865,8 @@ export default function App() {
     setOverride?: string,
     colorOverride?: string,
     archOverride?: string,
-    skipCI?: boolean
+    skipCI?: boolean,
+    skipViewChange?: boolean
   }) => {
     setLoading(true);
     setHasSearched(true);
@@ -918,7 +913,10 @@ export default function App() {
       console.log("Searching Scryfall:", url);
       const { data } = await axios.get(url);
       setAllCards(data.data || []);
-      setViewMode('cards');
+      
+      if (!options?.skipViewChange) {
+        setViewMode('cards');
+      }
     } catch (err: any) {
       if (err.response?.status === 404) {
         setAllCards([]);
@@ -1694,10 +1692,14 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             <div className="flex-1 flex flex-col items-start min-w-0">
                <span className="text-[8px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">{user?.displayName || 'Seeker'}</span>
                <span className="text-[7px] font-sans font-black text-orange-500/80 uppercase tracking-widest truncate w-full">{userTitle || 'Novice'}</span>
-               <p className="mt-1 text-[5px] font-sans font-bold text-white/10 uppercase leading-tight group hover:text-white/30 transition-colors cursor-help" title="Rune Deck is unofficial Fan Content allowed under the Fan Content Policy. Portions of the materials used are property of Wizards of the Coast. © Wizards of the Coast LLC.">
-                 © {new Date().getFullYear()} Slopsie. <br/> 
-                 Wizards compliant content.
-               </p>
+               <div className="mt-1 flex flex-col gap-0.5">
+                 <p className="text-[5px] font-sans font-bold text-white/20 uppercase leading-tight tracking-wider">
+                   © {new Date().getFullYear()} Slopsie.
+                 </p>
+                 <p className="text-[4.5px] font-sans font-medium text-white/10 uppercase leading-tight hover:text-white/40 transition-colors cursor-help max-w-[140px]" title="Rune Deck is unofficial Fan Content allowed under the Fan Content Policy. Portions of the materials used are property of Wizards of the Coast. © Wizards of the Coast LLC.">
+                    Rune Deck is unofficial Fan Content. Wizards compliant.
+                 </p>
+               </div>
             </div>
           </div>
         </div>
@@ -2175,7 +2177,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                                    skipCI: true 
                                  });
                                }}
-                               className="w-24 h-24 mb-4 relative flex items-center justify-center p-4 bg-black/60 border border-white/10 rounded-full group-hover:border-cyan-400 cursor-pointer transition-all duration-500 group-hover:shadow-[0_0_40px_rgba(6,182,212,0.4)] shadow-2xl overflow-hidden hover:scale-110 active:scale-95"
+                               className="w-24 h-24 mb-4 relative flex items-center justify-center p-4 bg-black/60 border border-white/10 rounded-full group-hover:border-cyan-400/50 cursor-pointer transition-all duration-500 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.2)] shadow-2xl overflow-hidden hover:scale-105 active:scale-95"
                             >
                                {getSetSymbolUrl(set.code, set.icon_svg_uri) ? (
                                  <img 
@@ -2446,10 +2448,11 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                             <h3 className="font-magic font-bold line-clamp-1 group-hover:text-orange-500 transition-colors uppercase flex-1">{deck.name}</h3>
                             {deck.totalCost ? (
                               <div className="ml-2 flex flex-col items-end gap-1">
-                                <div className="flex items-center bg-[#0055a4] px-1.5 py-0.5 rounded-sm shadow-[0_0_15px_rgba(0,85,164,0.3)] border border-[#00aeef]/20 group-hover:border-[#00aeef]/50 transition-all">
-                                  <div className="w-1.5 h-1.5 rounded-full bg-white mr-1.5 animate-pulse" />
-                                  <span className="text-[7.5px] text-white font-magic font-bold tracking-widest uppercase mr-1 opacity-80">CM</span>
-                                  <span className="text-[10px] text-[#00aeef] bg-black/40 px-1.5 py-0.5 rounded-sm font-mono font-black border border-white/5 shadow-inner">€{deck.totalCost.toFixed(2)}</span>
+                                <div className="flex items-center bg-transparent px-2 py-1 rounded-sm border border-[#00aeef]/10 group-hover:border-[#00aeef]/30 transition-all relative">
+                                  <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/40" />
+                                  <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/40" />
+                                  <span className="text-[6.5px] text-[#00aeef]/50 font-magic font-extrabold uppercase mr-2 tracking-widest leading-none">CM</span>
+                                  <span className="text-[10px] text-white/50 font-mono font-black group-hover:text-white/80">€{deck.totalCost.toFixed(2)}</span>
                                 </div>
                               </div>
                             ) : null}
@@ -2611,22 +2614,9 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                                                <img src={img} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={cardName} loading="lazy" referrerPolicy="no-referrer" />
                                                {isFoil && <div className="absolute inset-0 pointer-events-none mix-blend-color-dodge opacity-40 group-hover:opacity-60 transition-opacity" style={{ background: 'linear-gradient(110deg, transparent 20%, rgba(255,255,255,0.4) 50%, transparent 80%)', backgroundSize: '200% 200%', animation: 'holographic 4s linear infinite' }} />}
                                                
-                                               {/* Card Pricing (Rune Tech) */}
-                                               {priceEur > 0 && (
-                                                <div className="absolute top-1.5 right-1.5 bg-black/80 border border-[#0055a4]/40 rounded-sm px-1 py-0.5 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity shadow-lg">
-                                                   <div className="absolute top-0 left-0 w-0.5 h-0.5 border-t border-l border-[#00aeef]/60" />
-                                                   <div className="absolute bottom-0 right-0 w-0.5 h-0.5 border-b border-r border-[#00aeef]/60" />
-                                                   <span className="text-[5.5px] text-[#00aeef] font-magic font-extrabold uppercase">CM</span>
-                                                   <span className="text-[7.5px] text-white font-mono font-bold">€{typeof priceEur === 'number' ? priceEur.toFixed(2) : parseFloat(priceEur).toFixed(2)}</span>
-                                                </div>
-                                               )}
-
                                                <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black via-black/60 to-transparent p-2 pt-6 transition-all duration-300 ${!isFull ? 'translate-y-full group-hover:translate-y-0' : 'translate-y-0'}`}>
                                                   <div className="flex flex-col items-center gap-1">
                                                      <p className="text-[7px] font-magic font-bold text-white uppercase tracking-tighter truncate w-full text-center leading-tight">{cardName}</p>
-                                                     {priceEur > 0 && !isFull && (
-                                                       <span className="text-[6.5px] text-cyan-400 font-mono font-black">€{typeof priceEur === 'number' ? priceEur.toFixed(2) : parseFloat(priceEur).toFixed(2)}</span>
-                                                     )}
                                                   </div>
                                                </div>
                                              </div>
@@ -3085,22 +3075,22 @@ function AdminChamber({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
                                 <div className="w-full h-full flex items-center justify-center bg-white/5 text-white/10 font-magic text-xs">IMG</div>
                               }
                            </div>
-                           <div className="flex flex-col gap-1">
-                             <h4 className="text-[11px] font-black uppercase text-white/60 tracking-[0.1em] group-hover:text-white transition-colors">{deck.name}</h4>
-                             <div className="flex flex-wrap gap-2 items-center">
-                               {deck.totalCost > 0 && (
-                                 <div className="relative bg-[#0055a4]/5 border border-[#0055a4]/30 px-2 py-0.5 rounded-sm shadow-inner flex items-center gap-1.5 group-hover:bg-[#0055a4]/20 transition-all">
-                                   <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/60" />
-                                   <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/60" />
-                                   <span className="text-[6.5px] text-[#00aeef] font-magic font-extrabold uppercase">CM</span>
-                                   <span className="text-[9px] text-white font-mono font-black">€{deck.totalCost.toFixed(2)}</span>
-                                 </div>
-                               )}
-                               {deck.tags?.slice(0, 2).map((t: string) => (
-                                 <span key={t} className="text-[7px] bg-white/5 text-white/30 px-1.5 py-0.5 rounded-sm border border-white/5 font-bold uppercase">{t}</span>
-                               ))}
+                             <div className="flex flex-col gap-1">
+                               <h4 className="text-[11px] font-black uppercase text-white/60 tracking-[0.1em] group-hover:text-white transition-colors">{deck.name}</h4>
+                               <div className="flex flex-wrap gap-2 items-center">
+                                 {deck.totalCost > 0 && (
+                                   <div className="relative bg-transparent border border-[#00aeef]/10 px-2 py-0.5 rounded-sm flex items-center gap-1.5 group-hover:border-[#00aeef]/30 transition-all">
+                                      <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/40" />
+                                      <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/40" />
+                                      <span className="text-[6.5px] text-[#00aeef]/50 font-magic font-extrabold uppercase">CM</span>
+                                      <span className="text-[9px] text-white/50 font-mono font-black group-hover:text-white/80">€{deck.totalCost.toFixed(2)}</span>
+                                   </div>
+                                 )}
+                                 {deck.tags?.slice(0, 2).map((t: string) => (
+                                   <span key={t} className="text-[7px] bg-white/5 text-white/30 px-1.5 py-0.5 rounded-sm border border-white/5 font-bold uppercase">{t}</span>
+                                 ))}
+                               </div>
                              </div>
-                           </div>
                         </div>
                         <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
                             <button 
@@ -3150,13 +3140,13 @@ function AdminChamber({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
                           <div key={card.id || card.name} className="relative aspect-[0.71] rounded-xl overflow-hidden border border-white/5 group shadow-lg hover:border-[#00aeef]/30 transition-all bg-black">
                              <img src={card.thumb} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 grayscale opacity-40 group-hover:opacity-100 group-hover:grayscale-0" />
                              
-                             {/* Pricing Badge (Rune Tech) */}
+                             {/* Pricing Badge (Subtle Rune Tech) */}
                              {card.costEur > 0 && (
-                               <div className="absolute top-2 right-2 bg-black/90 border border-[#0055a4]/40 rounded-sm px-1.5 py-0.5 flex items-center gap-1 z-10 backdrop-blur-sm">
-                                  <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/60" />
-                                  <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/60" />
-                                  <span className="text-[6.5px] text-[#00aeef] font-magic font-extrabold uppercase">CM</span>
-                                  <span className="text-[9px] text-white font-mono font-bold">€{card.costEur.toFixed(2)}</span>
+                               <div className="absolute top-2 right-2 bg-black/20 backdrop-blur-sm border border-[#00aeef]/10 rounded-sm px-1.5 py-0.5 flex items-center gap-1 z-10 transition-opacity opacity-0 group-hover:opacity-100">
+                                  <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/40" />
+                                  <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/40" />
+                                  <span className="text-[6px] text-[#00aeef]/40 font-magic font-extrabold uppercase">CM</span>
+                                  <span className="text-[8px] text-white/40 font-mono font-bold">€{card.costEur.toFixed(2)}</span>
                                </div>
                              )}
 
@@ -3392,12 +3382,12 @@ function JudgeView() {
 
   return (
     <div className="flex-1 flex flex-col h-full max-w-4xl mx-auto w-full p-2 sm:p-4 overflow-visible relative group/ruxa">
-      {/* Peeking Ruxa effect - Moved further left and made more visible */}
-      <div className="absolute -left-96 bottom-0 w-[600px] h-full pointer-events-none z-0 hidden lg:block opacity-30 group-hover/ruxa:opacity-100 transition-all duration-1000 transform -translate-x-10 group-hover/ruxa:translate-x-0">
+      {/* Decorative Ruxa Background */}
+      <div className="absolute -left-80 bottom-0 w-[500px] h-full pointer-events-none z-0 hidden lg:block opacity-20 group-hover/ruxa:opacity-50 transition-all duration-1000 transform -translate-x-5 group-hover/ruxa:translate-x-0">
         <img 
-          src="/ruxa.png" 
+          src={RUXA_IMG} 
           alt="Peeking Ruxa" 
-          className="w-full h-full object-contain -rotate-6 scale-x-[-1]" 
+          className="w-full h-full object-contain -rotate-6 scale-x-[-1] mix-blend-screen grayscale brightness-150" 
           onError={(e) => (e.currentTarget.style.display = 'none')}
         />
       </div>
@@ -3433,7 +3423,7 @@ function JudgeView() {
                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border 
                   ${msg.role === 'user' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}
                 >
-                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <img src="/ruxa.png" alt="R" className="w-6 h-6 object-contain" onError={(e) => (e.currentTarget.style.display = 'none')} />}
+                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <img src={RUXA_IMG} alt="R" className="w-6 h-6 object-contain rounded-full border border-cyan-500/20" onError={(e) => (e.currentTarget.style.display = 'none')} />}
                 </div>
                 <div className={`p-4 rounded-3xl text-xs font-sans leading-relaxed shadow-sm
                   ${msg.role === 'user' 
@@ -3442,7 +3432,7 @@ function JudgeView() {
                 >
                    {msg.role === 'assistant' && i === 0 && (
                      <div className="mb-4 rounded-2xl overflow-hidden border border-green-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)] hidden">
-                       <img src="/ruxa.png" alt="Ruxa" className="w-full h-auto object-cover" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                       <img src={RUXA_IMG} alt="Ruxa" className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity" onError={(e) => (e.currentTarget.style.display = 'none')} />
                      </div>
                    )}
                    {msg.content}
