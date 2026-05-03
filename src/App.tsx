@@ -1211,7 +1211,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
       }
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
-        contents: prompt,
+        contents: [{ parts: [{ text: prompt }] }],
       });
 
       const suggestedText = (response.text || "").replace(/[^a-zA-Z0-9,\s-]/g, "");
@@ -1231,9 +1231,9 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
       }
       
       showMessage(`Magic complete! Added ${suggestedTags.length} suggestions.`);
-    } catch (err) {
+    } catch (err: any) {
       console.error("Failed to fetch commander for tags", err);
-      showMessage("Magic failed... check logs.");
+      showMessage(`Magic failed: ${err.message || "Unknown error"}`);
     } finally {
       setLoading(false);
     }
@@ -2901,7 +2901,20 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-[300]"
           >
-            <AdminChamber isOpen={showAdminChamber} onClose={() => setShowAdminChamber(false)} />
+            <AdminChamber 
+              isOpen={showAdminChamber} 
+              onClose={() => setShowAdminChamber(false)} 
+              setActiveDeckId={setActiveDeckId}
+              setActiveDeckName={setActiveDeckName}
+              setExistingInDeck={setExistingInDeck}
+              setCurrentCI={setCurrentCI}
+              setViewMode={setViewMode}
+              performSearch={performSearch}
+              initializeDeckState={initializeDeckState}
+              setViewingDeckName={setViewingDeckName}
+              fetchArchidektDeck={fetchArchidektDeck}
+              setIsViewingDeck={setIsViewingDeck}
+            />
           </motion.div>
         )}
       </AnimatePresence>
@@ -2911,7 +2924,33 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 }
 
 // Admin Chamber Component
-function AdminChamber({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
+function AdminChamber({ 
+  isOpen, 
+  onClose,
+  setActiveDeckId,
+  setActiveDeckName,
+  setExistingInDeck,
+  setCurrentCI,
+  setViewMode,
+  performSearch,
+  initializeDeckState,
+  setViewingDeckName,
+  fetchArchidektDeck,
+  setIsViewingDeck
+}: { 
+  isOpen: boolean, 
+  onClose: () => void,
+  setActiveDeckId: (id: string | null) => void,
+  setActiveDeckName: (name: string) => void,
+  setExistingInDeck: (names: Set<string>) => void,
+  setCurrentCI: (ci: string) => void,
+  setViewMode: (mode: any) => void,
+  performSearch: (opts?: any) => void,
+  initializeDeckState: any,
+  setViewingDeckName: (name: string) => void,
+  fetchArchidektDeck: (id: string, autoSelect?: boolean) => void,
+  setIsViewingDeck: (val: boolean) => void
+}) {
   const [users, setUsers] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [userDecks, setUserDecks] = useState<any[]>([]);
@@ -3262,8 +3301,8 @@ function JudgeView() {
 
       // Using gemini-flash-latest as a stable alias
       const response = await (ai as any).models.generateContent({
-        model: "gemini-flash-latest",
-        contents: queryStr,
+        model: "gemini-3-flash-preview",
+        contents: [{ parts: [{ text: queryStr }] }],
         config: {
           systemInstruction: systemPrompt
         }
@@ -3316,54 +3355,44 @@ function JudgeView() {
         context += await fetchCardContext(name) + "\n";
       }
 
-      const systemPrompt = `Je bent Ruxa, een deskundige maar bondige Magic: The Gathering Judge. 
+      const systemPrompt = `Je bent Vencer, een meester-teleporteur en deskundige Magic: The Gathering Judge. Je hebt toegang tot een mentaal archief van alle regels.
       
       MISSIE:
       Beantwoord regelsvragen van de gebruiker direct en trefzeker. Gebruik de meegeleverde context als bron.
       
       STIJL:
       - Antwoord in het NEDERLANDS.
-      - Wees bondig. Geef het antwoord in maximaal een paar zinnen.
-      - Leg de achterliggende regels (zoals specifieke CR-artikelen of Layers) ALLEEN uit als de gebruiker er specifiek naar vraagt (zoals "waarom?" of "leg uit").
-      - Een subtiele humoristische opmerking of een kleine dad-joke mag, maar overdrijf het niet. 
-      - Behoud een wijze, professionele uitstraling.`;
+      - Wees bondig maar wijs. Geef het antwoord in maximaal een paar zinnen.
+      - Leg de achterliggende regels ALLEEN uit als de gebruiker er specifiek naar vraagt.
+      - Een subtiele opmerking over teleportatie of artefacten mag, maar overdrijf het niet.`;
       
       const userMessage = `--- CONTEXT VAN KAARTEN ---\n${context}\n\n--- REGELSVRAAG ---\n${query}\n\nWat is je uitspraak? (Kort en bondig in het Nederlands):`;
 
-      let modelId = "gemini-flash-latest"; // Default fallback
-      // The user mentioned gen-lang-client-0386737975
-      const preferredModel = "gen-lang-client-0386737975";
+      const modelId = "gemini-3-flash-preview"; 
       
       let ruling = "";
       try {
-        console.log(`Poberen met voorkeursmodel: ${preferredModel}`);
         const response = await (ai as any).models.generateContent({
-          model: preferredModel,
-          contents: userMessage,
+          model: modelId,
+          contents: [{ parts: [{ text: userMessage }] }],
           config: {
             systemInstruction: systemPrompt
           }
         });
         ruling = response.text || "";
       } catch (e) {
-        console.warn("Voorkeursmodel mislukt of niet gevonden, terugval naar flash", e);
-        const response = await (ai as any).models.generateContent({
-          model: modelId,
-          contents: userMessage,
-          config: {
-            systemInstruction: systemPrompt
-          }
-        });
-        ruling = response.text || "";
+        console.error("Vencer API error:", e);
+        throw e;
       }
 
       setMessages(prev => [...prev, 
         { role: 'assistant', content: `Gevonden kaarten: ${confirmedNames.join(", ") || "Geen"}` },
         { role: 'assistant', content: ruling }
       ]);
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
-      setMessages(prev => [...prev, { role: 'assistant', content: "Mijn excuses, de archieven zijn tijdelijk verzegeld." }]);
+      const detail = err.message ? ` (${err.message.slice(0, 50)}...)` : "";
+      setMessages(prev => [...prev, { role: 'assistant', content: `Mijn excuses, de archieven zijn tijdelijk verzegeld.${detail}` }]);
     }
     setIsProcessing(false);
     setWaitingForSelection(false);
@@ -3400,8 +3429,8 @@ function JudgeView() {
               <Gavel className="w-6 h-6 text-green-400" />
             </div>
             <div>
-              <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-green-400">Ruxa's Court</h2>
-              <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">Bear Judge Protocol</p>
+              <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-cyan-400">Vencer's Archief</h2>
+              <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">Chronomatic Judge Protocol</p>
             </div>
           </div>
           <div className="flex items-center gap-2 px-3 py-1 bg-green-500/5 rounded-full border border-green-500/10">
@@ -3493,7 +3522,7 @@ function JudgeView() {
                 type="text" 
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Stel een regelsvraag aan Ruxa..."
+                placeholder="Stel een regelsvraag aan Vencer..."
                 disabled={isProcessing || waitingForSelection}
                 className="flex-1 bg-green-500/[0.03] border border-green-500/10 rounded-2xl px-6 py-4 text-base sm:text-xs font-sans text-green-100 placeholder:text-green-500/20 outline-none focus:border-green-500/40 focus:bg-green-500/[0.05] transition-all disabled:opacity-50"
               />
