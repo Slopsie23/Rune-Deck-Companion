@@ -44,10 +44,10 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
-// Art crops for Ruxa and the logo bear to ensure persistence
-const RUXA_IMG = "https://cards.scryfall.io/art_crop/front/e/0/e07b8142-6a49-46e7-b862-41f89a59b894.jpg"; // Ruxa, Patient Professor
-const LOGO_IMG = "https://cards.scryfall.io/art_crop/front/d/1/d1da7a38-5f3a-4412-a246-2f1696816e08.jpg"; // Runeclaw Bear
-const logo = LOGO_IMG;
+// IMPORTANT: DO NOT CHANGE THE LOGO PATH. 
+// The rune_bear.png file is located in the /public folder of the project.
+// Using a local path ensures the logo remains visible even if external repos change.
+const logo = "/rune_bear.png?v=" + new Date().getTime();
 
 import { 
   ORANGE_ACCENT, 
@@ -3385,7 +3385,7 @@ function JudgeView() {
       {/* Decorative Ruxa Background */}
       <div className="absolute -left-80 bottom-0 w-[500px] h-full pointer-events-none z-0 hidden lg:block opacity-20 group-hover/ruxa:opacity-50 transition-all duration-1000 transform -translate-x-5 group-hover/ruxa:translate-x-0">
         <img 
-          src={RUXA_IMG} 
+          src="/ruxa.png" 
           alt="Peeking Ruxa" 
           className="w-full h-full object-contain -rotate-6 scale-x-[-1] mix-blend-screen grayscale brightness-150" 
           onError={(e) => (e.currentTarget.style.display = 'none')}
@@ -3423,7 +3423,7 @@ function JudgeView() {
                 <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border 
                   ${msg.role === 'user' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}
                 >
-                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <img src={RUXA_IMG} alt="R" className="w-6 h-6 object-contain rounded-full border border-cyan-500/20" onError={(e) => (e.currentTarget.style.display = 'none')} />}
+                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <img src="/ruxa.png" alt="R" className="w-6 h-6 object-contain rounded-full border border-cyan-500/20" onError={(e) => (e.currentTarget.style.display = 'none')} />}
                 </div>
                 <div className={`p-4 rounded-3xl text-xs font-sans leading-relaxed shadow-sm
                   ${msg.role === 'user' 
@@ -3432,7 +3432,7 @@ function JudgeView() {
                 >
                    {msg.role === 'assistant' && i === 0 && (
                      <div className="mb-4 rounded-2xl overflow-hidden border border-green-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)] hidden">
-                       <img src={RUXA_IMG} alt="Ruxa" className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity" onError={(e) => (e.currentTarget.style.display = 'none')} />
+                       <img src="/ruxa.png" alt="Ruxa" className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity" onError={(e) => (e.currentTarget.style.display = 'none')} />
                      </div>
                    )}
                    {msg.content}
