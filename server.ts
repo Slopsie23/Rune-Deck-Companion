@@ -116,13 +116,43 @@ async function startServer() {
         }
 
         // Commanders extraction
-        $('[id="board-commander"] a.board-link, .board-commander a.board-link').each((_, el) => {
-          commanders.push($(el).text().trim());
+        const cleanToName = (name: string) => {
+          if (!name) return "";
+          return name.replace(/\*CMDR\*/gi, '')
+                     .replace(/\*F\*/gi, '')
+                     .replace(/\*E\*/gi, '')
+                     .replace(/\*A\*/gi, '')
+                     .replace(/\*L\*/gi, '')
+                     .replace(/\*B\*/gi, '')
+                     .replace(/\*P\*/gi, '')
+                     .replace(/\*S\*/gi, '')
+                     .replace(/\*M\*/gi, '') // Maybeboard marker
+                     .replace(/ \(F\)$/i, '')
+                     .replace(/ \(V\.\d+\)$/i, '')
+                     .replace(/ #\d+$/, '')
+                     .replace(/ \d+x /, '') // Sometimes numbers are included
+                     .trim();
+        };
+
+        $('[id="board-commander"] a.board-link, .board-commander a.board-link, .board-col h3:contains("Commander") + ul a.board-link, .board-col h3:contains("Commandand") + ul a.board-link').each((_, el) => {
+          const name = cleanToName($(el).text());
+          if (name && !commanders.includes(name)) commanders.push(name);
         });
         
+        // Fallback: Check for *CMDR* identifier in text of any board link
+        if (commanders.length === 0) {
+          $('a.board-link').each((_, el) => {
+            const text = $(el).text();
+            if (text.includes('*CMDR*')) {
+               const name = cleanToName(text);
+               if (name && !commanders.includes(name)) commanders.push(name);
+            }
+          });
+        }
+
         if (commanders.length === 0) {
           $('.board-link[data-board="commander"], a.board-link[href*="commander"]').each((_, el) => {
-            const name = $(el).text().trim();
+            const name = cleanToName($(el).text());
             if (name && !commanders.includes(name)) commanders.push(name);
           });
         }
@@ -133,7 +163,8 @@ async function startServer() {
             const h3Text = $(el).text().toLowerCase();
             if (h3Text.includes('commander')) {
                $(el).nextUntil('h3').find('a.board-link').each((__, link) => {
-                 commanders.push($(link).text().trim());
+                 const name = cleanToName($(link).text());
+                 if (name && !commanders.includes(name)) commanders.push(name);
                });
             }
           });

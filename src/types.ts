@@ -48,3 +48,15 @@ export interface SavedDeck {
   totalCost?: number;
   ranking?: string;
 }
+
+export interface ScryfallSet {
+  id: string;
+  code: string;
+  name: string;
+  released_at?: string;
+  set_type: string;
+  card_count: number;
+  icon_svg_uri: string;
+  digital?: boolean;
+  parent_set_code?: string;
+}

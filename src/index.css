@@ -27,20 +27,21 @@
   }
 
   .rune-panel {
+    border-radius: 0 !important;
     @apply relative bg-[#121212] border border-[#2a2a2a] shadow-[inset_0_0_20px_rgba(0,0,0,0.8),0_10px_30px_rgba(0,0,0,0.6)];
   }
 
   .rune-panel::before, .rune-panel::after {
     content: '';
-    @apply absolute w-6 h-6 border-cyan-500/40 transition-colors duration-500 pointer-events-none z-10;
+    @apply absolute w-4 h-4 border-cyan-500/40 transition-colors duration-500 pointer-events-none z-10;
   }
 
   .rune-panel::before {
-    @apply top-0 left-0 border-t-2 border-l-2;
+    @apply -top-[1px] -left-[1px] border-t-2 border-l-2;
   }
 
   .rune-panel::after {
-    @apply bottom-0 right-0 border-b-2 border-r-2;
+    @apply -bottom-[1px] -right-[1px] border-b-2 border-r-2;
   }
 
   .rune-panel:hover::before, .rune-panel:hover::after {

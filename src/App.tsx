@@ -36,11 +36,21 @@ import {
   Eye,
   User,
   Shield,
+  ShieldCheck,
   Flame,
   Skull,
   Users,
   Gavel,
-  Scale
+  Scale,
+  Box,
+  HelpCircle,
+  Wind,
+  BookOpen,
+  Sparkles,
+  LayoutList,
+  Book,
+  Compass,
+  Radio
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
@@ -83,7 +93,7 @@ import {
   increment,
   writeBatch
 } from 'firebase/firestore';
-import { Card, DeckCard, SavedDeck } from './types';
+import { Card, DeckCard, SavedDeck, ScryfallSet } from './types';
 
 
 let ai: GoogleGenAI | null = null;
@@ -104,6 +114,7 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminChamber, setShowAdminChamber] = useState(false);
+  const [showRoadmap, setShowRoadmap] = useState(false);
 
   // Performance and reliability for mobile
   useEffect(() => {
@@ -436,7 +447,7 @@ export default function App() {
   const [currentCI, setCurrentCI] = useState("");
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [viewMode, setViewMode] = useState<'cards' | 'manage_decks' | 'sets' | 'calendar' | 'sheriff' | 'judge'>('cards');
+  const [viewMode, setViewMode] = useState<'cards' | 'manage_decks' | 'sets' | 'calendar' | 'sheriff' | 'judge' | 'radio'>('cards');
   
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -489,6 +500,14 @@ export default function App() {
   };
 
   const [message, setMessage] = useState<{ text: string, type: 'info' | 'error' | 'success' } | null>(null);
+  const [commanderSelection, setCommanderSelection] = useState<{
+    id: string;
+    deckName: string;
+    existingNames: string[];
+    totalCost?: number;
+    autoSelect: boolean;
+    candidates: any[];
+  } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
 
   // Scroll to top when search results change
@@ -522,24 +541,66 @@ export default function App() {
   ) => {
     // If no commanders found, try to infer from existing names (look for legendary creatures)
     let finalCommanderNames = [...commanderNames];
+    
+    // Check if we need to ask the user
     if (finalCommanderNames.length === 0 && existingNames.size > 0) {
-      // Small optimization: don't search all 100 cards, just some likely candidates
-      const candidates = Array.from(existingNames).slice(0, 10);
+      const candidates = Array.from(existingNames)
+        .filter(name => !!name && name.trim().length > 0)
+        .slice(0, 75); // SCRYFALL LIMIT IS 75
       try {
         const identifiers = candidates.map(name => ({ name }));
         const { data: sfData } = await axios.post('https://api.scryfall.com/cards/collection', { identifiers });
-        const likelyCommander = sfData.data.find((c: any) => c && c.type_line?.includes("Legendary") && c.type_line?.includes("Creature"));
-        if (likelyCommander) {
-          finalCommanderNames = [likelyCommander.name];
-        } else if (sfData.data[0]) {
-          // Fallback to first card if no legendary creature found
-          finalCommanderNames = [sfData.data[0].name];
+        
+        // Filter for cards that can be commanders
+        const possibleCommanders = sfData.data.filter((c: any) => 
+          c && !c.error && c.status !== 404 && c.type_line?.includes("Legendary") && 
+          (c.type_line?.includes("Creature") || c.type_line?.includes("Planeswalker") || c.oracle_text?.includes("can be your commander"))
+        );
+
+        if (possibleCommanders.length > 0) {
+          // If we found candidates, show the selection modal
+          setCommanderSelection({
+            id,
+            deckName,
+            existingNames: Array.from(existingNames),
+            totalCost,
+            autoSelect,
+            candidates: possibleCommanders
+          });
+          return; // STOP here, wait for user selection
+        } else if (sfData.data.length > 0) {
+          // No legendaries found, let user pick from the first 50 cards
+          setCommanderSelection({
+            id,
+            deckName,
+            existingNames: Array.from(existingNames),
+            totalCost,
+            autoSelect,
+            candidates: sfData.data.filter((c: any) => c && !c.error && c.status !== 404).slice(0, 50)
+          });
+          return;
+        } else {
+          // Total failure, fallback
+          finalCommanderNames = [candidates[0]];
         }
       } catch (e) {
         console.error("Failed to infer commander", e);
+        finalCommanderNames = [candidates[0]];
       }
     }
 
+    // Continue with the rest of the logic
+    await processDeckWithCommanders(id, deckName, finalCommanderNames, existingNames, totalCost, autoSelect);
+  };
+
+  const processDeckWithCommanders = async (
+    id: string,
+    deckName: string,
+    finalCommanderNames: string[],
+    existingNames: Set<string>,
+    totalCost?: number,
+    autoSelect: boolean = true
+  ) => {
     // Fetch commander details for CI and images
     const commanderDetails = await Promise.all(
       finalCommanderNames.map(name => 
@@ -583,6 +644,19 @@ export default function App() {
     const sortedCommanderUrls = commandersData.map(c => c.art_crop).filter(url => !!url);
     const ciStr = Array.from(ciSet).sort().join("").toLowerCase() || "c";
 
+    // If still no art crop, try to get one from the first card in existingNames
+    let finalArtCrops = sortedCommanderUrls;
+    if (finalArtCrops.length === 0 && existingNames.size > 0) {
+      const firstCard = Array.from(existingNames)[0];
+      try {
+        const { data: cData } = await axios.get(`https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(firstCard)}`);
+        const imgs = getCardImages(cData);
+        if (imgs.art_crop) finalArtCrops = [imgs.art_crop];
+      } catch (e) {
+        // Ignore
+      }
+    }
+
     // Update saved decks in Firestore
     if (user) {
       const deckRef = doc(db, 'users', user.uid, 'decks', id);
@@ -601,8 +675,8 @@ export default function App() {
         userId: user.uid,
         name: deckName,
         tags: existingData?.tags || [],
-        commanders: commanderNames,
-        art_crops: sortedCommanderUrls,
+        commanders: finalCommanderNames, // Use finalCommanderNames which includes inferred
+        art_crops: finalArtCrops,
         ci: ciStr,
         totalCost: totalCost || existingData?.totalCost || 0,
         ranking: rank,
@@ -631,6 +705,13 @@ export default function App() {
     
     // Perform initial search after loading deck
     performSearch({ ciOverride: ciStr, skipViewChange: !autoSelect });
+  };
+
+  const onSelectCommander = (selectedNames: string[]) => {
+    if (!commanderSelection) return;
+    const { id, deckName, existingNames, totalCost, autoSelect } = commanderSelection;
+    setCommanderSelection(null);
+    processDeckWithCommanders(id, deckName, selectedNames, new Set(existingNames), totalCost, autoSelect);
   };
 
   const fetchArchidektDeck = async (id: string, autoSelect: boolean = true) => {
@@ -722,20 +803,30 @@ export default function App() {
 
       const cardLists: string[] = [];
 
+      const cleanTappedOutName = (name: string) => {
+        return name
+          .replace(/\*CMDR\*/g, '')
+          .replace(/\*F\*/g, '')
+          .replace(/\*E\*/g, '')
+          .replace(/\*A\*/g, '')
+          .replace(/\*L\*/g, '')
+          .replace(/\*B\*/g, '')
+          .replace(/\*P\*/g, '')
+          .replace(/\*S\*/g, '')
+          .replace(/ \(F\)$/, '')
+          .replace(/ \(V\.\d+\)$/, '')
+          .trim();
+      };
+
       if (rawText) {
         const lines = rawText.split('\n');
         lines.forEach((line: string) => {
           const trimmed = line.trim();
           if (!trimmed || trimmed.startsWith('//') || trimmed.startsWith('#')) return;
           
-          let cardName = trimmed;
-          let isCommander = false;
+          let cardName = cleanTappedOutName(trimmed);
+          let isCommander = trimmed.includes('*CMDR*');
           let qty = 1;
-
-          if (cardName.includes('*CMDR*')) {
-            isCommander = true;
-            cardName = cardName.replace('*CMDR*', '').trim();
-          }
 
           const match = cardName.match(/^(\d+)x?\s+(.+)$/);
           if (match) {
@@ -753,7 +844,7 @@ export default function App() {
         });
       } else if (data.inventory) {
         data.inventory.forEach((item: any) => {
-           let cardName = item.card?.oracleCard?.name || item.card?.name || item.name;
+           let cardName = cleanTappedOutName(item.card?.oracleCard?.name || item.card?.name || item.name || "");
            if (!cardName) return;
            const qty = item.quantity || 1;
            existingNames.add(cardName);
@@ -1247,9 +1338,10 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
     const fixedCI = ci || "c";
     return (
       <div className="flex gap-1">
-        {fixedCI.split("").map((s, i) => (
-          <img key={`${s}-${i}`} src={MANA_SYMBOL_URIS[s]} className="w-4 h-4" alt={s} />
-        ))}
+        {fixedCI.split("").map((s, i) => {
+          const symbol = `{${s.toUpperCase()}}`;
+          return <img key={`${s}-${i}`} src={MANA_SYMBOL_URIS[symbol]} className="w-4 h-4" alt={s} />;
+        })}
       </div>
     );
   };
@@ -1286,7 +1378,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
               <motion.img
                 animate={{ scale: [1, 1.1, 1] }}
                 transition={{ duration: 2, repeat: Infinity, delay: i * 0.4 }}
-                src={MANA_SYMBOL_URIS[s]}
+                src={MANA_SYMBOL_URIS[`{${s.toUpperCase()}}`]}
                 className="w-full h-full drop-shadow-[0_0_8px_rgba(255,152,0,0.3)]"
                 alt={s}
               />
@@ -1475,7 +1567,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                        {[...commanders].reverse().map((cmd, i) => (
                           <div key={i} className="relative group hover:z-50 transition-all duration-300 hover:scale-105" style={{ zIndex: i }}>
                             <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full overflow-hidden border-4 border-[#0A0A0A] shadow-[0_0_20px_rgba(0,0,0,0.8)] relative group-hover:border-orange-500/50">
-                              <img src={cmd.art_crop || undefined} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
+                              <img src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
                               <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40 mix-blend-overlay" />
                             </div>
                             <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-max max-w-[140px] text-[10px] font-magic font-bold text-white bg-black/80 backdrop-blur px-3 py-1 rounded-full uppercase tracking-wider text-center opacity-0 group-hover:opacity-100 transition-opacity border border-white/10 pointer-events-none">
@@ -1667,6 +1759,16 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 <Gavel className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-green-500/80 group-hover:text-green-500" />
                 <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-green-500/80 group-hover:text-green-400">Judge</span>
               </button>
+              <button 
+                onClick={() => {
+                  setViewMode('radio');
+                  setSearchQuery("");
+                }}
+                className="flex flex-col items-center justify-center p-3.5 rune-panel text-purple-500/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10"
+              >
+                <Radio className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-purple-500/80 group-hover:text-purple-500" />
+                <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-purple-500/80 group-hover:text-purple-400">Radio</span>
+              </button>
             </div>
           </section>
         </div>
@@ -1705,6 +1807,17 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                  </p>
                </div>
             </div>
+            
+            <button 
+                onClick={() => setShowRoadmap(true)}
+                className="p-3 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-400 hover:text-green-300 hover:border-green-500/40 hover:bg-green-500/20 transition-all group relative overflow-hidden shrink-0 shadow-[0_0_15px_rgba(34,197,94,0.1)]"
+                title="Rune-Tech Manual"
+              >
+                <HelpCircle className="w-5 h-5 relative z-10 animate-pulse" />
+                <div className="absolute inset-0 bg-gradient-to-tr from-green-500/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                {/* Glow effect */}
+                <div className="absolute -inset-1 bg-green-500/10 blur-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
+              </button>
           </div>
         </div>
       </aside>
@@ -1914,7 +2027,55 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
           ref={contentRef}
           className="flex-1 overflow-y-auto no-scrollbar custom-scrollbar min-h-0"
         >
-          {viewMode === 'cards' ? (
+          {/* Persistent Radio View (Always mounted to keep music playing) */}
+          <div className={`${viewMode === 'radio' ? 'flex' : 'hidden'} flex-1 flex-col h-full absolute inset-0 z-20 w-full p-4 lg:p-12 items-center justify-center bg-[#050505] overflow-hidden`}>
+            {/* Rune Tech Background */}
+            <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-60">
+              <div className="absolute w-[200vw] sm:w-[150vw] md:w-[100vw] aspect-square rounded-full border border-purple-500/30 animate-[spin_100s_linear_infinite]" />
+              <div className="absolute w-[180vw] sm:w-[130vw] md:w-[80vw] aspect-square rounded-full border-2 border-dashed border-purple-500/40 animate-[spin_80s_linear_infinite_reverse]" />
+              <div className="absolute w-[150vw] sm:w-[100vw] md:w-[60vw] aspect-square rounded-full border-[8px] border-dotted border-purple-500/20 animate-[spin_60s_linear_infinite]" />
+              <div className="absolute w-[100vw] sm:w-[50vw] md:w-[40vw] aspect-square rounded-full border-[4px] border-purple-500/10 animate-[spin_40s_linear_infinite_reverse]" />
+              <div className="absolute font-magic text-[100vw] md:text-[50vw] text-purple-500 opacity-10 select-none">♫</div>
+              <div className="absolute font-magic text-[80vw] md:text-[40vw] text-purple-400 opacity-10 -translate-x-1/4 -translate-y-1/4 rotate-45 select-none drop-shadow-[0_0_50px_rgba(168,85,247,0.5)]">✦</div>
+            </div>
+
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="rune-panel p-8 rounded-[3rem] w-full max-w-2xl relative z-10 border-purple-500/20 shadow-[0_0_50px_rgba(168,85,247,0.1)] bg-black/80 backdrop-blur-3xl"
+            >
+              <div className="flex items-center gap-6 mb-8 border-b border-purple-500/10 pb-6">
+                <div className="w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.2)]">
+                  <Radio className="w-8 h-8 text-purple-400" />
+                </div>
+                <div>
+                  <h2 className="text-3xl font-magic font-black uppercase text-purple-400 tracking-[0.2em]">MOB Radio</h2>
+                  <p className="text-[10px] font-mono text-purple-500/40 uppercase tracking-[0.5em]">Vault Resonance Channel 7iB.83</p>
+                </div>
+              </div>
+              
+              <div className="rounded-3xl overflow-hidden border border-white/5 bg-black/40">
+                <iframe 
+                  data-testid="embed-iframe" 
+                  style={{ borderRadius: '12px' }} 
+                  src="https://open.spotify.com/embed/playlist/7iBoB3zGaDwDFQTylu49RH?utm_source=generator&theme=0" 
+                  width="100%" 
+                  height="352" 
+                  frameBorder="0" 
+                  allowFullScreen={true} 
+                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" 
+                  loading="lazy"
+                />
+              </div>
+              
+              <div className="mt-8 flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.3em] text-purple-500/30">
+                <span className="flex items-center gap-2 italic"><div className="w-1 h-1 rounded-full bg-purple-500 animate-pulse" /> Live Transmission</span>
+                <span className="flex items-center gap-2">Magic Over Bitches</span>
+              </div>
+            </motion.div>
+          </div>
+
+          {viewMode === 'cards' && (
             <div 
               className={`grid gap-3 sm:gap-6 p-2 pb-4`}
               style={{
@@ -2046,369 +2207,23 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 );
               })}
             </div>
-          ) : viewMode === 'sets' ? (
-            <div className="flex flex-wrap items-center justify-center gap-1.5 p-4 mt-8 pt-8 overflow-visible max-w-7xl mx-auto">
-              {mtgSets.map((set, idx) => {
-                // Determine tooltip direction based on row/column
-                // This is a simple approximation for a responsive grid
-
-                return (
-                  <motion.button
-                    key={set.code}
-                    initial={{ opacity: 0, scale: 0.8 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    whileHover={{ scale: 1.3, zIndex: 100 }}
-                    onClick={() => {
-                      setActiveDeckId(null);
-                      setCommanders([]);
-                      setCurrentCI("");
-                      setTypeFilter("Any");
-                      setRarityFilter("Any");
-                      setColorFilter("Any");
-                      setArchFilter("Any");
-                      setSetFilter(set.code);
-                      setViewMode('cards');
-                      performSearch({ 
-                        queryOverride: `set:${set.code}`, 
-                        ciOverride: "",
-                        typeOverride: "Any",
-                        rarityOverride: "Any",
-                        colorOverride: "Any",
-                        archOverride: "Any",
-                        setOverride: set.code
-                      }); 
-                    }}
-                    className="group relative flex flex-col items-center justify-center p-1 outline-none z-10"
-                  >
-                        <div className="w-16 h-16 relative flex items-center justify-center p-2.5 bg-black/[0.1] border border-white/10 rounded-full group-hover:border-cyan-400 cursor-pointer transition-all duration-300 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.6)] shadow-xl overflow-hidden group-hover:scale-110 aspect-square">
-                      {getSetSymbolUrl(set.code, set.icon_svg_uri) ? (
-                        <img 
-                            src={getSetSymbolUrl(set.code, set.icon_svg_uri)} 
-                            alt={set.name}
-                            style={{ 
-                             filter: set.isFuture ? 'drop-shadow(0 0 6px rgba(249,115,22,0.6)) brightness(1.2)' : 'drop-shadow(0 0 6px rgba(6,182,212,0.6)) brightness(1.2)'
-                            }}
-                            onError={(e) => {
-                               const target = e.target as HTMLImageElement;
-                               target.style.display = 'none';
-                               target.parentElement!.classList.add('no-img');
-                            }}
-                            className="w-full h-full object-contain filter transition-transform duration-500 invert opacity-90 group-hover:opacity-100" 
-                            referrerPolicy="no-referrer"
-                        />
-                      ) : null}
-                      {(!set.icon_svg_uri || set.icon_svg_uri.includes('default.svg')) && (
-                        <div className="flex flex-col items-center justify-center space-y-1 absolute inset-0 group-[.no-img]:flex hidden">
-                          <Package className={`w-4 h-4 ${set.isFuture ? 'text-orange-500/50' : 'text-cyan-500/50'}`} />
-                          <span className={`${set.isFuture ? 'text-orange-500/80' : 'text-cyan-500/80'} text-[8px] font-magic uppercase tracking-widest`}>{set.code}</span>
-                        </div>
-                      )}
-                      {!set.icon_svg_uri && (
-                        <div className="flex flex-col items-center justify-center space-y-1">
-                          <Package className={`w-4 h-4 ${set.isFuture ? 'text-orange-500/50' : 'text-cyan-500/50'}`} />
-                          <span className={`${set.isFuture ? 'text-orange-500/80' : 'text-cyan-500/80'} text-[8px] font-magic uppercase tracking-widest`}>{set.code}</span>
-                        </div>
-                      )}
-                    </div>
-                    {/* Rune-tech Tooltip */}
-                    <div className="absolute px-4 py-2.5 bg-[#050505]/95 backdrop-blur-md border border-cyan-500/30 rounded-none mix-blend-screen overflow-hidden text-[9px] font-magic whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none z-[200] shadow-[0_0_25px_rgba(6,182,212,0.15)] transition-all duration-300 top-full mt-2 left-1/2 -translate-x-1/2">
-                      <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500/80" />
-                      <div className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-cyan-500/50" />
-                      <div className="absolute top-0 right-0 w-2 h-2 border-t border-r border-cyan-500/50" />
-                      <p className="text-white/90 font-black uppercase tracking-[0.2em] mb-1 pl-1">{set.name}</p>
-                      <div className="h-px w-full bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent mb-1" />
-                      <p className={`uppercase tracking-[0.3em] font-mono text-[8px] font-black pl-1 ${set.isFuture ? 'text-orange-400' : 'text-cyan-400'}`}>
-                        {set.code} • {new Date(set.released_at).getFullYear()}
-                      </p>
-                    </div>
-                  </motion.button>
-                );
-              })}
+          )}
+          {viewMode === 'calendar' && (
+            <div className="h-full w-full absolute inset-0 z-30 bg-[#050505]">
+              <ReleaseCalendar setViewMode={setViewMode} performSearch={performSearch} setSearchQuery={setSearchQuery} />
             </div>
-          ) : viewMode === 'calendar' ? (
-            <div className="p-8 max-w-6xl mx-auto w-full relative">
-              <div className="text-center mb-16">
-                <h2 className="text-4xl font-magic font-extrabold text-white/80 uppercase tracking-tighter mb-4 shadow-black">RELEASE CALENDAR 2026</h2>
-                <p className="text-[10px] text-cyan-400 font-mono tracking-[0.3em] font-bold">GLIMPSE INTO THE FUTURE OF THE MULTIVERSE</p>
-              </div>
+          )}
 
-              {/* Responsive Timeline Container */}
-              <div className="relative w-full overflow-x-auto no-scrollbar pb-16 pt-8">
-                <div className="min-w-[1000px] relative flex items-center justify-between py-56 px-12 mt-10">
-                  {/* Central Glow Line */}
-                  <div className="absolute top-1/2 left-0 right-0 h-1 bg-[#1a1a1a] -translate-y-1/2 rounded-full">
-                    <div className="absolute inset-y-0 left-0 w-full bg-gradient-to-r from-cyan-500/10 via-cyan-500/50 to-orange-500/50 blur-[2px] shadow-[0_0_20px_rgba(6,182,212,0.5)]" />
-                    <div className="absolute inset-y-0 left-0 w-full bg-gradient-to-r from-cyan-500/50 via-cyan-500 to-orange-500" />
-                  </div>
 
-                  {mtgSets
-                    .filter(s => s.released_at.startsWith('2026') && s.set_type === 'expansion' && !s.name.toLowerCase().includes('commander') && !s.name.toLowerCase().includes('omenpaths'))
-                    .sort((a, b) => new Date(a.released_at).getTime() - new Date(b.released_at).getTime())
-                    .map((set, idx) => {
-                      const isTop = idx % 2 === 0;
-                      return (
-                        <div key={set.code} className="relative flex flex-col items-center group w-32 shrink-0">
-                          
-                          {/* Connector Line */}
-                          <div className={`absolute left-1/2 w-0.5 bg-[#2a2a2a] group-hover:bg-cyan-500 transition-colors duration-500 shadow-[0_0_10px_rgba(6,182,212,0)] group-hover:shadow-[0_0_10px_rgba(6,182,212,0.8)]
-                            ${isTop ? 'bottom-1/2 top-auto translate-y-1/2 h-20' : 'top-1/2 bottom-auto -translate-y-1/2 h-20'}
-                          `} />
-                          
-                          {/* Node */}
-                          <div className={`absolute top-1/2 left-1/2 w-4 h-4 rounded-full border-2 -translate-x-1/2 -translate-y-1/2 z-10 shadow-[0_0_15px_rgba(6,182,212,0.8)] group-hover:scale-150 transition-all duration-300
-                             ${set.isFuture ? 'bg-[#0c0c0c] border-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.8)] group-hover:bg-orange-500' : 'bg-[#0c0c0c] border-cyan-500 group-hover:bg-cyan-500'}
-                          `} />
-                          
-                          {/* Content Group */}
-                          <div className={`absolute left-1/2 -translate-x-1/2 w-48 flex flex-col items-center text-center z-20 transition-transform duration-300
-                            ${isTop ? 'bottom-full mb-10 group-hover:-translate-y-2' : 'top-full mt-10 group-hover:translate-y-2'}
-                          `}>
-                            <button 
-                               onClick={() => {
-                                 setViewMode('cards');
-                                 setSearchQuery("");
-                                 
-                                 // Find all related sets (main set + subsets like commander, extras, etc.)
-                                 const relatedSets = mtgSets.filter(s => s.code === set.code || s.parent_set_code === set.code);
-                                 const setQuery = relatedSets.length > 0 
-                                   ? `(${relatedSets.map(s => `set:${s.code}`).join(" OR ")})`
-                                   : `set:${set.code}`;
-                                 
-                                 performSearch({ 
-                                   queryOverride: `${setQuery} -is:token -is:art_series`, 
-                                   setOverride: "Any", 
-                                   archOverride: "Any",
-                                   skipCI: true 
-                                 });
-                               }}
-                               className="w-24 h-24 mb-4 relative flex items-center justify-center p-4 bg-black/60 border border-white/10 rounded-full group-hover:border-cyan-400/50 cursor-pointer transition-all duration-500 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.2)] shadow-2xl overflow-hidden hover:scale-105 active:scale-95"
-                            >
-                               {getSetSymbolUrl(set.code, set.icon_svg_uri) ? (
-                                 <img 
-                                   src={getSetSymbolUrl(set.code, set.icon_svg_uri)} 
-                                   alt={set.name} 
-                                   style={{ 
-                                    filter: set.isFuture ? 'drop-shadow(0 0 8px rgba(249,115,22,0.6)) brightness(1.2)' : 'drop-shadow(0 0 8px rgba(6,182,212,0.6)) brightness(1.2)'
-                                   }}
-                                   onError={(e) => {
-                                      (e.target as HTMLImageElement).style.display = 'none';
-                                      (e.target as HTMLImageElement).parentElement!.classList.add('no-img');
-                                   }}
-                                   className="w-full h-full object-contain filter group-hover:scale-110 transition-transform duration-500 invert opacity-80 group-hover:opacity-100" 
-                                 />
-                               ) : null}
-                               <div className="flex flex-col items-center justify-center space-y-1 absolute inset-0 group-[.no-img]:flex hidden">
-                                 <Package className="w-6 h-6 text-orange-500/50" />
-                                 <span className="text-orange-500/80 text-[10px] font-magic uppercase tracking-widest">{set.code}</span>
-                               </div>
-                               {!set.icon_svg_uri && (
-                                 <div className="flex flex-col items-center justify-center space-y-1">
-                                   <Package className="w-6 h-6 text-orange-500/50" />
-                                   <span className="text-orange-500/80 text-[10px] font-magic uppercase tracking-widest">{set.code}</span>
-                                 </div>
-                               )}
-                            </button>
+          {viewMode === 'judge' && <JudgeView />}
 
-                            <div className="bg-[#080808]/80 backdrop-blur-md p-3 border border-white/5 rounded-md shadow-xl w-full">
-                               <h3 className="text-[11px] font-magic font-bold text-white/90 uppercase tracking-widest leading-snug line-clamp-2 min-h-[32px] flex items-center justify-center">{set.name}</h3>
-                               <div className="h-px w-full bg-gradient-to-r from-transparent via-white/10 to-transparent my-2" />
-                               <p className={`text-[9px] font-mono font-bold tracking-[0.2em] uppercase ${set.isFuture ? 'text-orange-500' : 'text-cyan-500'}`}>
-                                 {new Date(set.released_at).toLocaleDateString(undefined, { year: 'numeric', month: 'long' })}
-                               </p>
-                            </div>
-                          </div>
-
-                        </div>
-                      );
-                  })}
-                </div>
-              </div>
-            </div>
-          ) : viewMode === 'sheriff' ? (
-            <div className="p-8 max-w-4xl mx-auto w-full relative space-y-8 pb-32">
-              <div className="text-center mb-12 relative z-10">
-                <div className="flex justify-center mb-4">
-                  <Shield className="w-16 h-16 text-amber-500 drop-shadow-[0_0_15px_rgba(245,158,11,0.5)]" />
-                </div>
-                <h2 className="text-5xl font-magic font-extrabold text-amber-500 uppercase tracking-tighter mb-2 shadow-black drop-shadow-2xl">SHERIFF</h2>
-                <p className="text-xs text-white/60 font-mono tracking-[0.2em] uppercase">Social Deduction Commander Variant</p>
-                <div className="max-w-2xl mx-auto mt-6">
-                  <p className="text-sm text-cyan-100/70 font-sans leading-relaxed">
-                    Sheriff is een sociale Commander-variant waarbij spelers geheime rollen krijgen met verschillende doelen. Naast het normale Magic-spel komt er bluffen, samenwerken en verraden bij kijken.
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8 z-10 relative">
-                {/* Opzet */}
-                <div className="rune-panel p-6 rounded-xl space-y-4">
-                  <h3 className="text-lg font-magic font-bold text-cyan-400 uppercase tracking-widest border-b border-cyan-500/30 pb-2">Opzet</h3>
-                  <div className="space-y-4 text-sm text-white/70">
-                    <p className="font-bold text-amber-500/90">Normale Commander-regels.</p>
-                    <div>
-                      <strong className="text-cyan-300 block mb-1">Rolverdeling:</strong>
-                      <ul className="list-disc pl-5 space-y-1">
-                        <li>1 Sheriff <span className="text-amber-400/80">(bekend)</span></li>
-                        <li>1 of meer Deputies <span className="text-cyan-500/50">(geheim)</span></li>
-                        <li>1 of meer Outlaws <span className="text-cyan-500/50">(geheim)</span></li>
-                        <li>1 Renegade <span className="text-cyan-500/50">(geheim)</span></li>
-                      </ul>
-                    </div>
-                    <div>
-                      <strong className="text-cyan-300 block mb-1">Startlevens:</strong>
-                      <ul className="list-disc pl-5 space-y-1">
-                        <li>Sheriff: <span className="text-green-400">40 levens</span></li>
-                        <li>Alle anderen: <span className="text-white">30 levens</span></li>
-                      </ul>
-                    </div>
-                    <p><strong className="text-cyan-300">Startspeler:</strong> De Sheriff</p>
-                  </div>
-                </div>
-
-                {/* Speldynamiek */}
-                <div className="rune-panel p-6 rounded-xl space-y-4">
-                  <h3 className="text-lg font-magic font-bold text-amber-400 uppercase tracking-widest border-b border-amber-500/30 pb-2">Speldynamiek</h3>
-                  <div className="space-y-3 text-sm text-white/70">
-                    <p><strong className="text-amber-500 block">Sociale deductie:</strong> Rollen achterhalen via gedrag en acties.</p>
-                    <p><strong className="text-amber-500 block">Bluffen en onderhandelen:</strong> Toegestaan en vaak noodzakelijk.</p>
-                    <p><strong className="text-amber-500 block">Politieke allianties:</strong> Tijdelijk samenwerken kan, maar niemand kan iedereen blijven vertrouwen.</p>
-                    <p><strong className="text-amber-500 block">Open communicatie:</strong> Praten, dreigen, sussen en misleiden maken deel uit van het spel.</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Roles */}
-              <div className="space-y-6 z-10 relative">
-                <h3 className="text-2xl font-magic font-bold text-center text-white/90 uppercase tracking-widest mt-12 mb-8">Rollen & Doelen</h3>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Sheriff */}
-                  <div className="bg-[#0a0a0a]/80 border border-amber-500/30 p-6 rounded-xl relative overflow-hidden group hover:border-amber-500 transition-colors">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-amber-500/80" />
-                    <h4 className="text-xl font-magic font-bold text-amber-500 uppercase tracking-widest mb-3 flex items-center gap-2"><Shield className="w-5 h-5"/> Sheriff</h4>
-                    <div className="space-y-2 text-sm text-white/70">
-                      <p><strong className="text-white/90">Status:</strong> Bekend (open vanaf het begin).</p>
-                      <p><strong className="text-white/90">Doel:</strong> Overleef en schakel alle Outlaws en de Renegade uit.</p>
-                      <p><strong className="text-white/90">Samenwerking:</strong> Met de Deputies.</p>
-                      <p className="pt-2 mt-2 border-t border-white/10 text-amber-400 font-bold">Wint als: Alle Outlaws en de Renegade zijn verslagen.</p>
-                    </div>
-                  </div>
-
-                  {/* Outlaw */}
-                  <div className="bg-[#0a0a0a]/80 border border-red-500/30 p-6 rounded-xl relative overflow-hidden group hover:border-red-500 transition-colors">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-red-500/80" />
-                    <h4 className="text-xl font-magic font-bold text-red-500 uppercase tracking-widest mb-3 flex items-center gap-2"><Flame className="w-5 h-5"/> Outlaw</h4>
-                    <div className="space-y-2 text-sm text-white/70">
-                      <p><strong className="text-white/90">Status:</strong> Geheim (spelers weten niet wie de andere Outlaws zijn).</p>
-                      <p><strong className="text-white/90">Doel:</strong> Schakel de Sheriff uit.</p>
-                      <p><strong className="text-white/90">Samenwerking:</strong> Onderling, zodra ze elkaar vinden.</p>
-                      <p className="pt-2 mt-2 border-t border-white/10 text-red-400 font-bold">Wint als: De Sheriff is uitgeschakeld en minstens één Outlaw leeft nog.</p>
-                    </div>
-                  </div>
-
-                  {/* Deputy */}
-                  <div className="bg-[#0a0a0a]/80 border border-blue-500/30 p-6 rounded-xl relative overflow-hidden group hover:border-blue-500 transition-colors">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-blue-500/80" />
-                    <h4 className="text-xl font-magic font-bold text-blue-500 uppercase tracking-widest mb-3 flex items-center gap-2"><Users className="w-5 h-5"/> Deputy</h4>
-                    <div className="space-y-2 text-sm text-white/70">
-                      <p><strong className="text-white/90">Status:</strong> Geheim (tot de speler zich onthult, optioneel).</p>
-                      <p><strong className="text-white/90">Doel:</strong> Bescherm de Sheriff en help hem winnen.</p>
-                      <p><strong className="text-white/90">Samenwerking:</strong> Met de Sheriff.</p>
-                      <p className="pt-2 mt-2 border-t border-white/10 text-blue-400 font-bold">Wint als: De Sheriff wint (zelf moet niet per se in leven zijn, zolang de Sheriff wint).</p>
-                    </div>
-                  </div>
-
-                  {/* Renegade */}
-                  <div className="bg-[#0a0a0a]/80 border border-purple-500/30 p-6 rounded-xl relative overflow-hidden group hover:border-purple-500 transition-colors">
-                    <div className="absolute top-0 left-0 w-1 h-full bg-purple-500/80" />
-                    <h4 className="text-xl font-magic font-bold text-purple-500 uppercase tracking-widest mb-3 flex items-center gap-2"><Skull className="w-5 h-5"/> Renegade</h4>
-                    <div className="space-y-2 text-sm text-white/70">
-                      <p><strong className="text-white/90">Status:</strong> Geheim (volledige solorol).</p>
-                      <p><strong className="text-white/90">Doel:</strong> Overleef als enige speler.</p>
-                      <p><strong className="text-white/90">Samenwerking:</strong> Werkt in principe met niemand, kan tijdelijk samenwerken als strategie.</p>
-                      <p className="pt-2 mt-2 border-t border-white/10 text-purple-400 font-bold">Wint als: Iedereen anders is uitgeschakeld.</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* Rules and Table */}
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 z-10 relative mt-12">
-                <div className="rune-panel p-6 rounded-xl">
-                  <h3 className="text-lg font-magic font-bold text-cyan-400 uppercase tracking-widest border-b border-cyan-500/30 pb-2 mb-4">Belangrijke spelregels</h3>
-                  <ul className="list-disc pl-5 space-y-3 text-sm text-white/70">
-                    <li>Rollen worden geheim gehouden bij start <span className="text-amber-500/80">(behalve de Sheriff)</span>.</li>
-                    <li>Rollen mogen vrijwillig onthuld worden.</li>
-                    <li>Bij uitschakeling wordt iemands rol bekendgemaakt.</li>
-                    <li>Het spel stopt zodra een rol zijn winconditie behaalt.</li>
-                  </ul>
-                </div>
-
-                <div className="rune-panel p-6 rounded-xl">
-                  <h3 className="text-lg font-magic font-bold text-white/80 uppercase tracking-widest border-b border-white/10 pb-2 mb-4">Verdeling per spelersaantal</h3>
-                  
-                  <div className="overflow-x-auto text-xs">
-                    <table className="w-full text-left border-collapse">
-                      <thead>
-                        <tr className="border-b border-white/10 text-cyan-400/80 font-mono tracking-widest uppercase">
-                          <th className="py-2 pr-2 font-bold">Spelers</th>
-                          <th className="py-2 px-2 text-amber-500">Sheriff</th>
-                          <th className="py-2 px-2 text-red-500">Outlaws</th>
-                          <th className="py-2 px-2 text-blue-500">Deputies</th>
-                          <th className="py-2 pl-2 text-purple-500">Renegade</th>
-                        </tr>
-                      </thead>
-                      <tbody className="text-white/80">
-                        <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                          <td className="py-2 pr-2 font-bold">4</td>
-                          <td className="py-2 px-2 text-amber-400">1</td>
-                          <td className="py-2 px-2 text-red-400">2</td>
-                          <td className="py-2 px-2 text-blue-400/50">-</td>
-                          <td className="py-2 pl-2 text-purple-400">1</td>
-                        </tr>
-                        <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                          <td className="py-2 pr-2 font-bold">5</td>
-                          <td className="py-2 px-2 text-amber-400">1</td>
-                          <td className="py-2 px-2 text-red-400">2</td>
-                          <td className="py-2 px-2 text-blue-400">1</td>
-                          <td className="py-2 pl-2 text-purple-400">1</td>
-                        </tr>
-                        <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                          <td className="py-2 pr-2 font-bold">6</td>
-                          <td className="py-2 px-2 text-amber-400">1</td>
-                          <td className="py-2 px-2 text-red-400">3</td>
-                          <td className="py-2 px-2 text-blue-400">1</td>
-                          <td className="py-2 pl-2 text-purple-400">1</td>
-                        </tr>
-                        <tr className="border-b border-white/5 hover:bg-white/5 transition-colors">
-                          <td className="py-2 pr-2 font-bold">7</td>
-                          <td className="py-2 px-2 text-amber-400">1</td>
-                          <td className="py-2 px-2 text-red-400">3</td>
-                          <td className="py-2 px-2 text-blue-400">2</td>
-                          <td className="py-2 pl-2 text-purple-400">1</td>
-                        </tr>
-                        <tr className="hover:bg-white/5 transition-colors">
-                          <td className="py-2 pr-2 font-bold">8</td>
-                          <td className="py-2 px-2 text-amber-400">1</td>
-                          <td className="py-2 px-2 text-red-400">3</td>
-                          <td className="py-2 px-2 text-blue-400">3</td>
-                          <td className="py-2 pl-2 text-purple-400">1</td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : viewMode === 'judge' ? (
-             <JudgeView />
-          ) : viewMode === 'manage_decks' ? (
-            <div className="space-y-6">
-              <div className="flex flex-col sm:flex-row items-center gap-6 p-6 rune-panel rounded-xl">
+          {viewMode === 'manage_decks' && (
+            <div className="space-y-6 p-4 lg:p-8 relative">
+              <div className="flex flex-col sm:flex-row items-center gap-6 p-6 rune-panel rounded-xl relative z-0">
                 <div className="flex flex-col z-10">
-                <h2 className="text-xl font-magic font-extrabold text-orange-500 uppercase tracking-tight">Saved Decks</h2>
-                <p className="text-[10px] text-cyan-500/60 font-bold font-mono tracking-widest">MY COLLECTION</p>
-              </div>
+                  <h2 className="text-xl font-magic font-extrabold text-orange-500 uppercase tracking-tight">Saved Decks</h2>
+                  <p className="text-[10px] text-cyan-500/60 font-bold font-mono tracking-widest">MY COLLECTION</p>
+                </div>
                 <div className="flex-1 max-w-sm z-10">
                   <div className="flex gap-2">
                     <input 
@@ -2432,12 +2247,12 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                   {savedDecks.length} Decks
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
+              <DeckManager />
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-6">
                 {savedDecks.map(deck => (
                   <div key={deck.id} className="bg-[#0c0c0c] border border-white/[0.04] rounded-sm overflow-hidden flex flex-col group hover:border-cyan-500/40 hover:shadow-[0_0_30px_rgba(6,182,212,0.15)] transition-all duration-500 shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
                     <div className="h-40 relative overflow-hidden">
-                      <img src={deck.art_crops[0] || undefined} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={deck.name} />
+                      <img src={deck.art_crops[0] || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={deck.name} />
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
                       <div className="absolute inset-x-4 top-4 flex justify-between">
                          <div className="bg-black/60 backdrop-blur p-1 rounded-full">{renderManaSymbols(deck.ci)}</div>
@@ -2490,8 +2305,8 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                            <span key={tag} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-[10px] flex items-center gap-2 group/tag">
                              #{tag}
                              <X 
-                              className="w-3 h-3 hover:text-red-500 cursor-pointer" 
-                              onClick={() => removeTag(deck.id, tag)}
+                               className="w-3 h-3 hover:text-red-500 cursor-pointer" 
+                               onClick={() => removeTag(deck.id, tag)}
                              />
                            </span>
                          ))}
@@ -2536,7 +2351,19 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 ))}
               </div>
             </div>
-          ) : null}
+          )}
+
+          {viewMode === 'sets' && (
+            <div className="p-4 lg:p-8">
+              <SetExplorer setViewMode={setViewMode} performSearch={performSearch} setSearchQuery={setSearchQuery} />
+            </div>
+          )}
+
+          {viewMode === 'sheriff' && (
+            <div className="p-4 lg:p-8">
+              <OutlawSheriff />
+            </div>
+          )}
         </div>
       </div>
     </main>
@@ -2923,7 +2750,236 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
         )}
       </AnimatePresence>
 
+      {/* Roadmap Modal */}
+      <AnimatePresence>
+        {showRoadmap && (
+          <RoadmapModal isOpen={showRoadmap} onClose={() => setShowRoadmap(false)} />
+        )}
+      </AnimatePresence>
+
+      {/* Commander Selection Modal */}
+      <AnimatePresence>
+        {commanderSelection && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[400] flex items-center justify-center p-4"
+          >
+            <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setCommanderSelection(null)} />
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="rune-panel p-8 rounded-2xl w-full max-w-4xl relative z-10 space-y-6 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="text-center space-y-2">
+                <h2 className="text-3xl font-magic font-black text-orange-500 uppercase tracking-widest">Select Commander</h2>
+                <p className="text-xs text-white/40 font-mono uppercase tracking-[0.2em]">We couldn't clearly identify your commander. Please select one below.</p>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                {commanderSelection.candidates.map((card, i) => {
+                  const images = getCardImages(card);
+                  return (
+                    <button
+                      key={card.id || i}
+                      onClick={() => onSelectCommander([card.name])}
+                      className="group relative aspect-[63/88] rounded-lg overflow-hidden border border-white/10 hover:border-orange-500/50 transition-all shadow-xl hover:shadow-orange-500/20"
+                    >
+                      <img src={images.normal} alt={card.name} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
+                        <p className="text-[10px] font-magic font-bold text-white uppercase tracking-wider">{card.name}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="flex justify-center pt-4">
+                <button
+                  onClick={() => setCommanderSelection(null)}
+                  className="px-8 py-3 bg-white/5 border border-white/10 rounded-full text-xs font-magic font-bold text-white/40 hover:text-white hover:bg-white/10 transition-all uppercase tracking-widest"
+                >
+                  Cancel Import
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
     </div>
+  );
+}
+
+// --- ROADMAP COMPONENT ---
+function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
+  const manualSections = [
+    {
+      title: "The Bifrost Link",
+      subtitle: "Deck Import & Sync",
+      icon: <Database className="w-5 h-5" />,
+      content: "Input an Archidekt or TappedOut ID to bridge your digital collection. Use the 'Sync' rune in the sidebar to fetch real-time updates and inventory quantities.",
+      loc: "Sidebar Input",
+      features: ["Multi-Platform Sync", "Archive Refresh", "Inventory Loading"],
+      color: "text-green-400"
+    },
+    {
+      title: "Commander Scouting",
+      subtitle: "Set & Color Filter",
+      icon: <Compass className="w-5 h-5" />,
+      content: "The primary mission console. Filter the multiverse by specific Sets (like OTJ) or Color Identity to find cards that fit your deck's spiritual criteria.",
+      loc: "Main Control Bar",
+      features: ["Expansion Scouting", "Color Logic", "Synergy Match"],
+      color: "text-cyan-400"
+    },
+    {
+      title: "The Rune-Scribe",
+      subtitle: "Suggest Tags Button",
+      icon: <Sparkles className="w-5 h-5" />,
+      content: "Summon the Archives' intelligence. This rune analyzes your Commander and suggests specific internal tags, explaining exactly 'why' a card synergizes with your deck.",
+      loc: "Card Detail View",
+      features: ["AI Explainer", "Strategic Tagging", "Automatic Analysis"],
+      color: "text-orange-400"
+    },
+    {
+      title: "Temporal Archive",
+      subtitle: "Calendar Sorting",
+      icon: <Calendar className="w-5 h-5" />,
+      content: "Navigate through time! Use the Calendar rune to filter cards by their release era, allowing you to focus on specific blocks of Magic's history.",
+      loc: "Filter Toolbar",
+      features: ["Era Navigation", "Set History", "Chronological Sort"],
+      color: "text-blue-400"
+    },
+    {
+      title: "The High Judge",
+      subtitle: "Ruxa's Bear Court",
+      icon: <Gavel className="w-5 h-5" />,
+      content: "Consult the Bear Seer for complex rules. Ruxa uses AI to provide brief, wise rulings on card interactions specifically between your cards.",
+      loc: "Floating Beacon",
+      features: ["Rule Interpretation", "Brief Wisdom", "Deck Context Awareness"],
+      color: "text-amber-400"
+    },
+    {
+      title: "The Sheriff's Mark",
+      subtitle: "Thunder Junction Protocol",
+      icon: <Shield className="w-5 h-5" />,
+      content: "A specialized protocol for 'Outlaws' and 'Wanted' cards. This system identifies high-priority targets and specific set-mechanics for your raiding party.",
+      loc: "Special Grid Overlay",
+      features: ["Outlaw Identification", "Set-Specific Logic", "Meta Tracking"],
+      color: "text-red-400"
+    },
+    {
+      title: "MOB Radio",
+      subtitle: "Vault Resonance",
+      icon: <Radio className="w-5 h-5" />,
+      content: "The rhythm of the multiverse. Tune into the 'Magic Over Bitches' archives via Spotify to fuel your deckbuilding rituals with high-energy resonance.",
+      loc: "Fun Area Control",
+      features: ["Spotify Integration", "Custom OST", "Background Resonance"],
+      color: "text-purple-400"
+    }
+  ];
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-[#030704]/96 backdrop-blur-3xl"
+    >
+      <motion.div 
+        initial={{ scale: 0.9, y: 30, rotateX: 10 }}
+        animate={{ scale: 1, y: 0, rotateX: 0 }}
+        className="w-full max-w-6xl bg-[#08110a] border border-green-500/20 rounded-[3.5rem] overflow-hidden shadow-[0_0_100px_rgba(34,197,94,0.2)] relative"
+      >
+        {/* Decorative Runes */}
+        <div className="absolute inset-0 opacity-5 pointer-events-none overflow-hidden select-none flex flex-wrap justify-around items-center p-12 font-magic text-[12rem] text-green-500">
+          ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛇᛈᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ
+        </div>
+        
+        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4/5 h-[2px] bg-gradient-to-r from-transparent via-green-400 to-transparent shadow-[0_0_20px_rgba(74,222,128,0.4)]" />
+        
+        <div className="relative p-10 lg:p-14 flex flex-col h-[92vh] lg:h-auto max-h-[94vh]">
+          {/* Header */}
+          <div className="flex items-center justify-between mb-12">
+            <div className="flex items-center gap-8">
+              <div className="w-20 h-20 rounded-[2rem] bg-green-500/10 border border-green-500/20 flex items-center justify-center shadow-[0_0_40px_rgba(34,197,94,0.3)] relative group overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-br from-green-500/20 to-transparent animate-pulse" />
+                <BookOpen className="w-10 h-10 text-green-400 relative z-10" />
+              </div>
+              <div>
+                <h2 className="text-4xl font-magic font-black uppercase tracking-[0.25em] text-green-400">Rune-Tech Manual</h2>
+                <div className="text-[12px] font-mono text-green-500/40 uppercase tracking-[0.5em] flex items-center gap-3">
+                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_green]" />
+                  Deck Companion v2.4 // Complete Feature Manifest
+                </div>
+              </div>
+            </div>
+            <button 
+              onClick={onClose}
+              className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-400 transition-all group shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute inset-0 bg-red-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
+              <X className="w-8 h-8 relative z-10" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto pr-8 custom-scrollbar">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 pb-12">
+              {manualSections.map((item, i) => (
+                <motion.div 
+                  initial={{ opacity: 0, y: 30 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.05 }}
+                  key={i} 
+                  className="p-8 rounded-[3rem] bg-white/[0.02] border border-white/[0.04] hover:border-green-400/30 hover:bg-green-400/[0.02] transition-all group relative overflow-hidden shadow-sm"
+                >
+                  <div className="absolute top-4 right-8 font-mono text-[8px] text-white/10 group-hover:text-green-500/20 transition-colors uppercase tracking-widest whitespace-nowrap">
+                    LOC: {item.loc}
+                  </div>
+                  <div className={`w-14 h-14 rounded-2xl bg-current/10 flex items-center justify-center mb-8 shadow-inner ${item.color} group-hover:scale-110 transition-transform`}>
+                    {item.icon}
+                  </div>
+                  <div className="mb-6">
+                    <h3 className={`text-xl font-bold uppercase tracking-wider ${item.color} mb-1`}>
+                      {item.title}
+                    </h3>
+                    <p className="text-[10px] font-mono opacity-50 uppercase tracking-[0.3em] font-bold">{item.subtitle}</p>
+                  </div>
+                  <p className="text-sm text-green-100/70 leading-relaxed font-sans mb-8">
+                    {item.content}
+                  </p>
+                  <div className="flex flex-wrap gap-2.5">
+                    {item.features.map((f, j) => (
+                      <span key={j} className="text-[9px] font-mono bg-white/[0.06] border border-white/[0.1] px-3 py-1.5 rounded-lg text-white/50 uppercase tracking-widest group-hover:text-green-400 transition-colors">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                </motion.div>
+              ))}
+            </div>
+
+            {/* Support Message */}
+            <div className="flex flex-col items-center py-12 border-t border-green-500/10">
+              <div className="flex gap-8 mb-10 opacity-30">
+                {['ᚠ','ᚢ','ᚦ','ᚨ','ᚱ','ᚲ','ᚷ','ᚹ','ᚺ','ᚾ','ᛁ'].map(r => (
+                  <span key={r} className="text-3xl font-magic text-green-400 hover:text-green-300 hover:scale-125 transition-all cursor-default">{r}</span>
+                ))}
+              </div>
+              <div className="text-center max-w-lg">
+                <p className="text-sm font-magic text-green-400/60 uppercase tracking-[0.4em] mb-4">
+                  Identify the runes. Upgrade the deck. Conquer the table.
+                </p>
+                <p className="text-[10px] font-mono text-green-500/20 uppercase tracking-[0.8em]">
+                  Skål, Seeker of the Archives.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -3357,12 +3413,37 @@ function JudgeView() {
     }
   };
 
+  const renderRuxaContent = (content: string) => {
+    // Regex for {T}, {W}, {U}, {B}, {R}, {G}, {C}, {1}, {2}, etc.
+    const symbolRegex = /\{([^}]+)\}/g;
+    const parts = content.split(symbolRegex);
+    
+    return parts.map((part, i) => {
+      // If it's a symbol part (every odd index because of capture group in split)
+      if (i % 2 === 1) {
+        const symbol = `{${part.toUpperCase()}}`;
+        if (MANA_SYMBOL_URIS[symbol]) {
+          return <img key={i} src={MANA_SYMBOL_URIS[symbol]} alt={symbol} className="inline-block w-4 h-4 mx-0.5 align-middle brightness-125 saturate-150 shadow-[0_0_5px_rgba(255,255,255,0.2)]" />;
+        }
+        return <span key={i} className="font-mono font-bold text-green-400">{`{${part}}`}</span>;
+      }
+      return <span key={i}>{part}</span>;
+    });
+  };
+
   const generateRuling = async (query: string, confirmedNames: string[]) => {
     setIsProcessing(true);
     try {
       let context = "";
+      const cardsData = [];
       for (const name of confirmedNames) {
-        context += await fetchCardContext(name) + "\n";
+        try {
+          const res = await axios.get(`https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`);
+          cardsData.push(res.data);
+          context += `**Kaart: ${res.data.name}**\n**Metadata:** ${res.data.type_line} | Mana Value: ${res.data.cmc} | P/T: ${res.data.power}/${res.data.toughness}\n**Color Identity:** ${res.data.color_identity?.join(', ')}\n**Regeltekst:** ${res.data.oracle_text}\n`;
+        } catch (e) {
+          context += `**Kaart: ${name}**\n*Kon kaartdata niet vinden.*\n`;
+        }
       }
 
       const systemPrompt = `Je bent Ruxa, een deskundige maar bondige Magic: The Gathering Judge. 
@@ -3370,14 +3451,18 @@ function JudgeView() {
       MISSIE:
       Beantwoord regelsvragen van de gebruiker direct en trefzeker. Gebruik de meegeleverde context als bron.
       
-      STIJL:
-      - Antwoord in het NEDERLANDS.
+      RICHTLIJNEN VOOR STIJL EN TAAL:
+      - Antwoord in het NEDERLANDS, maar gebruik de officiële ENGELSE Magic jargon (bijv. "state-based actions", "priority", "stack", "trigger", "resolven"). Gebruik termen als "resolven" in plaats van "resolving zijn geweest".
+      - GEBRUIK GEEN opmaak zoals sterretjes (* of **) voor het jargon; laat de tekst vloeiend in de zin staan.
+      - NOEM NOOIT specifieke regelnummers (bijv. CR 123.4) tenzij de gebruiker er expliciet naar vraagt.
+      - GEBRUIK ALTIJD de officiële mana- en tap-symbolen TUSSEN ACCURATES ({BRACKETS}) voor ELKE verwijzing naar mana of tap: {T} voor tap, {Q} voor untap, {W}, {U}, {B}, {R}, {G} voor mana, {C} voor colorless, en {0}, {1}, {2}, etc. voor generieke mana. (Bijv: "{T}: Voeg {G} toe").
+      - Voor meerdere mana symbolen, schrijf ze apart: bijv. {C}{C} of {G}{G}.
       - Wees bondig. Geef het antwoord in maximaal een paar zinnen.
-      - Leg de achterliggende regels (zoals specifieke CR-artikelen of Layers) ALLEEN uit als de gebruiker er specifiek naar vraagt (zoals "waarom?" of "leg uit").
+      - Leg achterliggende regels alleen uit als er specifiek naar 'waarom' gevraagd wordt.
       - Een subtiele humoristische opmerking of een kleine dad-joke mag, maar overdrijf het niet. 
       - Behoud een wijze, professionele uitstraling.`;
       
-      const userMessage = `--- CONTEXT VAN KAARTEN ---\n${context}\n\n--- REGELSVRAAG ---\n${query}\n\nWat is je uitspraak? (Kort en bondig in het Nederlands):`;
+      const userMessage = `--- CONTEXT VAN KAARTEN ---\n${context}\n\n--- REGELSVRAAG ---\n${query}\n\nWat is je uitspraak? (Gebruik {T} en mana symbolen, jargon in het Engels, antwoord in het Nederlands):`;
 
       const modelId = "gemini-3-flash-preview"; 
       
@@ -3400,8 +3485,11 @@ function JudgeView() {
       }
 
       setMessages(prev => [...prev, 
-        { role: 'assistant', content: `Gevonden kaarten: ${confirmedNames.join(", ") || "Geen"}` },
-        { role: 'assistant', content: ruling }
+        { 
+          role: 'assistant', 
+          content: ruling,
+          relatedCards: cardsData
+        }
       ]);
     } catch (err: any) {
       console.error(err);
@@ -3424,18 +3512,26 @@ function JudgeView() {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full max-w-4xl mx-auto w-full p-2 sm:p-4 overflow-visible relative group/ruxa">
-      {/* Decorative Ruxa Background */}
-      <div className="absolute -left-80 bottom-0 w-[500px] h-full pointer-events-none z-0 hidden lg:block opacity-20 group-hover/ruxa:opacity-50 transition-all duration-1000 transform -translate-x-5 group-hover/ruxa:translate-x-0">
-        <img 
-          src="/ruxa.png" 
-          alt="Peeking Ruxa" 
-          className="w-full h-full object-contain -rotate-6 scale-x-[-1] mix-blend-screen grayscale brightness-150" 
-          onError={(e) => (e.currentTarget.style.display = 'none')}
-        />
+    <div className="flex-1 flex flex-col h-full w-full relative overflow-hidden bg-[#050505] rounded-3xl">
+      {/* Background Runes */}
+      <div className="absolute inset-0 opacity-100 pointer-events-none select-none overflow-hidden rounded-3xl">
+        <div className="absolute top-1/4 left-1/4 text-[80vw] font-magic leading-none opacity-[0.02] text-green-500 -translate-x-1/2 -translate-y-1/2">Γ</div>
+        <div className="absolute bottom-1/4 right-1/4 text-[60vw] font-magic leading-none opacity-[0.02] text-emerald-500 translate-x-1/4 translate-y-1/4">Λ</div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] h-[90vw] rounded-full border-[2vw] border-dashed border-green-500/5 rotate-12 animate-[spin_120s_linear_infinite]"></div>
       </div>
 
-      <div className="rune-panel flex-1 flex flex-col rounded-[2.5rem] overflow-hidden border-green-500/10 shadow-[0_0_50px_rgba(16,185,129,0.05)] bg-[#020402]/80 backdrop-blur-xl relative z-10">
+      <div className="flex-1 flex flex-col h-full max-w-4xl mx-auto w-full p-2 sm:p-4 overflow-visible relative group/ruxa z-10">
+        {/* Decorative Ruxa Background */}
+        <div className="absolute left-0 bottom-0 w-[450px] h-[90%] pointer-events-none z-0 hidden lg:block opacity-0 group-hover/ruxa:opacity-100 focus-within:opacity-100 transition-all duration-700 transform translate-x-10 group-hover/ruxa:-translate-x-56 focus-within:-translate-x-56">
+          <img 
+            src="/ruxa.png" 
+            alt="Peeking Ruxa" 
+            className="w-full h-full object-contain object-bottom drop-shadow-[0_0_40px_rgba(16,185,129,0.3)] -scale-x-100" 
+            onError={(e) => (e.currentTarget.style.display = 'none')}
+          />
+        </div>
+
+        <div className="rune-panel flex-1 flex flex-col rounded-[2.5rem] overflow-hidden border-green-500/10 shadow-[0_0_50px_rgba(16,185,129,0.1)] bg-[#020402]/90 backdrop-blur-xl relative z-10">
         {/* Header */}
         <div className="p-6 border-b border-green-500/10 flex items-center justify-between bg-green-950/10">
           <div className="flex items-center gap-4">
@@ -3463,22 +3559,33 @@ function JudgeView() {
               className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
             >
               <div className={`max-w-[85%] flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 border 
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border shadow-lg overflow-hidden
                   ${msg.role === 'user' ? 'bg-orange-500/10 border-orange-500/20 text-orange-400' : 'bg-green-500/10 border-green-500/20 text-green-400'}`}
                 >
-                  {msg.role === 'user' ? <User className="w-4 h-4" /> : <img src="/ruxa.png" alt="R" className="w-6 h-6 object-contain rounded-full border border-cyan-500/20" onError={(e) => (e.currentTarget.style.display = 'none')} />}
+                  {msg.role === 'user' ? <User className="w-5 h-5" /> : <img src="/ruxa.png" alt="R" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" onError={(e) => (e.currentTarget.style.display = 'none')} />}
                 </div>
-                <div className={`p-4 rounded-3xl text-xs font-sans leading-relaxed shadow-sm
+                <div className={`p-4 rounded-3xl text-sm font-sans leading-relaxed shadow-sm
                   ${msg.role === 'user' 
                     ? 'bg-orange-500/5 border border-orange-500/10 text-orange-100 rounded-tr-none' 
                     : 'bg-green-500/5 border border-green-500/10 text-green-50 rounded-tl-none'}`}
                 >
-                   {msg.role === 'assistant' && i === 0 && (
-                     <div className="mb-4 rounded-2xl overflow-hidden border border-green-500/20 shadow-[0_0_15px_rgba(16,185,129,0.2)] hidden">
-                       <img src="/ruxa.png" alt="Ruxa" className="w-full h-auto object-cover opacity-80 group-hover:opacity-100 transition-opacity" onError={(e) => (e.currentTarget.style.display = 'none')} />
-                     </div>
-                   )}
-                   {msg.content}
+                   {renderRuxaContent(msg.content)}
+                   {msg.relatedCards && msg.relatedCards.length > 0 && (
+                      <div className="mt-4 flex flex-wrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                        {msg.relatedCards.map((card: any, idx: number) => (
+                          <div key={idx} className="group/card relative w-20 sm:w-24 aspect-[2.5/3.5] rounded-lg overflow-hidden border border-white/10 hover:border-green-400/50 transition-all flex-shrink-0 shadow-lg">
+                            <img 
+                              src={card.image_uris?.small || card.image_uris?.normal || card.card_faces?.[0]?.image_uris?.small} 
+                              alt={card.name}
+                              className="w-full h-full object-cover group-hover/card:scale-110 transition-transform duration-500"
+                            />
+                            <div className="absolute inset-x-0 bottom-0 bg-black/80 px-1 py-0.5 opacity-0 group-hover/card:opacity-100 transition-opacity">
+                              <p className="text-[6px] font-mono text-white truncate text-center">{card.name}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                 </div>
               </div>
             </motion.div>
@@ -3553,6 +3660,641 @@ function JudgeView() {
            <p className="text-[8px] text-green-500/20 font-black uppercase tracking-[0.2em] mt-4 text-center">
              Bear Judge Ruxa is an AI assistant. Verify rulings with current Comprehensive Rules for competitive play.
            </p>
+        </div>
+      </div>
+    </div>
+    </div>
+  );
+}
+
+function DeckManager() {
+  return null;
+}
+
+function SetExplorer({ setViewMode, performSearch, setSearchQuery }: { 
+  setViewMode: (v: string) => void;
+  performSearch: (o: any) => void;
+  setSearchQuery: (s: string) => void;
+}) {
+  const [sets, setSets] = useState<ScryfallSet[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set(['core', 'expansion']));
+
+  const ALL_FILTERS = [
+    { id: 'main', labels: ['core', 'expansion'], name: 'Main Sets' },
+    { id: 'commander', labels: ['commander'], name: 'Commander' },
+    { id: 'masters', labels: ['masters', 'draft_innovation'], name: 'Masters/Draft' },
+    { id: 'masterpiece', labels: ['masterpiece', 'arsenal', 'spellbook'], name: 'Masterpieces' }
+  ];
+
+  const toggleFilter = (labels: string[]) => {
+    setActiveFilters(prev => {
+      const next = new Set(prev);
+      const isAllActive = labels.every(l => next.has(l));
+      if (isAllActive) {
+        labels.forEach(l => next.delete(l));
+      } else {
+        labels.forEach(l => next.add(l));
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    async function fetchSets() {
+      try {
+        const { data } = await axios.get('https://api.scryfall.com/sets');
+        const today = new Date();
+        
+        // Stricter filtering
+        const validTypes = ['core', 'expansion', 'commander', 'masters', 'starter', 'masterpiece', 'arsenal', 'spellbook', 'draft_innovation'];
+        const excludedCodes = ['otp', 'big', 'pip', 'rex', 'mom', 'mat', 'plst', 'ha7', 'ea3']; 
+        
+        const filtered = data.data.filter((s: ScryfallSet) => {
+          return validTypes.includes(s.set_type) && 
+            !s.digital && 
+            s.card_count > 10 &&
+            !excludedCodes.includes(s.code.toLowerCase()) &&
+            !s.name.toLowerCase().includes("art series") &&
+            !s.name.toLowerCase().includes("promo") &&
+            !s.name.toLowerCase().includes("omenpaths");
+        }).map((s: any) => {
+          const childCodes = data.data
+            .filter((sub: any) => sub.parent_set_code === s.code)
+            .map((sub: any) => sub.code);
+          return {
+            ...s,
+            queryCodes: [s.code, ...childCodes],
+            isFuture: s.released_at ? new Date(s.released_at) > today : false
+          };
+        });
+
+        const roadmapSets = [
+          { name: 'Lorwyn Eclipsed', date: '2026-01-01', code: 'LOR' },
+          { name: 'Teenage Mutant Ninja Turtles', date: '2026-03-01', code: 'TMN' },
+          { name: 'Secrets of Strixhaven', date: '2026-04-01', code: 'STX2' },
+          { name: 'Marvel Super Heroes', date: '2026-06-01', code: 'MVL' },
+          { name: 'The Hobbit', date: '2026-08-01', code: 'HBT' },
+          { name: 'Reality Fracture', date: '2026-10-01', code: 'RF' },
+          { name: 'Universes Beyond: Star Trek', date: '2026-11-01', code: 'STK' }
+        ];
+
+        roadmapSets.forEach(rs => {
+          const existingIdx = filtered.findIndex((m: any) => 
+            m.name.toLowerCase().includes(rs.name.toLowerCase().split(' ')[0]) || 
+            (m.released_at && m.released_at.startsWith(rs.date.substring(0, 7)))
+          );
+
+          if (existingIdx !== -1) {
+            filtered[existingIdx] = {
+              ...filtered[existingIdx],
+              name: rs.name,
+              released_at: rs.date,
+              isFuture: true
+            };
+          } else {
+            filtered.push({
+              id: `roadmap-${rs.code}`,
+              name: rs.name,
+              released_at: rs.date,
+              set_type: 'expansion',
+              code: rs.code,
+              queryCodes: [rs.code],
+              icon_svg_uri: 'https://svgs.scryfall.io/sets/modern.svg',
+              isFuture: true
+            } as any);
+          }
+        });
+
+        filtered.sort((a: any, b: any) => {
+           const dA = new Date(a.released_at || '1970-01-01').getTime();
+           const dB = new Date(b.released_at || '1970-01-01').getTime();
+           return dB - dA;
+        });
+        setSets(filtered);
+      } catch (err) {
+        console.error("Failed to fetch sets", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchSets();
+  }, []);
+
+  const filteredSets = sets.filter(s => {
+    const matchesSearch = s.name.toLowerCase().includes(search.toLowerCase()) || s.code.toLowerCase().includes(search.toLowerCase());
+    const matchesType = activeFilters.has(s.set_type);
+    return matchesSearch && matchesType;
+  });
+
+  const onSetClick = (codes: string[]) => {
+    setSearchQuery("");
+    setViewMode('cards');
+    performSearch({ 
+      queryOverride: `(${codes.map(c => `s:${c}`).join(" OR ")}) -is:token -is:art_series`,
+      autoSelect: true,
+      skipCI: true
+    });
+  };
+
+  return (
+    <div className="h-full relative overflow-hidden flex flex-col w-full bg-[#050505]">
+      {/* Background Runes */}
+      <div className="absolute inset-0 pointer-events-none select-none overflow-hidden">
+        <div className="absolute top-1/4 left-1/4 text-[80vw] font-magic leading-none opacity-[0.02] text-cyan-500 -translate-x-1/2 -translate-y-1/2">۞</div>
+        <div className="absolute bottom-1/4 right-1/4 text-[60vw] font-magic leading-none opacity-[0.02] text-purple-500 translate-x-1/4 translate-y-1/4">Σ</div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] h-[90vw] rounded-full border-[2vw] border-dashed border-white/5 opacity-10 animate-[spin_120s_linear_infinite]"></div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto no-scrollbar pb-20 relative z-10 p-4 sm:p-8">
+        <div className="max-w-6xl mx-auto space-y-12">
+          <div className="text-center space-y-2 pt-4">
+            <h3 className="text-3xl font-magic font-black text-white uppercase tracking-widest">Chronicle Explorer</h3>
+            <p className="text-[10px] font-mono text-white/40 uppercase tracking-[0.2em]">Witness the Legacy of Magic</p>
+          </div>
+
+          <div className="flex flex-col items-center gap-6 max-w-xl mx-auto mb-16 relative z-20">
+            <div className="relative group w-full">
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-focus-within:text-cyan-400 transition-colors" />
+              <input 
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Filter Chronicles (e.g. MH3, INN)..."
+                className="w-full bg-black/60 backdrop-blur-md border border-white/10 rounded-2xl pl-12 pr-4 py-4 text-xs focus:border-cyan-500/50 outline-none transition-all font-sans tracking-wider text-white shadow-xl"
+              />
+            </div>
+            
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {ALL_FILTERS.map(f => {
+                const isActive = f.labels.every(l => activeFilters.has(l));
+                return (
+                  <button
+                    key={f.id}
+                    onClick={() => toggleFilter(f.labels)}
+                    className={`px-4 py-2 rounded-full text-[9px] font-magic font-bold uppercase tracking-widest border transition-all backdrop-blur-md ${isActive ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50 shadow-[0_0_15px_rgba(6,182,212,0.3)]' : 'bg-black/60 text-white/40 border-white/10 hover:border-cyan-500/30'}`}
+                  >
+                    {f.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-20 gap-4">
+              <RotateCw className="w-8 h-8 text-cyan-400 animate-spin" />
+              <p className="text-[10px] font-magic font-bold text-white/20 uppercase tracking-widest">Chronicles loading...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-x-2 gap-y-4 sm:gap-x-4 sm:gap-y-6 px-2 relative z-10 w-full">
+              {filteredSets.map(set => (
+                <button
+                  key={set.id}
+                  onClick={() => onSetClick(set.queryCodes || [set.code])}
+                  className="group relative aspect-square flex items-center justify-center p-2 hover:scale-[1.15] active:scale-[0.95] transition-all duration-500"
+                >
+                  <div className={`absolute inset-0 rounded-full opacity-0 group-hover:opacity-20 blur-xl transition-opacity duration-500 pointer-events-none
+                    ${set.isFuture ? 'bg-orange-500' : 'bg-cyan-500'}
+                  `} />
+                  
+                  <img 
+                    src={set.icon_svg_uri} 
+                    className={`w-full h-full object-contain invert transition-all duration-500 relative z-10
+                      ${set.isFuture ? 'opacity-30 group-hover:opacity-100 grayscale brightness-125 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)]' : 'opacity-40 group-hover:opacity-100 drop-shadow-[0_0_8px_rgba(6,182,212,0.5)]'}
+                    `}
+                    alt={set.code}
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).src = "https://svgs.scryfall.io/sets/modern.svg";
+                    }}
+                  />
+                  
+                  {set.isFuture && (
+                    <div className="absolute top-0 right-0 w-1.5 h-1.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)] z-20" />
+                  )}
+
+                  <div className="absolute inset-x-0 -bottom-8 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none translate-y-2 group-hover:translate-y-0 z-[100]">
+                    <div className="mx-auto w-fit bg-black/90 px-3 py-1 rounded border border-white/10 shadow-2xl backdrop-blur-md">
+                      <span className={`text-[9px] font-magic font-bold uppercase tracking-widest whitespace-nowrap drop-shadow-md
+                        ${set.isFuture ? 'text-orange-400' : 'text-cyan-400'}
+                      `}>
+                        {set.name}
+                      </span>
+                    </div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ReleaseCalendar({ setViewMode, performSearch, setSearchQuery }: { 
+  setViewMode: (v: string) => void;
+  performSearch: (o: any) => void;
+  setSearchQuery: (s: string) => void;
+}) {
+  const [timeline, setTimeline] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchCalendar() {
+      try {
+        const { data } = await axios.get('https://api.scryfall.com/sets');
+        const today = new Date();
+        const futureRaw = data.data.filter((s: any) => {
+          if (!s.released_at) return false;
+          // Ensure we show the full 2026 roadmap and any future sets
+          return s.released_at.startsWith('2026') || new Date(s.released_at) >= today;
+        });
+
+        const validTypes = ['expansion', 'core', 'masters', 'starter'];
+        const mainSets = futureRaw.filter((s: any) => 
+          validTypes.includes(s.set_type) && 
+          !s.digital && 
+          !s.name.toLowerCase().includes("omenpaths") &&
+          !s.name.toLowerCase().includes("art series") &&
+          !s.name.toLowerCase().includes("promo")
+        );
+
+        let mapped = mainSets.map((main: any) => {
+          const childCodes = data.data
+            .filter((sub: any) => sub.parent_set_code === main.code)
+            .map((sub: any) => sub.code);
+          return {
+            ...main,
+            fullName: main.name,
+            queryCodes: [main.code, ...childCodes]
+          };
+        });
+
+        // Ensure specific 2026 Roadmap sets are present and replace Scryfall placeholders if needed
+        const roadmapSets = [
+          { name: 'Lorwyn Eclipsed', date: '2026-01-01', code: 'LOR' },
+          { name: 'Teenage Mutant Ninja Turtles', date: '2026-03-01', code: 'TMN' },
+          { name: 'Secrets of Strixhaven', date: '2026-04-01', code: 'STX2' },
+          { name: 'Marvel Super Heroes', date: '2026-06-01', code: 'MVL' },
+          { name: 'The Hobbit', date: '2026-08-01', code: 'HBT' },
+          { name: 'Reality Fracture', date: '2026-10-01', code: 'RF' },
+          { name: 'Universes Beyond: Star Trek', date: '2026-11-01', code: 'STK' }
+        ];
+
+        roadmapSets.forEach(rs => {
+          // Check if a similar set already exists (to avoid duplicates like Lorwyn appearing twice)
+          const existingIdx = mapped.findIndex(m => 
+            m.name.toLowerCase().includes(rs.name.toLowerCase().split(' ')[0]) || // Match first word
+            (m.released_at && m.released_at.startsWith(rs.date.substring(0, 7))) // Match year-month
+          );
+
+          if (existingIdx !== -1) {
+            // Update existing or skip
+            mapped[existingIdx] = {
+              ...mapped[existingIdx],
+              name: rs.name,
+              fullName: rs.name,
+              released_at: rs.date
+            };
+          } else {
+            mapped.push({
+              id: `roadmap-${rs.code}`,
+              name: rs.name,
+              fullName: rs.name,
+              released_at: rs.date,
+              queryCodes: [rs.code],
+              set_type: 'expansion',
+              code: rs.code,
+              icon_svg_uri: 'https://svgs.scryfall.io/sets/modern.svg'
+            });
+          }
+        });
+
+        // Filter to show late 2025 and all of 2026
+        const filtered = mapped.filter(m => {
+          const d = new Date(m.released_at);
+          const year = d.getFullYear();
+          return year === 2026 || (year === 2025 && d.getMonth() >= 9); // After September 2025
+        });
+
+        filtered.sort((a: any, b: any) => new Date(a.released_at).getTime() - new Date(b.released_at).getTime());
+        setTimeline(filtered);
+      } catch (err) {
+        console.error("Failed to fetch calendar", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    fetchCalendar();
+  }, []);
+
+  const onReleaseClick = (codes: string[]) => {
+    setSearchQuery("");
+    setViewMode('cards');
+    performSearch({ 
+      queryOverride: `(${codes.map(c => `s:${c}`).join(" OR ")}) -is:token -is:art_series`,
+      autoSelect: true,
+      skipCI: true
+    });
+  };
+
+  return (
+    <div className="h-full relative overflow-hidden flex flex-col bg-[#050505] w-full">
+      {/* Background Runes */}
+      <div className="absolute inset-0 pointer-events-none select-none overflow-hidden">
+        <div className="absolute top-0 right-0 text-[60vw] font-magic leading-none opacity-[0.03] text-cyan-500 translate-x-1/4 -translate-y-1/4">Ж</div>
+        <div className="absolute bottom-0 left-0 text-[50vw] font-magic leading-none opacity-[0.03] text-orange-500 -translate-x-1/4 translate-y-1/4">Ѧ</div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vw] h-[80vw] rounded-full border-[10vw] border-white/5 opacity-10"></div>
+      </div>
+
+      <div className="text-center pt-12 z-10 space-y-2">
+        <h3 className="text-3xl md:text-5xl font-magic font-black text-white uppercase tracking-[0.3em] drop-shadow-[0_0_20px_rgba(255,255,255,0.1)]">RELEASE CALENDAR 2026</h3>
+        <p className="text-[8px] md:text-[10px] font-mono text-cyan-400 uppercase tracking-[0.3em] md:tracking-[0.5em] font-black underline decoration-cyan-500/20 underline-offset-8">GLIMPSE INTO THE FUTURE OF THE MULTIVERSE</p>
+      </div>
+
+      {loading ? (
+        <div className="flex-1 flex items-center justify-center">
+          <RotateCw className="w-10 h-10 text-cyan-500 animate-spin" />
+        </div>
+      ) : (
+        <div className="flex-1 relative flex items-center justify-center mt-10 overflow-visible w-full">
+          {/* Main Horizontal Timeline Line */}
+          <div className="absolute left-8 right-8 h-[2px] bg-gradient-to-r from-transparent via-cyan-500 to-orange-500 top-1/2 -translate-y-1/2 opacity-30 shadow-[0_0_30px_rgba(6,182,212,0.5)] z-0" />
+          
+          <div className="flex w-full px-4 md:px-12 items-center justify-between h-full relative z-20 overflow-visible flex-nowrap min-w-min">
+            {timeline.map((set, idx) => {
+              const isTop = idx % 2 === 0;
+              const releaseDate = new Date(set.released_at);
+              const isFarFuture = releaseDate.getFullYear() > 2026 || (releaseDate.getFullYear() === 2026 && releaseDate.getMonth() >= 5); 
+              const accentColor = isFarFuture ? 'text-orange-500' : 'text-cyan-500';
+              const glowColor = isFarFuture ? 'rgba(249,115,22,1)' : 'rgba(6,182,212,1)';
+              const maskSrc = set.icon_svg_uri || 'https://svgs.scryfall.io/sets/modern.svg';
+
+              return (
+                <div key={set.id} className="relative flex-1 flex justify-center group h-full items-center shrink-0 min-w-[80px]">
+                  {/* Vertical Connector Path */}
+                  <div className={`absolute left-1/2 -translate-x-1/2 w-[1px] md:w-px bg-white/10 transition-all duration-700
+                    ${isTop ? 'bottom-1/2 h-16 sm:h-24 lg:h-32' : 'top-1/2 h-16 sm:h-24 lg:h-32'}
+                    group-hover:bg-cyan-500/50 group-hover:opacity-100 opacity-20
+                  `} />
+
+                  {/* Node Dot on Line */}
+                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50">
+                    <div className={`w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5 rounded-full border-2 bg-black transition-all duration-500
+                      ${isFarFuture ? 'border-orange-500 shadow-[0_0_15px_rgba(249,115,22,1)]' : 'border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,1)]'}
+                      group-hover:scale-150 group-hover:bg-current ${accentColor}
+                    `} />
+                  </div>
+
+                  {/* Content Stack (Alternating) */}
+                  <div className={`flex flex-col justify-center items-center gap-1 sm:gap-4 lg:gap-8 absolute left-1/2 -translate-x-1/2 transition-all duration-1000 w-24 sm:w-32 lg:w-40 z-30
+                    ${isTop ? 'bottom-1/2 mb-4 sm:mb-6 lg:mb-10' : 'top-1/2 mt-4 sm:mt-6 lg:mt-10'}
+                    group-hover:${isTop ? 'mb-6 sm:mb-8 lg:mb-12' : 'mt-6 sm:mt-8 lg:mt-12'}
+                  `}>
+                    
+                    {/* Icon Circle */}
+                    <button onClick={() => onReleaseClick(set.queryCodes)} className={`w-10 h-10 sm:w-16 sm:h-16 lg:w-20 lg:h-20 rounded-full flex items-center justify-center bg-black border-2 border-white/5 relative z-30 shadow-[0_10px_30px_rgba(0,0,0,0.8)] transition-all duration-700 group-hover:scale-125 shrink-0 focus:outline-none cursor-pointer
+                      ${isFarFuture ? 'group-hover:border-orange-500 shadow-orange-500/20' : 'group-hover:border-cyan-500 shadow-cyan-500/20'}
+                    `}>
+                      <div className="absolute inset-0 rounded-full bg-radial-gradient from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                      
+                      <div className={`w-5 h-5 sm:w-8 sm:h-8 lg:w-10 lg:h-10 transition-all duration-700 z-10 opacity-40 group-hover:opacity-100`} style={{ filter: `drop-shadow(0 0 10px ${glowColor}) drop-shadow(0 0 15px ${glowColor})`}}>
+                         <img 
+                            src={maskSrc} 
+                            alt={set.name}
+                            className={`w-full h-full object-contain invert transition-all duration-700`}
+                            onError={(e) => (e.currentTarget.src = 'https://svgs.scryfall.io/sets/modern.svg')}
+                         />
+                      </div>
+                    </button>
+
+                    {/* Info Box */}
+                    <button 
+                      onClick={() => onReleaseClick(set.queryCodes)}
+                      className="w-full text-center rune-panel p-2 sm:p-4 lg:p-6 bg-black/90 backdrop-blur-md hover:border-white/30 transition-all cursor-pointer group/box shadow-2xl relative"
+                    >
+                      <h4 className="text-[7px] sm:text-[9px] lg:text-[11px] font-magic font-black text-white uppercase tracking-[0.05em] lg:tracking-[0.1em] mb-1 lg:mb-2 group-hover/box:text-cyan-400 transition-colors leading-tight line-clamp-2">
+                        {set.name}
+                      </h4>
+                      <p className={`text-[5px] sm:text-[6px] lg:text-[8px] font-mono uppercase tracking-[0.1em] lg:tracking-[0.2em] font-black opacity-60 group-hover:opacity-100 transition-opacity whitespace-nowrap ${accentColor}`}>
+                        {releaseDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+                      </p>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OutlawSheriff() {
+  return (
+    <div className="h-full flex flex-col relative overflow-hidden bg-[#050505] rounded-3xl">
+      {/* Background Runes */}
+      <div className="absolute inset-0 opacity-100 pointer-events-none select-none overflow-hidden rounded-3xl">
+        <div className="absolute top-1/4 left-1/4 text-[80vw] font-magic leading-none opacity-[0.02] text-amber-500 -translate-x-1/2 -translate-y-1/2">Ϟ</div>
+        <div className="absolute bottom-1/4 right-1/4 text-[60vw] font-magic leading-none opacity-[0.02] text-cyan-500 translate-x-1/4 translate-y-1/4">Σ</div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90vw] h-[90vw] rounded-full border-[2vw] border-dashed border-amber-500/5 rotate-45 animate-[spin_150s_linear_infinite]"></div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto custom-scrollbar relative z-10 px-4 py-8">
+        <div className="max-w-5xl mx-auto space-y-12 pb-32">
+          {/* Header */}
+          <div className="text-center relative">
+            <div className="absolute left-1/2 -top-4 -translate-x-1/2 flex gap-4 opacity-10">
+              <span className="text-4xl font-magic">Ю</span>
+              <span className="text-4xl font-magic">Ѧ</span>
+              <span className="text-4xl font-magic">Ж</span>
+            </div>
+            <h2 className="text-5xl font-magic font-black text-white uppercase tracking-[0.3em] mb-2 drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">Outlaw Sheriff</h2>
+            <p className="text-xs text-white/50 font-mono tracking-[0.5em] uppercase mb-8">Protocol Alpha-02: Social Subversion</p>
+            <div className="max-w-2xl mx-auto rune-panel p-6 rounded-3xl bg-cyan-950/20 border-cyan-500/20">
+              <p className="text-sm text-cyan-100/80 font-sans leading-relaxed">
+                Sheriff is a social Commander variant where players receive secret roles with different objectives. In addition to normal Magic play, it involves bluffing, cooperation, and betrayal.
+              </p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Setup */}
+            <div className="rune-panel p-8 rounded-[2rem] space-y-6 bg-black/60 border-cyan-500/10 group hover:border-cyan-500/30 transition-all">
+              <div className="flex items-center gap-4 mb-2">
+                <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20">
+                  <Settings className="w-5 h-5 text-cyan-400" />
+                </div>
+                <h3 className="text-xl font-magic font-bold text-cyan-400 uppercase tracking-widest">Setup</h3>
+              </div>
+              <div className="space-y-4 text-sm text-white/70">
+                <p className="font-bold text-amber-500/90 font-mono tracking-widest uppercase text-xs">Standard Commander rules apply.</p>
+                <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                  <strong className="text-cyan-300 block mb-2 uppercase text-[10px] tracking-widest">Role Distribution:</strong>
+                  <ul className="space-y-2 font-mono text-[11px]">
+                    <li className="flex items-center gap-2 text-amber-400"><div className="w-1 h-1 bg-amber-400 rounded-full" /> 1 Sheriff (Publicly revealed)</li>
+                    <li className="flex items-center gap-2"><div className="w-1 h-1 bg-cyan-500/50 rounded-full" /> 1+ Deputies (Secret)</li>
+                    <li className="flex items-center gap-2"><div className="w-1 h-1 bg-red-500/50 rounded-full" /> 1+ Outlaws (Secret)</li>
+                    <li className="flex items-center gap-2"><div className="w-1 h-1 bg-purple-500/50 rounded-full" /> 1 Renegade (Secret)</li>
+                  </ul>
+                </div>
+                <div className="p-4 bg-white/[0.02] rounded-xl border border-white/5">
+                  <strong className="text-cyan-300 block mb-2 uppercase text-[10px] tracking-widest">Starting Life:</strong>
+                  <div className="flex justify-between items-center px-2">
+                    <div className="text-center">
+                      <p className="text-[10px] opacity-50 mb-1">SHERIFF</p>
+                      <p className="text-2xl font-magic text-green-400">40</p>
+                    </div>
+                    <div className="w-px h-8 bg-white/10" />
+                    <div className="text-center">
+                      <p className="text-[10px] opacity-50 mb-1">OTHERS</p>
+                      <p className="text-2xl font-magic text-white">30</p>
+                    </div>
+                  </div>
+                </div>
+                <p className="text-center py-2 px-4 bg-cyan-500/5 border border-cyan-500/10 rounded-full text-[10px] uppercase tracking-widest"><strong className="text-cyan-300">Starting Player:</strong> The Sheriff always starts.</p>
+              </div>
+            </div>
+
+            {/* Game Dynamics */}
+            <div className="rune-panel p-8 rounded-[2rem] space-y-6 bg-black/60 border-amber-500/10 group hover:border-amber-500/30 transition-all">
+              <div className="flex items-center gap-4 mb-2">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center border border-amber-500/20">
+                  <Zap className="w-5 h-5 text-amber-500" />
+                </div>
+                <h3 className="text-xl font-magic font-bold text-amber-500 uppercase tracking-widest">Dynamics</h3>
+              </div>
+              <div className="space-y-4 text-sm text-white/70">
+                {[
+                  { title: "Social Deduction", desc: "Uncover roles through behavior and actions.", color: "text-amber-500" },
+                  { title: "Negotiation", desc: "Bluffing and temporary alliances are strictly encouraged.", color: "text-amber-500" },
+                  { title: "Politics", desc: "Cooperation is possible, but trust is your primary resource.", color: "text-amber-500" },
+                  { title: "Subterfuge", desc: "Misleading others is a valid path to victory.", color: "text-amber-500" }
+                ].map((item, idx) => (
+                  <div key={idx} className="flex gap-4 items-start p-3 hover:bg-white/[0.02] rounded-xl transition-colors">
+                    <div className={`mt-1 font-magic text-xs ${item.color}`}>{idx + 1}</div>
+                    <div>
+                      <strong className={`block text-[11px] uppercase tracking-widest mb-0.5 ${item.color}`}>{item.title}</strong>
+                      <p className="text-xs text-white/50">{item.desc}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Roles & Objectives */}
+          <div className="space-y-8 relative">
+            <h3 className="text-3xl font-magic font-black text-center text-white uppercase tracking-[0.4em]">Roles & Matrix</h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {[
+                { 
+                  name: "Sheriff", 
+                  icon: Shield, 
+                  color: "amber", 
+                  status: "Public (Revealed)", 
+                  obj: "Survive and eliminate all Outlaws and the Renegade.",
+                  win: "All Outlaws and the Renegade are defeated."
+                },
+                { 
+                  name: "Outlaw", 
+                  icon: Flame, 
+                  color: "red", 
+                  status: "Secret (Hidden)", 
+                  obj: "Eliminate the Sheriff at all costs.",
+                  win: "The Sheriff is eliminated while at least one Outlaw remains."
+                },
+                { 
+                  name: "Deputy", 
+                  icon: Users, 
+                  color: "blue", 
+                  status: "Secret (Guardian)", 
+                  obj: "Protect the Sheriff and ensure their victory.",
+                  win: "The Sheriff wins (even if you fall in battle)."
+                },
+                { 
+                  name: "Renegade", 
+                  icon: Skull, 
+                  color: "purple", 
+                  status: "Secret (Solo)", 
+                  obj: "Be the last player standing in the court.",
+                  win: "Everyone else is eliminated."
+                }
+              ].map((role, idx) => (
+                <div key={idx} className={`rune-panel p-6 rounded-3xl relative overflow-hidden group hover:scale-[1.02] transition-all bg-[#0a0a0a]/80 border-${role.color}-500/20 border`}>
+                  <div className={`absolute top-0 left-0 w-1 h-full bg-${role.color}-500/50`} />
+                  <div className="flex items-center gap-4 mb-4">
+                    <div className={`p-3 rounded-2xl bg-${role.color}-500/10 border border-${role.color}-500/20`}>
+                      <role.icon className={`w-6 h-6 text-${role.color}-500`} />
+                    </div>
+                    <h4 className={`text-2xl font-magic font-bold text-${role.color}-500 uppercase tracking-[0.2em]`}>{role.name}</h4>
+                  </div>
+                  <div className="space-y-3 text-sm text-white/60">
+                    <p><strong className="text-white/80 font-mono text-[10px] tracking-widest uppercase mr-2">Status:</strong> {role.status}</p>
+                    <p><strong className="text-white/80 font-mono text-[10px] tracking-widest uppercase mr-2">Objective:</strong> {role.obj}</p>
+                    <div className={`mt-4 pt-4 border-t border-${role.color}-500/20`}>
+                      <p className={`text-[11px] font-magic font-bold text-${role.color}-400 uppercase tracking-widest`}>
+                        <Sparkles className="w-3 h-3 inline mr-2" /> Wins if: {role.win}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Player Count Distribution */}
+          <div className="rune-panel p-8 rounded-[2.5rem] bg-black/60 border border-white/5 relative">
+            <h3 className="text-lg font-magic font-bold text-white/80 uppercase tracking-[0.3em] text-center mb-8">Infiltration Matrix</h3>
+            
+            <div className="grid grid-cols-5 gap-4 mb-6 text-center">
+              {[
+                { label: "Players", color: "text-cyan-400" },
+                { label: "Sheriff", color: "text-amber-500" },
+                { label: "Outlaws", color: "text-red-500" },
+                { label: "Deputies", color: "text-blue-500" },
+                { label: "Renegade", color: "text-purple-500" }
+              ].map(head => (
+                <div key={head.label} className={`text-[10px] font-mono font-black uppercase tracking-widest ${head.color}`}>
+                  {head.label}
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+              {[
+                { p: 4, s: 1, o: 2, d: 0, r: 1 },
+                { p: 5, s: 1, o: 2, d: 1, r: 1 },
+                { p: 6, s: 1, o: 3, d: 1, r: 1 },
+                { p: 7, s: 1, o: 3, d: 2, r: 1 },
+                { p: 8, s: 1, o: 3, d: 3, r: 1 }
+              ].map((row, i) => (
+                <div key={i} className="grid grid-cols-5 gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/5 items-center text-center font-magic text-lg">
+                  <div className="text-white font-black">{row.p}</div>
+                  <div className="text-amber-500 opacity-80">{row.s}</div>
+                  <div className="text-red-500 opacity-80">{row.o}</div>
+                  <div className="text-blue-500 opacity-80">{row.d}</div>
+                  <div className="text-purple-500 opacity-80">{row.r}</div>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-12 p-6 rounded-3xl bg-cyan-950/10 border border-cyan-500/10">
+              <h3 className="text-xs font-magic font-bold text-cyan-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                 <ShieldCheck className="w-4 h-4" /> Core Constraints
+              </h3>
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-white/50">
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1 shrink-0" /> Roles are strictly hidden at start (except Sheriff).</li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1 shrink-0" /> Voluntary reveal is permitted as a political gambit.</li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1 shrink-0" /> Identity is publicly broadcast upon total elimination.</li>
+                <li className="flex items-start gap-3"><div className="w-1.5 h-1.5 rounded-full bg-cyan-500 mt-1 shrink-0" /> Termination occurs instantly when any win-state is met.</li>
+              </ul>
+            </div>
+          </div>
         </div>
       </div>
     </div>
