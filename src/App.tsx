@@ -109,17 +109,13 @@ export default function App() {
   useEffect(() => {
     setPersistence(auth, browserLocalPersistence).catch(console.error);
 
-    // Mandatory connection test
+    // Optional connection check (silent)
     async function checkConnection() {
       try {
-        console.log("Firestore: Testing connection...");
         await getDocFromServer(doc(db, 'test', 'connection'));
-        console.log("Firestore: Connection test successful.");
       } catch (error: any) {
-        console.error("Firestore Connection Test failed:", error.code, error.message);
-        if (error.message.includes('the client is offline')) {
-          console.warn("Firestore reports offline. Possible causes: Wrong Project ID, blocked network, or service down.");
-        }
+        // Silently log for developers without alerting user
+        console.debug("Firestore: Initial ping failed, might be offline or custom config required.", error.message);
       }
     }
     checkConnection();
@@ -238,12 +234,8 @@ export default function App() {
             updatedAt: serverTimestamp()
           }, { merge: true });
         } catch (err: any) {
-          console.error("Firestore initialization error:", err);
-          if (err.message.includes("offline")) {
-            showMessage("Kon profiel niet laden: Firebase lijkt offline. Controleer je internet of config.", "error");
-          } else {
-            handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`);
-          }
+          console.warn("Firestore profile sync issues (non-critical):", err);
+          // Don't show scary UI message for background sync failures
         }
       } else {
         setSavedDecks([]);
