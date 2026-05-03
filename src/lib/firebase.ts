@@ -7,30 +7,21 @@ import { getFirestore } from 'firebase/firestore';
 // For Vercel, we must use Environment Variables.
 // We use a dynamic approach to avoid build errors when the file is missing.
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+// Use environment variables if present, otherwise fallback to local config values.
+// This allows the app to work in both AI Studio (local config) and Vercel (env vars).
+const config = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || "AIzaSyBBQ8Ift0NVn4rwr56u5OS7vkqMSEmOetI",
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || "rune-deck-c2ad3.firebaseapp.com",
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || "rune-deck-c2ad3",
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || "rune-deck-c2ad3.firebasestorage.app",
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || "617077627569",
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || "1:617077627569:web:1747ed7ec44c854b9d6090",
 };
 
-const databaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID;
+const databaseId = import.meta.env.VITE_FIREBASE_DATABASE_ID || undefined;
 
-// This is a helper to merge local config if available (only during development/local build)
-// In production (Vercel), these env vars must be set in the Vercel Dashboard.
-const app = initializeApp(firebaseConfig.apiKey ? firebaseConfig : {
-  // Fallback for AI Studio preview if env vars aren't set yet
-  // We use the values you already have in your local firebase-applet-config.json
-  apiKey: "AIzaSyBBQ8Ift0NVn4rwr56u5OS7vkqMSEmOetI",
-  authDomain: "rune-deck-c2ad3.firebaseapp.com",
-  projectId: "rune-deck-c2ad3",
-  storageBucket: "rune-deck-c2ad3.firebasestorage.app",
-});
-
-export const db = getFirestore(app, databaseId || undefined);
-export const auth = getAuth();
+const app = initializeApp(config);
+export const db = getFirestore(app, databaseId);
+export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });

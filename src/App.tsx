@@ -210,29 +210,50 @@ export default function App() {
   
   // --- Auth & Firestore Sync ---
   useEffect(() => {
+    // Explicit connectivity test
+    const testConnection = async () => {
+      try {
+        const { getDocFromServer } = await import('firebase/firestore');
+        await getDocFromServer(doc(db, '_connection_test_', 'test'));
+        console.log("Firestore: Server connection established successfully.");
+      } catch (err: any) {
+        console.warn("Firestore: Server connection failed (might be offline or config issue):", err.message);
+      }
+    };
+    testConnection();
+
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthLoading(false);
       
       if (u) {
         setIsAdmin(u.email === 'sdebeer@gmail.com');
-        // Init profile
-        const userRef = doc(db, 'users', u.uid);
-        const userSnap = await getDoc(userRef);
-        
-        if (userSnap.exists()) {
-          const data = userSnap.data();
-          if (data.userTitle) setUserTitle(data.userTitle);
-          if (data.cardsPerRow !== undefined) setCardsPerRow(data.cardsPerRow);
-        }
+        try {
+          // Init profile
+          const userRef = doc(db, 'users', u.uid);
+          const userSnap = await getDoc(userRef);
+          
+          if (userSnap.exists()) {
+            const data = userSnap.data();
+            if (data.userTitle) setUserTitle(data.userTitle);
+            if (data.cardsPerRow !== undefined) setCardsPerRow(data.cardsPerRow);
+          }
 
-        setDoc(userRef, {
-          userId: u.uid,
-          email: u.email,
-          displayName: u.displayName,
-          photoURL: u.photoURL,
-          updatedAt: serverTimestamp()
-        }, { merge: true }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`));
+          await setDoc(userRef, {
+            userId: u.uid,
+            email: u.email,
+            displayName: u.displayName,
+            photoURL: u.photoURL,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+        } catch (err: any) {
+          console.error("Firestore initialization error:", err);
+          if (err.message.includes("offline")) {
+            showMessage("Kon profiel niet laden: Firebase lijkt offline. Controleer je internet of config.", "error");
+          } else {
+            handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`);
+          }
+        }
       } else {
         setSavedDecks([]);
         setDeckbox([]);
@@ -315,12 +336,25 @@ export default function App() {
     };
   }, [user]);
 
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
+
   const login = async () => {
+    if (isLoggingIn) return;
+    setIsLoggingIn(true);
+    console.log("Login process started...");
     try {
-      await signInWithPopup(auth, googleProvider);
+      const result = await signInWithPopup(auth, googleProvider);
+      console.log("Login success:", result.user.email);
     } catch (error: any) {
-      console.error("Login failed", error);
-      showMessage("Login mislukt: " + error.message, "error");
+      console.error("Detailed Login Error:", error);
+      let errorMsg = error.message || error.code || "Onbekende fout";
+      if (error.code === 'auth/popup-blocked') {
+        errorMsg = "Popup geblokkeerd! Sta popups toe voor deze site.";
+      }
+      showMessage("Login mislukt: " + errorMsg, "error");
+    } finally {
+      setIsLoggingIn(false);
+      console.log("Login process finished.");
     }
   };
 
@@ -1138,15 +1172,22 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
           <button 
             onClick={login}
-            className="w-full flex items-center justify-center gap-3 py-4 rune-panel text-orange-500/80 hover:text-orange-500 hover:border-orange-500/30 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10"
+            disabled={isLoggingIn}
+            className={`w-full flex items-center justify-center gap-3 py-4 rune-panel text-orange-500/80 hover:text-orange-500 hover:border-orange-500/30 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10 ${isLoggingIn ? 'opacity-50 cursor-wait' : ''}`}
           >
-            <svg viewBox="0 0 24 24" className="w-4 h-4">
-              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
-              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
-              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
-              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
-            </svg>
-            Sign in with Google
+            {isLoggingIn ? (
+              <span className="animate-pulse">bezig met inloggen...</span>
+            ) : (
+              <>
+                <svg viewBox="0 0 24 24" className="w-4 h-4">
+                  <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                  <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                  <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" fill="#FBBC05"/>
+                  <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+                </svg>
+                Sign in with Google
+              </>
+            )}
           </button>
 
           <p className="mt-8 text-[10px] text-white/20 uppercase tracking-[0.3em] font-bold">
