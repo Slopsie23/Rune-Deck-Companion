@@ -112,10 +112,13 @@ export default function App() {
     // Mandatory connection test
     async function checkConnection() {
       try {
+        console.log("Firestore: Testing connection...");
         await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error) {
-        if (error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration or internet connection.");
+        console.log("Firestore: Connection test successful.");
+      } catch (error: any) {
+        console.error("Firestore Connection Test failed:", error.code, error.message);
+        if (error.message.includes('the client is offline')) {
+          console.warn("Firestore reports offline. Possible causes: Wrong Project ID, blocked network, or service down.");
         }
       }
     }
@@ -210,18 +213,6 @@ export default function App() {
   
   // --- Auth & Firestore Sync ---
   useEffect(() => {
-    // Explicit connectivity test
-    const testConnection = async () => {
-      try {
-        const { getDocFromServer } = await import('firebase/firestore');
-        await getDocFromServer(doc(db, '_connection_test_', 'test'));
-        console.log("Firestore: Server connection established successfully.");
-      } catch (err: any) {
-        console.warn("Firestore: Server connection failed (might be offline or config issue):", err.message);
-      }
-    };
-    testConnection();
-
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthLoading(false);
