@@ -1233,7 +1233,11 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
       showMessage(`Magic complete! Added ${suggestedTags.length} suggestions.`);
     } catch (err: any) {
       console.error("Failed to fetch commander for tags", err);
-      showMessage(`Magic failed: ${err.message || "Unknown error"}`);
+      let msg = err.message || "Unknown error";
+      if (msg.includes("API key expired")) {
+        msg = "API key expired. Vernieuw je Gemini API key in de instellingen.";
+      }
+      showMessage(`Magic failed: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -3339,8 +3343,14 @@ function JudgeView() {
     } catch (err: any) {
       console.error(err);
       let errorMsg = "Oei, mijn mentale archief is even onbereikbaar. Probeer het over een momentje opnieuw.";
-      if (err.message && err.message.includes("AI not initialized")) {
-        errorMsg = "Mijn excuses, de archieven zijn nog niet ontsloten. Configureer de GEMINI_API_KEY om mijn wijsheid te raadplegen.";
+      if (err.message) {
+        if (err.message.includes("AI not initialized")) {
+          errorMsg = "Mijn excuses, de archieven zijn nog niet ontsloten. Configureer de GEMINI_API_KEY om mijn wijsheid te raadplegen.";
+        } else if (err.message.includes("API key expired")) {
+          errorMsg = "Mijn excuses, mijn API key lijkt verlopen te zijn. Vernieuw deze in de instellingen.";
+        } else {
+          errorMsg = `Er is iets misgegaan: ${err.message.slice(0, 50)}...`;
+        }
       }
       setMessages(prev => [...prev, { role: 'assistant', content: errorMsg }]);
       setIsProcessing(false);
@@ -3355,16 +3365,17 @@ function JudgeView() {
         context += await fetchCardContext(name) + "\n";
       }
 
-      const systemPrompt = `Je bent Vencer, een meester-teleporteur en deskundige Magic: The Gathering Judge. Je hebt toegang tot een mentaal archief van alle regels.
+      const systemPrompt = `Je bent Ruxa, een deskundige maar bondige Magic: The Gathering Judge. 
       
       MISSIE:
       Beantwoord regelsvragen van de gebruiker direct en trefzeker. Gebruik de meegeleverde context als bron.
       
       STIJL:
       - Antwoord in het NEDERLANDS.
-      - Wees bondig maar wijs. Geef het antwoord in maximaal een paar zinnen.
-      - Leg de achterliggende regels ALLEEN uit als de gebruiker er specifiek naar vraagt.
-      - Een subtiele opmerking over teleportatie of artefacten mag, maar overdrijf het niet.`;
+      - Wees bondig. Geef het antwoord in maximaal een paar zinnen.
+      - Leg de achterliggende regels (zoals specifieke CR-artikelen of Layers) ALLEEN uit als de gebruiker er specifiek naar vraagt (zoals "waarom?" of "leg uit").
+      - Een subtiele humoristische opmerking of een kleine dad-joke mag, maar overdrijf het niet. 
+      - Behoud een wijze, professionele uitstraling.`;
       
       const userMessage = `--- CONTEXT VAN KAARTEN ---\n${context}\n\n--- REGELSVRAAG ---\n${query}\n\nWat is je uitspraak? (Kort en bondig in het Nederlands):`;
 
@@ -3380,8 +3391,11 @@ function JudgeView() {
           }
         });
         ruling = response.text || "";
-      } catch (e) {
-        console.error("Vencer API error:", e);
+      } catch (e: any) {
+        console.error("Ruxa API error:", e);
+        if (e.message && e.message.includes("API key expired")) {
+          throw new Error("API key expired. Vernieuw je Gemini API key in de instellingen.");
+        }
         throw e;
       }
 
@@ -3429,8 +3443,8 @@ function JudgeView() {
               <Gavel className="w-6 h-6 text-green-400" />
             </div>
             <div>
-              <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-cyan-400">Vencer's Archief</h2>
-              <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">Chronomatic Judge Protocol</p>
+              <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-green-400">Ruxa's Court</h2>
+              <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">Bear Judge Protocol</p>
             </div>
           </div>
           <div className="flex items-center gap-2 px-3 py-1 bg-green-500/5 rounded-full border border-green-500/10">
@@ -3522,7 +3536,7 @@ function JudgeView() {
                 type="text" 
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Stel een regelsvraag aan Vencer..."
+                placeholder="Stel een regelsvraag aan Ruxa..."
                 disabled={isProcessing || waitingForSelection}
                 className="flex-1 bg-green-500/[0.03] border border-green-500/10 rounded-2xl px-6 py-4 text-base sm:text-xs font-sans text-green-100 placeholder:text-green-500/20 outline-none focus:border-green-500/40 focus:bg-green-500/[0.05] transition-all disabled:opacity-50"
               />
