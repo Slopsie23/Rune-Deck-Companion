@@ -50,14 +50,25 @@ import {
   LayoutList,
   Book,
   Compass,
-  Radio
+  Radio,
+  Settings2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
+import runesBackground from './assets/images/runes_background_1777929551380.png';
+
+let cachedScryfallSets: any = null;
+async function fetchScryfallSets() {
+  if (cachedScryfallSets) return cachedScryfallSets;
+  const res = await axios.get('https://api.scryfall.com/sets');
+  cachedScryfallSets = res.data;
+  return cachedScryfallSets;
+}
+
 // IMPORTANT: DO NOT CHANGE THE LOGO PATH. 
 // The rune_bear.png file is located in the /public folder of the project.
 // Using a local path ensures the logo remains visible even if external repos change.
-const logo = "/rune_bear.png?v=" + new Date().getTime();
+const logo = "/runebear.png?v=" + new Date().getTime();
 
 import { 
   ORANGE_ACCENT, 
@@ -141,10 +152,10 @@ export default function App() {
       }, { merge: true });
       if (updates.userTitle !== undefined) setUserTitle(updates.userTitle);
       if (updates.cardsPerRow !== undefined) setCardsPerRow(updates.cardsPerRow);
-      showMessage("Instellingen bijgewerkt", "success");
+      showMessage("Settings updated", "success");
     } catch (err) {
       console.error("Failed to save settings", err);
-      showMessage("Fout bij opslaan instellingen", "error");
+      showMessage("Error updating settings", "error");
     }
   };
   const [authLoading, setAuthLoading] = useState(true);
@@ -178,8 +189,8 @@ export default function App() {
   useEffect(() => {
     const fetchSets = async () => {
       try {
-        const res = await axios.get('https://api.scryfall.com/sets');
-        let sortedSets = res.data.data
+        const data = await fetchScryfallSets();
+        let sortedSets = data.data
           .filter((s: any) => 
             ['expansion', 'commander', 'core', 'masters', 'draft_innovation', 'funny', 'arsenal'].includes(s.set_type) && !s.digital && !s.name.toLowerCase().includes('omenpaths') && !s.name.toLowerCase().includes('pioneer')
           )
@@ -223,7 +234,7 @@ export default function App() {
   };
 
   const [cardsPerRow, setCardsPerRow] = useState<number>(0); // 0 means 'auto' (~220px)
-  const [userTitle, setUserTitle] = useState("Planeswalker");
+  const [userTitle, setUserTitle] = useState("Deckmaster");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // --- Auth & Firestore Sync ---
@@ -386,7 +397,7 @@ export default function App() {
     if (!viewingDeckCards) return {};
     
     // Define ordering for groups
-    const categoryOrder = ["Commanders", "Creatures", "Planeswalkers", "Instants", "Sorceries", "Enchantments", "Artifacts", "Lands", "Other"];
+    const categoryOrder = ["Commanders", "Creatures", "Vanguards", "Instants", "Sorceries", "Enchantments", "Artifacts", "Lands", "Other"];
     const groups: { [key: string]: any[] } = {};
     categoryOrder.forEach(c => groups[c] = []);
 
@@ -401,7 +412,7 @@ export default function App() {
       } else if (type.includes("creature")) {
         groups["Creatures"].push(dc);
       } else if (type.includes("planeswalker")) {
-        groups["Planeswalkers"].push(dc);
+        groups["Vanguards"].push(dc);
       } else if (type.includes("instant")) {
         groups["Instants"].push(dc);
       } else if (type.includes("sorcery")) {
@@ -452,6 +463,7 @@ export default function App() {
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
   const [contextQuery, setContextQuery] = useState("");
+  const [suggestedDecks, setSuggestedDecks] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState("Any");
   const [rarityFilter, setRarityFilter] = useState("Any");
   const [setFilter, setSetFilter] = useState("Any");
@@ -957,6 +969,21 @@ export default function App() {
     setCommanders([]);
   };
 
+  const goHome = () => {
+    clearDeckSelection();
+    setSearchQuery("");
+    setContextQuery("");
+    setTypeFilter("Any");
+    setRarityFilter("Any");
+    setSetFilter("Any");
+    setColorFilter("Any");
+    setArchFilter("Any");
+    setViewMode('cards');
+    setHasSearched(false);
+    setAllCards([]);
+    if (isMobileMenuOpen) setIsMobileMenuOpen(false);
+  };
+
   const handleFunModeClick = (mode: 'sets' | 'calendar' | 'sheriff' | 'judge' | 'radio') => {
     clearDeckSelection();
     setViewMode(mode);
@@ -978,7 +1005,8 @@ export default function App() {
     colorOverride?: string,
     archOverride?: string,
     skipCI?: boolean,
-    skipViewChange?: boolean
+    skipViewChange?: boolean,
+    skipFormatFilters?: boolean
   }) => {
     setLoading(true);
     setHasSearched(true);
@@ -1011,37 +1039,56 @@ export default function App() {
         setSearchQuery("");
       }
 
-      const baseFilters = [
-        "game:paper",
-        "-is:digital",
-        "-is:art_series",
-        "-is:funny",
-        "-is:token",
-        "-t:emblem",
-      ];
+      let filters: string[] = [];
 
-      if (ci && !options?.skipCI) baseFilters.push(`ci<=${ci}`);
-      if (type !== "Any") baseFilters.push(`t:${type}`);
-      if (rarity !== "Any") baseFilters.push(`r:${rarity}`);
-      if (set !== "Any") baseFilters.push(`s:${set}`);
+      if (!options?.skipFormatFilters) {
+        filters = [
+          "game:paper",
+          "-is:digital",
+          "-is:art_series",
+          "-is:funny",
+          "-is:token",
+          "-t:token",
+          "-t:emblem",
+          "-banned:commander",
+        ];
+      } else {
+        // When skipping format filters (e.g. browsing a set), we still want to avoid tokens and art cards,
+        // but we want to see everything else that belongs to the set (like un-cards, digital, non-commander-legal formats, etc).
+        filters = [
+          "-is:art_series",
+          "-is:token",
+          "-t:token",
+          "-t:emblem",
+        ];
+      }
+
+      if (ci && ci !== "Any" && !options?.skipCI) {
+        filters.push(`id<=${ci}`);
+      }
+
+      if (type !== "Any") filters.push(`t:${type}`);
+      if (rarity !== "Any") filters.push(`r:${rarity}`);
+      if (set !== "Any") filters.push(`s:${set}`);
       if (color !== "Any") {
-        if (color === "C") baseFilters.push("c:c");
-        else if (color === "Multi") baseFilters.push("c:m");
-        else baseFilters.push(`c:${color}`);
+        if (color === "C") filters.push("c:c");
+        else if (color === "Multi") filters.push("c:m");
+        else filters.push(`c:${color}`);
       }
 
       if (arch !== "Any") {
         const role = DECK_ROLES.find(r => r.label === arch);
-        if (role) baseFilters.push(role.query);
+        if (role) filters.push(role.query);
       }
 
-      let query = baseFilters.join(" ");
       if (activeContext) {
-        query += ` ${activeContext}`;
+        filters.push(activeContext);
       }
       if (!options?.queryOverride && searchQuery.trim()) {
-        query += ` (o:"${searchQuery}" OR t:"${searchQuery}" OR "${searchQuery}")`;
+        filters.push(`(o:"${searchQuery}" OR t:"${searchQuery}" OR "${searchQuery}")`);
       }
+
+      const query = filters.join(" ");
 
       const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=released&dir=desc`;
       console.log("Searching Scryfall:", url);
@@ -1056,8 +1103,13 @@ export default function App() {
         setAllCards([]);
         // We don't necessarily want to show an "Error" for 404 if it's just no results
       } else {
-        console.error("Search failed", err);
-        showMessage("Search failed: " + (err.response?.data?.details || err.message), 'error');
+        if (err.response?.status === 400) {
+          console.warn("Scryfall rejected search query with 400 Bad Request:", query, err.response?.data);
+          setAllCards([]);
+        } else {
+          console.error("Search failed", err);
+          showMessage("Search failed: " + (err.response?.data?.details || err.message), 'error');
+        }
       }
     } finally {
       setLoading(false);
@@ -1264,15 +1316,95 @@ export default function App() {
     }
   };
 
-  const addTag = async (deckId: string, tag: string) => {
-    if (!tag.trim() || !user) return;
+  const addTag = async (deckId: string, tagString: string) => {
+    if (!tagString.trim() || !user) return;
+    const tag = tagString.trim();
+    if (!tag) return;
+
     const deckRef = doc(db, 'users', user.uid, 'decks', deckId);
-    const deck = savedDecks.find(d => d.id === deckId);
-    if (deck && !deck.tags.includes(tag)) {
+    let deck = savedDecks.find(d => d.id === deckId);
+    if (!deck) return;
+
+    // Optimistic Save
+    const tempEntry = tag.includes(':::') || tag.includes(':') || tag.includes('=') ? tag : `${tag}:::${tag}`;
+    
+    // Check if tag exists (either exactly, or with the same prefix)
+    const exists = deck.tags.some(t => t === tempEntry || (t.includes(':::') && t.split(':::')[0].toLowerCase() === tag.toLowerCase()));
+    
+    if (!exists) {
+      const newTags = [...deck.tags, tempEntry];
       await updateDoc(deckRef, { 
-        tags: [...deck.tags, tag],
+        tags: newTags,
         updatedAt: serverTimestamp() 
       }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${deckId}`));
+
+      // Background AI call to format as Scryfall query
+      if (!tag.includes(':::') && !tag.includes(':') && !tag.includes('=')) {
+        try {
+          let q = tag;
+          if (ai) {
+            const res = await ai.models.generateContent({
+              model: "gemini-3-pro-preview",
+              contents: [{ parts: [{ text: `Convert the MTG concept "${tag}" into a valid concise Scryfall search string. Only output the string with no formatting or quotes. E.g. t:elf or o:token` }] }]
+            });
+            q = (res.text || tag).trim().replace(/```/g, '').replace(/\n/g, ' ');
+          }
+
+          let finalEntry = `${tag}:::${q}`;
+          let isValid = false;
+          
+          try {
+            const testQuery = `(${q}) id:${deck.ci || 'c'}`;
+            const scryRes = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
+            if (scryRes.data.total_cards > 0) {
+              isValid = true;
+            }
+          } catch(e: any) {
+             // 404 means no cards found
+             isValid = false;
+          }
+
+          const snap = await getDocFromServer(deckRef);
+          if (snap.exists()) {
+             const latestTags: string[] = snap.data().tags || [];
+             let finalTags = [];
+             if (isValid) {
+               finalTags = latestTags.map(t => t === tempEntry ? finalEntry : t);
+             } else {
+               // Remove it
+               finalTags = latestTags.filter(t => t !== tempEntry);
+               showMessage(`Tag removed: "${tag}" yielded no results in this commander's color identity.`);
+             }
+
+             await updateDoc(deckRef, {
+               tags: finalTags,
+               updatedAt: serverTimestamp()
+             }).catch(err => console.error("failed background tag update", err));
+          }
+        } catch (e) {
+          console.error("AI tag syntax generation failed", e);
+        }
+      } else {
+         // It was an explicit syntax tag, validate it against Scryfall
+         try {
+            const syntaxPart = tempEntry.includes(':::') ? tempEntry.split(':::').slice(1).join(':::') : tempEntry;
+            const testQuery = `(${syntaxPart}) id:${deck.ci || 'c'}`;
+            const scryRes = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
+            // valid
+         } catch(e: any) {
+             // remove if invalid
+             const snap = await getDocFromServer(deckRef);
+             if (snap.exists()) {
+                const latestTags: string[] = snap.data().tags || [];
+                const finalTags = latestTags.filter(t => t !== tempEntry);
+                await updateDoc(deckRef, {
+                  tags: finalTags,
+                  updatedAt: serverTimestamp()
+                });
+                showMessage(`Tag removed: Scryfall query "${tempEntry}" yielded no results.`);
+             }
+         }
+      }
     }
   };
 
@@ -1328,43 +1460,71 @@ Analyze the following commander(s) and their synergy:
 
 ${commandersInfo}
 
-Your goal is to suggest 5-8 highly effective Scryfall search terms (tags) that a player would use to find cards with deep mechanical synergy or strategic value for this specific deck. 
-If there are multiple commanders (e.g. Partners or a Commander + Background), focus heavily on the synergy BETWEEN them.
+Suggest 5-8 valid Scryfall search queries that represent deep mechanical synergies for this deck.
+Output a valid JSON array of objects.
+Each object must have:
+"label": A short, readable name for the frontend (e.g. "Card Draw", "Elf Tribal")
+"query": The EXACT Scryfall search syntax (e.g. o:"draw a card", t:elf, kw:flying)
 
-Rules for tags:
-1. They must be concise (1-3 words).
-2. They should focus on the deck's unique engine and win conditions.
-3. Include both mechanical keywords and logical strategy descriptors.
-4. Do not include existing tags: ${existingTags.join(', ')}
+Rules for tags (Scryfall queries):
+1. Must be valid Scryfall syntax (e.g. o:"keyword", t:type, kw:ability).
+2. Must find cards that syngergize with the commander.
+3. Only return the exact syntax as the query.
+4. Do not include existing tags: ${existingTags.map(t => t.split(':::')[0]).join(', ')}
 
-Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
+Return ONLY JSON. No markdown backticks.`;
 
       if (!ai) {
-        showMessage("Geen Gemini API Key beschikbaar. Configuratiefout.", "error");
+        showMessage("No Gemini API Key available. Configuration error.", "error");
         return;
       }
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3-pro-preview",
         contents: [{ parts: [{ text: prompt }] }],
       });
 
-      const suggestedText = (response.text || "").replace(/[^a-zA-Z0-9,\s-]/g, "");
-      const suggestedTags = suggestedText
-        .split(',')
-        .map(t => t.trim().toLowerCase())
-        .filter(t => t.length > 0 && !existingTags.includes(t))
-        .slice(0, 8);
+      let jsonStr = (response.text || "").replace(/```json/g, '').replace(/```/g, '').trim();
+      let parsed = [];
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch(e) {
+        throw new Error("Ongeldige JSON van AI");
+      }
+
+      const validTags = [];
+      for (const item of parsed) {
+        if (!item.label || !item.query) continue;
+        
+        // Test query against Scryfall
+        const testQuery = `(${item.query}) id:${deck?.ci || 'c'}`;
+        try {
+          // Delay to prevent rate limiting
+          await new Promise(r => setTimeout(r, 100));
+          const res = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
+          if (res.data.total_cards > 0) {
+            validTags.push(`${item.label}:::${item.query}`);
+          }
+        } catch(e: any) {
+          // Ignore 404s (no cards found)
+        }
+      }
+
+      if (validTags.length === 0) {
+         showMessage("Magic failed: No valid tags yielded results.");
+         return;
+      }
       
       if (user) {
         const deckRef = doc(db, 'users', user.uid, 'decks', deckId);
-        const combined = Array.from(new Set([...existingTags, ...suggestedTags]));
+        const combined = Array.from(new Set([...existingTags, ...validTags]));
         await updateDoc(deckRef, { 
           tags: combined,
           updatedAt: serverTimestamp() 
         }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${deckId}`));
       }
       
-      showMessage(`Magic complete! Added ${suggestedTags.length} suggestions.`);
+      setSuggestedDecks(prev => new Set(prev).add(deckId));
+      showMessage(`Magic complete! Added ${validTags.length} valid suggestions.`);
     } catch (err: any) {
       console.error("Failed to fetch commander for tags", err);
       let msg = err.message || "Unknown error";
@@ -1477,7 +1637,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             className={`w-full flex items-center justify-center gap-3 py-4 rune-panel text-orange-500/80 hover:text-orange-500 hover:border-orange-500/30 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10 ${isLoggingIn ? 'opacity-50 cursor-wait' : ''}`}
           >
             {isLoggingIn ? (
-              <span className="animate-pulse">bezig met inloggen...</span>
+              <span className="animate-pulse">signing in...</span>
             ) : (
               <>
                 <svg viewBox="0 0 24 24" className="w-4 h-4">
@@ -1505,7 +1665,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
       <div className="absolute bottom-0 left-[20%] w-[40vh] h-[40vh] bg-orange-500/5 blur-[120px] rounded-full pointer-events-none" />
       {/* Mobile Top Bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#070707]/60 backdrop-blur-2xl border-b border-white/[0.04] z-40 flex items-center justify-between px-4">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
           <Zap className="w-5 h-5 text-orange-500" />
           <h1 className="text-sm font-magic font-black uppercase tracking-[0.2em] text-white">Rune Deck</h1>
         </div>
@@ -1535,7 +1695,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
         <div className="rune-book-spine" />
         <div className="absolute top-0 bottom-0 right-0 w-px bg-gradient-to-b from-transparent via-cyan-500/30 to-transparent" />
         
-        <div className="flex flex-col items-center p-6 pb-2 relative z-10">
+        <div className="flex flex-col items-center p-4 pb-2 relative z-10">
           <button 
             onClick={() => setIsMobileMenuOpen(false)}
             className="md:hidden absolute top-4 right-4 p-2 text-white/20"
@@ -1543,19 +1703,8 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             <X className="w-5 h-5" />
           </button>
           <div 
-            className="w-24 h-24 mb-4 hover:scale-105 transition-transform cursor-pointer group relative"
-            onClick={() => {
-              clearDeckSelection();
-              setSearchQuery("");
-              setContextQuery("");
-              setTypeFilter("Any");
-              setRarityFilter("Any");
-              setSetFilter("Any");
-              setColorFilter("Any");
-              setArchFilter("Any");
-              setViewMode('manage_decks');
-              performSearch({ queryOverride: "", skipCI: true, skipViewChange: true });
-            }}
+            className="w-24 h-24 mb-3 hover:scale-105 transition-transform cursor-pointer group relative"
+            onClick={goHome}
           >
             <div className="absolute inset-0 bg-orange-500/20 blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
             <img 
@@ -1564,19 +1713,20 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
               className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,152,0,0.6)]"
             />
           </div>
-          <h1 className="text-2xl font-magic font-extrabold text-orange-500 tracking-tighter text-center leading-none uppercase">Rune Deck <br/> <span className="text-lg opacity-80">Companion</span></h1>
+          <h1 onClick={goHome} className="cursor-pointer text-2xl font-magic font-extrabold text-orange-500 tracking-tighter text-center leading-none uppercase">Rune Deck <br/> <span className="text-lg opacity-80">Companion</span></h1>
           <p className="text-[9px] text-cyan-500/40 uppercase tracking-[0.4em] font-bold mt-2">Quick Add-tech</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto no-scrollbar p-6 space-y-10">
-          {/* Section 1: Decks */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+          {/* Section 1: Decks and Search Fields */}
           <section className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Database className="w-3 h-3 text-orange-500" />
-              <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Decks</h2>
-            </div>
-            <div className="space-y-4">
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center gap-2">
+                <Database className="w-3 h-3 text-orange-500" />
+                <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Decks</h2>
+              </div>
               <button 
+                id="manage-decks-btn"
                 onClick={() => {
                   clearDeckSelection();
                   setSearchQuery("");
@@ -1588,173 +1738,201 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                   setArchFilter("Any");
                   setViewMode('manage_decks');
                 }}
-                className="w-full flex items-center justify-center gap-2 py-4 rune-panel rounded-sm text-[9px] font-magic font-extrabold uppercase tracking-[0.1em] text-cyan-500/60 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
+                className="text-white/30 hover:text-cyan-400 p-1.5 hover:bg-white/5 rounded-md transition-all group"
+                title="Manage Decks"
               >
-                Manage Decks
+                <Settings2 className="w-3.5 h-3.5 group-hover:rotate-90 transition-transform" />
               </button>
-              <div className="relative group">
-                <select 
-                  className="w-full appearance-none rune-panel rounded-sm px-5 py-4 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
-                  onChange={(e) => {
-                    const deckId = e.target.value;
-                    if (!deckId) {
-                      clearDeckSelection();
-                      performSearch({ queryOverride: "" });
-                      return;
-                    }
-                    const deck = savedDecks.find(d => d.id === deckId);
-                    if (deck) {
-                      setActiveDeckId(deck.id);
-                      setActiveDeckName(deck.name);
-                      setExistingInDeck(new Set(deck.existingNames));
-                      // We might need to re-fetch full commander details if not in savedDecks
-                      // For now, at least switch view and set CI
-                      setCurrentCI(deck.ci || "c");
-                      setViewMode('cards');
-                      performSearch({ ciOverride: deck.ci || "c", queryOverride: "" });
-                      
-                      // Also fetch full commander data for the sidebar visuals
-                      const cmdNames = deck.commanderNames || deck.commanders || [];
-                      initializeDeckState(deck.id, deck.name, cmdNames, new Set(deck.existingNames), deck.totalCost || 0, true);
-                    }
-                  }}
-                  value={activeDeckId || ""}
-                >
-                  <option value="" className="bg-[#0A0A0A]">Select a Deck...</option>
-                  {savedDecks.map(deck => (
-                    <option key={deck.id} value={deck.id} className="bg-[#0A0A0A]">{deck.name}</option>
-                  ))}
-                </select>
-                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
-              </div>
-              
-              {activeDeckId && commanders.length > 0 && (
-                <div className="flex flex-col items-center gap-5 py-6">
-                  <div className="flex justify-center items-center w-full">
-                    <div className="flex items-center -space-x-8">
-                       {[...commanders].reverse().map((cmd, i) => (
-                          <div key={i} className="relative group hover:z-50 transition-all duration-300 hover:scale-105" style={{ zIndex: i }}>
-                            <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-full overflow-hidden border-4 border-[#0A0A0A] shadow-[0_0_20px_rgba(0,0,0,0.8)] relative group-hover:border-orange-500/50">
-                              <img src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
-                              <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40 mix-blend-overlay" />
-                            </div>
-                            <div className="absolute -bottom-4 left-1/2 -translate-x-1/2 w-max max-w-[140px] text-[10px] font-magic font-bold text-white bg-black/80 backdrop-blur px-3 py-1 rounded-full uppercase tracking-wider text-center opacity-0 group-hover:opacity-100 transition-opacity border border-white/10 pointer-events-none">
-                               {cmd.name}
-                            </div>
-                          </div>
-                       ))}
-                    </div>
-                  </div>
-                  {currentCI && (
-                    <div className="flex justify-center scale-150 drop-shadow-[0_0_10px_rgba(255,255,255,0.1)] opacity-80 mt-1">
-                       {renderManaSymbols(currentCI)}
-                    </div>
-                  )}
-                </div>
-              )}
-
             </div>
-          </section>
-
-          {/* Section 3: Search Engine */}
-          <section className="space-y-6">
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <Search className="w-3 h-3 text-orange-500" />
-                <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Search Engine</h2>
-              </div>
-              
-              <div className="space-y-2">
-                {activeDeckId && (
-                  <button 
-                    onClick={() => {
-                      const deck = savedDecks.find(d => d.id === activeDeckId);
-                      if (deck && deck.tags.length > 0) {
-                        const tagQuery = "(" + deck.tags.map(t => `o:"${t}" OR t:"${t}"`).join(" OR ") + ")";
+            
+            <div className="space-y-2">
+              <div className="relative group">
+                {savedDecks.length === 0 ? (
+                   <button 
+                     onClick={() => {
+                        const message = "You must add or import a deck first!";
+                        const errEl = document.createElement('div');
+                        errEl.className = 'fixed top-4 left-1/2 -translate-x-1/2 bg-red-500/90 text-white px-4 py-2 rounded-lg font-bold text-sm shadow-[0_0_20px_rgba(239,68,68,0.5)] border border-white/20 backdrop-blur-md z-[1000]';
+                        errEl.innerText = message;
+                        document.body.appendChild(errEl);
+                        setTimeout(() => errEl.remove(), 4000);
+                        
+                        const manageBtn = document.getElementById('manage-decks-btn');
+                        if (manageBtn) {
+                           manageBtn.classList.add('ring-4', 'ring-cyan-500', 'animate-pulse', 'bg-cyan-500/20');
+                           setTimeout(() => manageBtn.classList.remove('ring-4', 'ring-cyan-500', 'animate-pulse', 'bg-cyan-500/20'), 3000);
+                        }
+                     }}
+                     className="w-full text-left appearance-none rune-panel rounded-sm px-4 py-3 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
+                   >
+                     Select a Deck...
+                   </button>
+                ) : (
+                  <select 
+                    className="w-full appearance-none rune-panel rounded-sm px-4 py-3 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
+                    onChange={(e) => {
+                      const deckId = e.target.value;
+                      if (!deckId) {
+                        clearDeckSelection();
+                        performSearch({ queryOverride: "" });
+                        return;
+                      }
+                      const deck = savedDecks.find(d => d.id === deckId);
+                      if (deck) {
+                        setActiveDeckId(deck.id);
+                        setActiveDeckName(deck.name);
+                        setExistingInDeck(new Set(deck.existingNames));
+                        setCurrentCI(deck.ci || "c");
                         setViewMode('cards');
-                        performSearch({ queryOverride: tagQuery });
+                        performSearch({ ciOverride: deck.ci || "c", queryOverride: "" });
+                        const cmdNames = deck.commanderNames || deck.commanders || [];
+                        initializeDeckState(deck.id, deck.name, cmdNames, new Set(deck.existingNames), deck.totalCost || 0, true);
                       }
                     }}
-                    className="w-full flex items-center justify-center gap-2 py-3.5 rune-panel text-cyan-500/80 hover:text-cyan-400 hover:border-cyan-500/30 font-black text-[10px] transition-all font-magic uppercase tracking-[0.3em] active:scale-[0.98] z-10"
+                    value={activeDeckId || ""}
+                  >
+                    <option value="" className="bg-[#0A0A0A]">Select a Deck...</option>
+                    {savedDecks.map(deck => (
+                      <option key={deck.id} value={deck.id} className="bg-[#0A0A0A]">{deck.name}</option>
+                    ))}
+                  </select>
+                )}
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
+              </div>
+            </div>
+            
+            {activeDeckId && (
+              <div className="space-y-6 pt-2">
+                {commanders.length > 0 && (
+                  <div className="flex flex-col items-center gap-2">
+                    <div className="flex justify-center items-center w-full">
+                      <div className="flex items-center -space-x-4">
+                         {[...commanders].reverse().map((cmd, i) => (
+                            <div key={i} className="relative group hover:z-50 transition-all duration-300 hover:scale-105" style={{ zIndex: i }}>
+                              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-2 border-[#0A0A0A] shadow-[0_0_15px_rgba(0,0,0,0.8)] relative group-hover:border-orange-500/50">
+                                <img src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
+                                <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40 mix-blend-overlay" />
+                              </div>
+                              <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-max max-w-[120px] text-[8px] font-magic font-bold text-white bg-black/80 backdrop-blur px-2 py-0.5 rounded-full uppercase tracking-wider text-center opacity-0 group-hover:opacity-100 transition-opacity border border-white/10 pointer-events-none z-[60]">
+                                 {cmd.name}
+                              </div>
+                            </div>
+                         ))}
+                      </div>
+                    </div>
+                    {currentCI && (
+                      <div className="flex justify-center drop-shadow-[0_0_10px_rgba(255,255,255,0.1)] opacity-80 mt-1">
+                         {renderManaSymbols(currentCI)}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="space-y-2 border-t border-white/5 pt-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Search className="w-3 h-3 text-orange-500" />
+                    <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Search Engine</h2>
+                  </div>
+                  
+                  <button 
+                    onClick={() => {
+                      if (!activeDeckId) {
+                        showMessage("Select a deck first to build a resonance profile.", "info");
+                        return;
+                      }
+                      const deck = savedDecks.find(d => d.id === activeDeckId);
+                      if (!deck || !deck.tags || deck.tags.length === 0) {
+                        showMessage("No synergy tags found. Initiate 'Generate Tags' at your deck profile first.", "info");
+                        return;
+                      }
+                      const tagQuery = "(" + deck.tags.map(t => t.includes(':::') ? t.split(':::').slice(1).join(':::') : `o:"${t}" OR t:"${t}"`).join(") OR (") + ")";
+                      setViewMode('cards');
+                      performSearch({ queryOverride: tagQuery, ciOverride: deck.ci || "c", skipCI: false });
+                    }}
+                    className="w-full flex items-center justify-center gap-2 py-2.5 rune-panel text-cyan-500/80 hover:text-cyan-400 hover:border-cyan-500/30 font-black text-[10px] transition-all font-magic uppercase tracking-[0.3em] active:scale-[0.98] z-10"
                   >
                     <Zap className="w-4 h-4" />
                     Tag Based Search
                   </button>
-                )}
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    placeholder="Manual search..."
-                    className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-5 py-3.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch()}
-                  />
-                  <button 
-                    onClick={() => performSearch()}
-                    className="rune-panel px-5 py-3.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
-                  >
-                    <Search className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            </div>
 
-            {activeDeckId && (
-              <div className="space-y-4">
-                <div className="flex items-center gap-2">
-                  <Filter className="w-3 h-3 text-orange-500" />
-                  <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Veggie Categories</h2>
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  {DECK_ROLES.slice(0, 4).map((role) => (
-                    <button
-                      key={role.label}
-                      onClick={() => {
+                  <div className="relative group">
+                    <select
+                      value={archFilter}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setArchFilter(val);
                         setSearchQuery("");
-                        setArchFilter(role.label);
                         setViewMode('cards');
-                        performSearch({ archOverride: role.label });
+                        performSearch({ archOverride: val });
                       }}
-                      className={`py-3 rune-panel rounded-sm text-[8px] font-black transition-all font-magic uppercase tracking-widest z-10 ${archFilter === role.label ? 'text-cyan-400 border-cyan-500/50 bg-cyan-500/10 shadow-[inset_0_1px_5px_rgba(6,182,212,0.2)]' : 'text-white/40 hover:text-cyan-400 hover:border-cyan-500/30 hover:bg-cyan-500/5'}`}
+                      className="w-full appearance-none rune-panel rounded-sm px-4 py-2.5 text-[8px] font-magic font-black uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
                     >
-                      {role.label}
+                      <option value="Any" className="bg-[#0A0A0A]">Veggie Search</option>
+                      {DECK_ROLES.map(r => (
+                        <option key={r.label} value={r.label} className="bg-[#0A0A0A]">{r.label}</option>
+                      ))}
+                    </select>
+                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="Manual search..."
+                      className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-4 py-2.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch()}
+                    />
+                    <button 
+                      onClick={() => performSearch()}
+                      className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
+                    >
+                      <Search className="w-4 h-4" />
                     </button>
-                  ))}
-                </div>
-                <div className="relative group">
-                  <select
-                    value={archFilter}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setArchFilter(val);
-                      setSearchQuery("");
-                      setViewMode('cards');
-                      performSearch({ archOverride: val });
-                    }}
-                    className="w-full appearance-none rune-panel rounded-sm px-5 py-3.5 text-[8px] font-magic font-black uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
-                  >
-                    <option value="Any" className="bg-[#0A0A0A]">All Categories...</option>
-                    {DECK_ROLES.map(r => (
-                      <option key={r.label} value={r.label} className="bg-[#0A0A0A]">{r.label}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
+                  </div>
                 </div>
               </div>
             )}
+
+             {!activeDeckId && (
+               <div className="space-y-3 pt-3 border-t border-white/5">
+                 <div className="flex items-center gap-2">
+                   <Search className="w-3 h-3 text-orange-500" />
+                   <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Search Engine</h2>
+                 </div>
+                 <div className="flex gap-2">
+                    <input 
+                      type="text" 
+                      placeholder="Manual search..."
+                      className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-4 py-2.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch()}
+                    />
+                    <button 
+                      onClick={() => performSearch()}
+                      className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
+                    >
+                      <Search className="w-4 h-4" />
+                    </button>
+                 </div>
+               </div>
+            )}
           </section>
 
-          {/* Section 4: Deckbox */}
-          <section className="space-y-4">
-            <div className="flex items-center gap-2">
-              <Layers className="w-3 h-3 text-orange-500" />
-              <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Deckbox</h2>
+          {/* Section 4: Selected Cardboard */}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Layers className="w-3 h-3 text-orange-500" />
+                <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Selected Cardboard</h2>
+              </div>
             </div>
             <div className="flex flex-col gap-2">
               <button 
                 onClick={() => setIsDeckboxOpen(true)}
-                className="w-full flex items-center justify-center gap-2 py-4 rune-panel rounded-sm text-orange-500/80 font-magic font-bold text-[10px] uppercase tracking-[0.2em] hover:text-orange-500 hover:border-orange-500/30 transition-all group z-10"
+                className="w-full flex items-center justify-center gap-2 py-3 rune-panel rounded-sm text-orange-500/80 font-magic font-bold text-[10px] uppercase tracking-[0.2em] hover:text-orange-500 hover:border-orange-500/30 transition-all group z-10"
               >
                 View Selection
                 {deckbox.length > 0 && (
@@ -1767,18 +1945,20 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
           </section>
 
           {/* Section 5: Fun Area */}
-          <section className="space-y-4">
-             <div className="flex items-center gap-2">
-              <Moon className="w-3 h-3 text-orange-500" />
-              <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Fun Area</h2>
+          <section className="space-y-2">
+             <div className="flex items-center justify-between border-t border-white/5 pt-3">
+              <div className="flex items-center gap-2">
+                <Moon className="w-3 h-3 text-orange-500" />
+                <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Fun Area</h2>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-1 grid-rows-2">
               <button 
                 onClick={() => handleFunModeClick('sets')}
-                className="flex flex-col items-center justify-center p-3.5 rune-panel text-white/40 hover:text-cyan-400 font-magic hover:border-cyan-500/30 transition-all group z-10"
+                className="flex flex-col items-center justify-center py-2 rune-panel text-white/40 hover:text-cyan-400 font-magic hover:border-cyan-500/30 transition-all group z-10 gap-1 rounded-sm"
               >
-                <Library className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform" />
-                <span className="text-[8px] font-magic font-bold uppercase tracking-widest">Sets</span>
+                <Library className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Sets</span>
               </button>
               <button 
                 onClick={() => {
@@ -1789,38 +1969,38 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                   setViewMode('cards');
                   performSearch({ queryOverride: "art:bear is:paper order:released", setOverride: "Any", archOverride: "Any", skipCI: true });
                 }}
-                className="flex flex-col items-center justify-center p-3.5 rune-panel text-white/50 hover:text-cyan-400 hover:border-cyan-500/30 font-magic transition-all group z-10"
+                className="flex flex-col items-center justify-center py-2 rune-panel text-white/50 hover:text-cyan-400 hover:border-cyan-500/30 font-magic transition-all group z-10 gap-1 rounded-sm"
               >
-                <div className="text-[14px] mb-0.5 group-hover:scale-110 transition-transform">🐾</div>
-                <span className="text-[8px] font-magic font-bold uppercase tracking-widest">Bears</span>
+                <div className="text-[12px] leading-none group-hover:scale-110 transition-transform">🐾</div>
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Bears</span>
               </button>
               <button 
                 onClick={() => handleFunModeClick('calendar')}
-                className="flex flex-col items-center justify-center p-3.5 rune-panel text-white/40 hover:text-orange-500 font-magic hover:border-orange-500/30 transition-all group z-10"
+                className="flex flex-col items-center justify-center py-2 rune-panel text-white/40 hover:text-orange-500 font-magic hover:border-orange-500/30 transition-all group z-10 gap-1 rounded-sm"
               >
-                <Calendar className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-orange-500/80 group-hover:text-orange-500" />
-                <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-orange-500/80 group-hover:text-orange-500">Calendar</span>
+                <Calendar className="w-4 h-4 group-hover:scale-110 transition-transform text-orange-500/80 group-hover:text-orange-500" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none text-orange-500/80 group-hover:text-orange-500">Calendar</span>
               </button>
               <button 
                 onClick={() => handleFunModeClick('sheriff')}
-                className="flex flex-col items-center justify-center p-3.5 rune-panel text-amber-500/60 hover:text-amber-400 font-magic hover:border-amber-500/50 transition-all group z-10"
+                className="flex flex-col items-center justify-center py-2 rune-panel text-amber-500/60 hover:text-amber-400 font-magic hover:border-amber-500/50 transition-all group z-10 gap-1 rounded-sm"
               >
-                <Shield className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-amber-500/80 group-hover:text-amber-500" />
-                <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-amber-500/80 group-hover:text-amber-400">Sheriff</span>
+                <Shield className="w-4 h-4 group-hover:scale-110 transition-transform text-amber-500/80 group-hover:text-amber-500" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none text-amber-500/80 group-hover:text-amber-400">Sheriff</span>
               </button>
               <button 
                 onClick={() => handleFunModeClick('judge')}
-                className="flex flex-col items-center justify-center p-3.5 rune-panel text-green-500/60 hover:text-green-400 font-magic hover:border-green-500/50 transition-all group z-10"
+                className="flex flex-col items-center justify-center py-2 rune-panel text-green-500/60 hover:text-green-400 font-magic hover:border-green-500/50 transition-all group z-10 gap-1 rounded-sm"
               >
-                <Gavel className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-green-500/80 group-hover:text-green-500" />
-                <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-green-500/80 group-hover:text-green-400">Judge</span>
+                <Gavel className="w-4 h-4 group-hover:scale-110 transition-transform text-green-500/80 group-hover:text-green-500" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none text-green-500/80 group-hover:text-green-400">Judge</span>
               </button>
               <button 
                 onClick={() => handleFunModeClick('radio')}
-                className="flex flex-col items-center justify-center p-3.5 rune-panel text-purple-500/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10"
+                className="flex flex-col items-center justify-center py-2 rune-panel text-purple-500/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10 gap-1 rounded-sm"
               >
-                <Radio className="w-4 h-4 mb-1 group-hover:scale-110 transition-transform text-purple-500/80 group-hover:text-purple-500" />
-                <span className="text-[8px] font-magic font-bold uppercase tracking-widest text-purple-500/80 group-hover:text-purple-400">Radio</span>
+                <Radio className="w-4 h-4 group-hover:scale-110 transition-transform text-purple-500/80 group-hover:text-purple-500" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none text-purple-500/80 group-hover:text-purple-400">Radio</span>
               </button>
             </div>
           </section>
@@ -1849,8 +2029,8 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             </button>
 
             <div className="flex-1 flex flex-col items-start min-w-0">
-               <span className="text-[8px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">{user?.displayName || 'Seeker'}</span>
-               <span className="text-[7px] font-sans font-black text-orange-500/80 uppercase tracking-widest truncate w-full">{userTitle || 'Novice'}</span>
+               <span className="text-[10px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">{user?.displayName || 'Seeker'}</span>
+               <span className="text-[9px] font-sans font-black text-orange-500/80 uppercase tracking-widest truncate w-full">{userTitle || 'Novice'}</span>
                <div className="mt-1 flex flex-col gap-0.5">
                  <p className="text-[5px] font-sans font-bold text-white/20 uppercase leading-tight tracking-wider">
                    © {new Date().getFullYear()} Slopsie.
@@ -1903,7 +2083,8 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
 
                   <div className="p-8 space-y-8">
                      <div className="space-y-3">
-                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">Planeswalker Titel</label>
+                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">User Title</label>
+                        <p className="text-[8px] text-white/20 uppercase tracking-tighter -mt-2">This title appears beneath your name.</p>
                         <div className="flex gap-2">
                            <input 
                               type="text"
@@ -1911,17 +2092,16 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                               onChange={(e) => setUserTitle(e.target.value)}
                               onBlur={() => saveUserSettings({ userTitle })}
                               onKeyDown={(e) => e.key === 'Enter' && saveUserSettings({ userTitle })}
-                              placeholder="bv. Master Brewer"
+                              placeholder="e.g. Master Brewer"
                               className="w-full bg-black/40 backdrop-blur-xl shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] border border-white/[0.05] rounded-[1.5rem] px-5 py-3.5 text-xs focus:border-orange-500 outline-none text-white/80 transition-all font-sans"
                            />
                            <button 
                              onClick={() => saveUserSettings({ userTitle })}
                              className="px-5 py-3.5 bg-white/[0.04] shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] border border-white/[0.05] rounded-[1.5rem] text-white/60 hover:text-white hover:bg-white/10 transition-all font-black text-xs uppercase tracking-widest font-magic"
                            >
-                             Opslaan
+                             Update
                            </button>
                         </div>
-                        <p className="text-[8px] text-white/20 uppercase tracking-tighter">Deze titel verschijnt onder je naam in de armory.</p>
                      </div>
 
                      <div className="space-y-3">
@@ -2166,55 +2346,53 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                     </>
                   ) : (
                     <>
-                      <div className="relative mb-10 group cursor-pointer">
-                        <div className="absolute inset-0 bg-cyan-500/10 blur-[100px] rounded-full scale-150 transition-all duration-1000 group-hover:bg-orange-500/10 group-hover:scale-[1.8]" />
-                        <div className="relative z-10 w-32 h-32 flex items-center justify-center rune-panel rounded-full shadow-[0_0_40px_rgba(6,182,212,0.15)] group-hover:shadow-[0_0_40px_rgba(249,115,22,0.2)] group-hover:border-orange-500/30 transition-all duration-500">
-                           <Eye className="w-16 h-16 text-cyan-500/30 group-hover:text-orange-500 transition-colors duration-500" />
-                           <div className="absolute inset-0 border border-cyan-500/20 rounded-full animate-[spin_10s_linear_infinite]" />
-                           <div className="absolute inset-2 border-2 border-dashed border-cyan-500/10 rounded-full animate-[spin_15s_linear_infinite_reverse]" />
+                      <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-[#050505]">
+                        {/* High Visibility Intense Arcane Background */}
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(249,115,22,0.2)_0%,transparent_70%)] opacity-80" />
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,rgba(6,182,212,0.2)_0%,transparent_60%)]" />
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.1)_0%,transparent_50%)]" />
+
+                        {/* Dramatic Animated Rings - Integrated Orange and Cyan */}
+                        <div className="absolute inset-0 flex items-center justify-center">
+                          <div className="w-[90vw] h-[90vw] border-[10px] border-orange-500/30 rounded-full animate-[spin_120s_linear_infinite] shadow-[0_0_80px_rgba(249,115,22,0.15)]" />
+                          <div className="absolute w-[85vw] h-[85vw] border-[2px] border-dashed border-cyan-500/40 rounded-full animate-[spin_80s_linear_infinite_reverse] shadow-[0_0_60px_rgba(6,182,212,0.1)]" />
+                          <div className="absolute w-[75vw] h-[75vw] border-[12px] border-double border-orange-500/20 rounded-full animate-[spin_180s_linear_infinite]" />
+                          <div className="absolute w-[100vw] h-[100vw] border-[1px] border-white/5 rounded-full animate-[spin_240s_linear_infinite]" />
                         </div>
-                      </div>
-                      
-                      <h2 className="text-4xl font-magic font-extrabold text-white/80 uppercase tracking-tighter mb-4 shadow-black">The Runes Await</h2>
-                      <p className="text-sm text-white/30 max-w-md mx-auto leading-relaxed mb-10 px-6 font-mono tracking-widest text-[10px]">
-                        OPEN YOUR ARCHIDEKT GRIMOIRE OR SEARCH THE MULTIVERSE TO CONTINUE.
-                      </p>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 w-full max-w-lg px-6">
-                         <button 
-                          onClick={() => {
-                            clearDeckSelection();
-                            setViewMode('manage_decks');
-                          }}
-                          className="flex flex-col items-center gap-4 p-6 rune-panel rounded-sm hover:border-orange-500/30 transition-all group z-10"
-                         >
-                            <div className="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
-                              <LayoutDashboard className="w-6 h-6" />
-                            </div>
-                            <div className="text-center">
-                               <p className="text-xs font-magic font-bold text-white uppercase tracking-widest mb-1">Connect Deck</p>
-                               <p className="text-[10px] text-white/20">Archidekt Integration</p>
-                            </div>
-                         </button>
-
-                         <button 
-                          onClick={() => handleFunModeClick('sets')}
-                          className="flex flex-col items-center gap-4 p-6 rune-panel rounded-sm hover:border-orange-500/30 transition-all group z-10"
-                         >
-                            <div className="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center text-orange-500 group-hover:scale-110 transition-transform">
-                              <Package className="w-6 h-6" />
-                            </div>
-                            <div className="text-center">
-                               <p className="text-xs font-magic font-bold text-white uppercase tracking-widest mb-1">Explore Sets</p>
-                               <p className="text-[10px] text-white/20">Latest MTG releases</p>
-                            </div>
-                         </button>
+                        {/* Vivid Arcane Runes - Rebuilt for slow atmospheric drift */}
+                        <div className="absolute top-[12%] left-[12%] text-[24vw] opacity-[0.1] text-orange-500 font-magic select-none animate-[pulse_8s_ease-in-out_infinite] drop-shadow-[0_0_50px_rgba(249,115,22,0.6)]">ᛉ</div>
+                        <div className="absolute bottom-[10%] right-[10%] text-[28vw] opacity-[0.1] text-cyan-400 font-magic select-none animate-[pulse_10s_ease-in-out_infinite] delay-1000 drop-shadow-[0_0_60px_rgba(34,211,238,0.7)]">ᛗ</div>
+                        <div className="absolute top-[28%] right-[18%] text-[16vw] opacity-[0.06] text-red-500 font-magic select-none animate-[pulse_12s_ease-in-out_infinite] delay-2000">ᚦ</div>
+                        <div className="absolute bottom-[22%] left-[8%] text-[20vw] opacity-[0.05] text-green-400 font-magic select-none animate-[pulse_15s_ease-in-out_infinite] delay-3000">ᛟ</div>
+                        
+                        {/* Atmospheric Fog/Gradients */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-transparent to-[#0A0A0A]" />
+                        <div className="absolute inset-0 bg-gradient-to-r from-[#0A0A0A] via-transparent to-[#0A0A0A]" />
                       </div>
+                       
+                       <div className="mt-10 sm:mt-20 relative z-10 flex flex-col items-center">
+                         <h2 className="text-5xl md:text-7xl font-magic font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white via-white to-cyan-500 uppercase tracking-tighter mb-6 shadow-black text-center drop-shadow-[0_0_60px_rgba(6,182,212,0.7)]">The Runes Await</h2>
+                         <div className="text-sm text-orange-100/90 max-w-lg mx-auto leading-relaxed mb-6 px-10 font-mono tracking-widest text-center bg-black/90 p-10 rounded-[3rem] backdrop-blur-3xl border border-orange-500/20 shadow-[0_0_50px_rgba(0,0,0,0.8)] scale-105 flex flex-col items-center gap-4">
+                           <span className="text-orange-500 font-black text-lg block tracking-[0.2em]">FORGE YOUR SYNERGIES</span>
+                           <div className="space-y-1">
+                             <p>Discover Recent and Future Releases</p>
+                             <p>& Summon the Perfect Additions To Your Decks.</p>
+                           </div>
+                           <span className="w-full text-[10px] opacity-40 mt-2 block border-t border-white/10 pt-6 font-bold uppercase transition-all duration-1000">SYNERGY SCRIBED • SLOPSIE APPROVED</span>
+                         </div>
+
+                         <div className="flex justify-center gap-4 mt-8 relative z-10">
+                           <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,1)] animate-pulse" />
+                           <div className="w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,1)] animate-pulse delay-150" />
+                           <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,1)] animate-pulse delay-300" />
+                         </div>
+                       </div>
                     </>
                   )}
                 </div>
               )}
-              {allCards.map((card) => {
+              {allCards.map((card, idx) => {
                 const images = getCardImages(card);
                 const isSelected = deckbox.some(c => c.name === card.name);
                 const isExisting = existingInDeck.has(card.name);
@@ -2224,7 +2402,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
                 return (
                   <motion.div 
                     layout
-                    key={card.name}
+                    key={card.id || `${card.name}-${idx}`}
                     initial={{ opacity: 0, scale: 0.9 }}
                     animate={{ opacity: 1, scale: 1 }}
                     whileHover={{ y: -5 }}
@@ -2306,100 +2484,113 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
               <DeckManager />
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 mt-6">
                 {savedDecks.map(deck => (
-                  <div key={deck.id} className="bg-[#0c0c0c] border border-white/[0.04] rounded-sm overflow-hidden flex flex-col group hover:border-cyan-500/40 hover:shadow-[0_0_30px_rgba(6,182,212,0.15)] transition-all duration-500 shadow-[0_8px_30px_rgba(0,0,0,0.5)]">
-                    <div className="h-40 relative overflow-hidden">
-                      <img src={deck.art_crops[0] || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700" alt={deck.name} />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-                      <div className="absolute inset-x-4 top-4 flex justify-between">
-                         <div className="bg-black/60 backdrop-blur p-1 rounded-full">{renderManaSymbols(deck.ci)}</div>
-                         <span className="text-[9px] font-bold text-white/50 bg-black/60 backdrop-blur px-2 py-1 rounded-full">{deck.id}</span>
+                  <div key={deck.id} className="bg-[#080808] border border-white/5 rounded-3xl overflow-hidden flex flex-col group hover:border-cyan-500/20 hover:shadow-[0_0_40px_rgba(6,182,212,0.1)] transition-all duration-500">
+                    <div className="h-48 relative overflow-hidden">
+                      <img src={deck.art_crops[0] || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-1000 ease-out" alt={deck.name} />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#080808] via-black/40 to-black/10 mix-blend-multiply" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-[#080808] via-transparent to-transparent" />
+                      
+                      <div className="absolute inset-x-6 top-6 flex justify-between items-start">
+                         <div className="bg-black/60 backdrop-blur-md p-1.5 rounded-full border border-white/10 shadow-xl">{renderManaSymbols(deck.ci)}</div>
+                         {deck.totalCost ? (
+                            <div className="flex flex-col items-end gap-1">
+                              <div className="flex items-center bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-[#00aeef]/20 shadow-xl group-hover:border-[#00aeef]/40 transition-all">
+                                <span className="text-[8px] text-[#00aeef]/70 font-magic font-extrabold uppercase mr-2 tracking-widest leading-none">Price</span>
+                                <span className="text-[12px] text-white/90 font-mono font-black">€{deck.totalCost.toFixed(2)}</span>
+                              </div>
+                            </div>
+                         ) : null}
+                      </div>
+
+                      <div className="absolute inset-x-6 bottom-4">
+                        <h3 className="font-magic font-bold text-2xl text-white group-hover:text-cyan-400 transition-colors uppercase leading-none drop-shadow-lg">{deck.name}</h3>
+                        <p className="text-[10px] text-white/40 uppercase font-black tracking-[0.2em] font-mono mt-2">Commander Deck</p>
                       </div>
                     </div>
 
-                    <div className="p-5 flex-1 flex flex-col gap-4">
-                      <div className="space-y-3">
-                        <div className="flex flex-col">
-                          <div className="flex items-start justify-between">
-                            <h3 className="font-magic font-bold line-clamp-1 group-hover:text-orange-500 transition-colors uppercase flex-1">{deck.name}</h3>
-                            {deck.totalCost ? (
-                              <div className="ml-2 flex flex-col items-end gap-1">
-                                <div className="flex items-center bg-transparent px-2 py-1 rounded-sm border border-[#00aeef]/10 group-hover:border-[#00aeef]/30 transition-all relative">
-                                  <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/40" />
-                                  <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/40" />
-                                  <span className="text-[6.5px] text-[#00aeef]/50 font-magic font-extrabold uppercase mr-2 tracking-widest leading-none">CM</span>
-                                  <span className="text-[10px] text-white/50 font-mono font-black group-hover:text-white/80">€{deck.totalCost.toFixed(2)}</span>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                          <div className="flex items-center gap-2">
-                              <p className="text-[10px] text-white/30 uppercase font-black tracking-widest font-mono">Commander Deck</p>
-                          </div>
+                    <div className="p-6 flex-1 flex flex-col gap-6">
+                      <div className="flex items-center justify-between gap-4 bg-white/[0.02] border border-white/[0.04] p-2 pr-4 rounded-full">
+                        <div className="flex flex-col pl-4">
+                          <span className="text-[8px] text-white/20 uppercase font-black tracking-widest">Deck Strategy</span>
                         </div>
-                        
-                        <div className="flex items-center justify-between gap-3 bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] p-3 rounded-2xl">
-                          <div className="flex -space-x-2">
-                            {deck.art_crops.map((crop, i) => (
-                              <div key={i} className="w-8 h-8 rounded-full border-2 border-[#111] overflow-hidden">
-                                <img src={crop || undefined} className="w-full h-full object-cover" alt="" />
-                              </div>
-                            ))}
-                          </div>
-                          <button 
-                            onClick={() => autoAddCommanderTags(deck.id, deck.commanders)}
-                            className="flex items-center gap-2 px-4 py-2 bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-black rounded-full transition-all text-xs font-black uppercase tracking-widest border border-orange-500/20"
-                            title="Suggest synergy tags"
-                          >
-                            <Wand2 className="w-4 h-4" />
-                            Suggest Tags
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap gap-2">
-                         {deck.tags.map(tag => (
-                           <span key={tag} className="px-3 py-1.5 bg-white/5 border border-white/10 rounded-full text-[10px] flex items-center gap-2 group/tag">
-                             #{tag}
-                             <X 
-                               className="w-3 h-3 hover:text-red-500 cursor-pointer" 
-                               onClick={() => removeTag(deck.id, tag)}
-                             />
-                           </span>
-                         ))}
-                      </div>
-
-                      <div className="flex gap-2">
-                        <input 
-                          type="text" 
-                          placeholder="Add tag..."
-                          className="bg-black/50 border border-white/10 rounded-lg px-2 py-1.5 text-[10px] flex-1 outline-none focus:border-orange-500"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              addTag(deck.id, (e.target as HTMLInputElement).value);
-                              (e.target as HTMLInputElement).value = "";
-                            }
-                          }}
-                        />
-                      </div>
-
-                      <div className="flex gap-2 pt-2 mt-auto">
                         <button 
-                          onClick={() => fetchAnyDeck(deck.id)}
-                          className="flex-1 py-2 bg-white/[0.02] hover:bg-white/[0.05] border border-white/[0.04] shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] rounded-2xl text-orange-500 font-magic font-extrabold text-[10px] transition-all uppercase tracking-widest active:scale-95"
+                          onClick={() => autoAddCommanderTags(deck.id, deck.commanders)}
+                          className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all text-[10px] font-black uppercase tracking-[0.2em] ${
+                            suggestedDecks.has(deck.id) 
+                              ? 'bg-transparent text-white/30 border border-white/5' 
+                              : 'bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-black border border-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.1)] hover:shadow-orange-500/50'
+                          }`}
+                          title="Generate Synergy Tags"
                         >
-                          Select
+                          <Wand2 className="w-3.5 h-3.5" />
+                          {suggestedDecks.has(deck.id) ? 'Regenerate Tags' : 'Generate Tags'}
                         </button>
+                      </div>
+
+                      <div className="flex-1 space-y-4">
+                        <div className="flex flex-wrap gap-2">
+                           {deck.tags.map(tag => {
+                             let label = tag;
+                             let query = tag;
+                             if (tag.includes(':::')) {
+                               const parts = tag.split(':::');
+                               label = parts[0];
+                               query = parts.slice(1).join(':::');
+                             }
+                             return (
+                               <span key={tag} className="flex items-stretch group/tag shadow-sm">
+                                 <button
+                                   onClick={() => {
+                                     setSearchQuery(query);
+                                     setCurrentCI(deck.ci || "c");
+                                     setViewMode('cards');
+                                     performSearch({ queryOverride: query, ciOverride: deck.ci || "c", skipCI: false });
+                                   }}
+                                   className="px-3 py-1.5 bg-white/5 border border-white/5 rounded-l-md text-[10px] hover:bg-cyan-500/20 hover:text-cyan-300 hover:border-cyan-500/30 transition-all font-bold"
+                                 >
+                                   {label}
+                                 </button>
+                                 <button
+                                   className="px-2 py-1.5 bg-white/5 border-y border-r border-white/5 rounded-r-md text-white/30 hover:bg-red-500/20 hover:text-red-400 hover:border-red-500/30 transition-all"
+                                   onClick={() => removeTag(deck.id, tag)}
+                                 >
+                                   <X className="w-3 h-3" />
+                                 </button>
+                               </span>
+                             );
+                           })}
+                        </div>
+
+                        <div className="flex gap-2">
+                          <input 
+                            type="text" 
+                            placeholder="Add a custom tag (e.g. 'Bear' or 'Infect')"
+                            className="bg-black/30 border border-white/5 rounded-md px-4 py-2.5 text-[10px] flex-1 outline-none focus:border-cyan-500/50 focus:bg-black/50 transition-all placeholder:text-white/20 text-white/70"
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                addTag(deck.id, (e.target as HTMLInputElement).value);
+                                (e.target as HTMLInputElement).value = "";
+                              }
+                            }}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex justify-between items-center pt-4 mt-auto border-t border-white/5 gap-2">
                         <button 
                           onClick={() => viewDeckDetails(deck.id)}
-                          className="flex-1 py-2 bg-gradient-to-br from-orange-400 to-orange-600 rounded-2xl text-black font-magic font-black text-[10px] transition-all uppercase tracking-widest active:scale-95 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4),0_4px_15px_rgba(249,115,22,0.2)]"
+                          className="flex-1 px-4 py-2 bg-cyan-500/5 hover:bg-cyan-500/10 border border-cyan-500/10 hover:border-cyan-500/30 rounded-xl text-cyan-500/70 hover:text-cyan-400 transition-all active:scale-95 flex items-center justify-center gap-2 group shadow-[0_0_15px_rgba(6,182,212,0.05)]"
                         >
-                          View
+                          <Eye className="w-3.5 h-3.5 pointer-events-none group-hover:scale-110 transition-transform" />
+                          <span className="text-[9px] font-magic tracking-widest uppercase font-black">View Deck</span>
                         </button>
                         <button 
                           onClick={() => deleteSavedDeck(deck.id)}
-                          className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 rounded-2xl text-red-500 transition-all border border-red-500/20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]"
+                          className="px-4 py-2 bg-red-500/5 hover:bg-red-500/20 rounded-xl text-red-500/50 hover:text-red-400 border border-red-500/10 hover:border-red-500/30 transition-all active:scale-95 flex items-center justify-center group shadow-[0_0_15px_rgba(239,68,68,0.05)]"
+                          title="delete this deck from rune deck"
                         >
-                          <Trash2 className="w-3.5 h-3.5" />
+                          <Trash2 className="w-3.5 h-3.5 pointer-events-none group-hover:scale-110 transition-transform" />
+                          <span className="text-[9px] font-magic tracking-widest uppercase font-black">Delete</span>
                         </button>
                       </div>
                     </div>
@@ -2440,8 +2631,8 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
             >
                <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
                   <div className="flex flex-col">
-                    <h2 className="text-xl font-magic font-black text-orange-500 uppercase tracking-tighter truncate max-w-md">{viewingDeckName || 'Manifest overzicht'}</h2>
-                    <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em]">{viewingDeckCards.length} Kaarten in Manifest</p>
+                    <h2 className="text-xl font-magic font-black text-orange-500 uppercase tracking-tighter truncate max-w-md">{viewingDeckName || 'Deck Overview'}</h2>
+                    <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em]">{viewingDeckCards.length} Cards in Deck</p>
                   </div>
                   <button onClick={() => { setIsViewingDeck(false); setViewingDeckCards(null); }} className="p-3 hover:bg-white/5 rounded-full transition-colors border border-white/5 group">
                     <X className="w-6 h-6 text-white/40 group-hover:text-white" />
@@ -2641,7 +2832,7 @@ Return ONLY a comma-separated list of tags. No preamble, no explanation.`;
         )}
       </AnimatePresence>
 
-      {/* Deckbox Side Panel */}
+      {/* Selected Cardboard Side Panel */}
       <AnimatePresence>
         {isDeckboxOpen && (
           <>
@@ -3191,7 +3382,7 @@ function AdminChamber({
                        <span className="text-3xl font-magic font-black text-emerald-400">{userDecks.length}</span>
                      </div>
                      <div className="flex flex-col items-center md:items-end">
-                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Deckbox Essence</span>
+                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Selected Cardboard</span>
                        <span className="text-3xl font-magic font-black text-emerald-400">{userDeckbox.length}</span>
                      </div>
                   </div>
@@ -3242,7 +3433,7 @@ function AdminChamber({
                                    </div>
                                  )}
                                  {deck.tags?.slice(0, 2).map((t: string) => (
-                                   <span key={t} className="text-[7px] bg-white/5 text-white/30 px-1.5 py-0.5 rounded-sm border border-white/5 font-bold uppercase">{t}</span>
+                                   <span key={t} className="text-[7px] bg-white/5 text-white/30 px-1.5 py-0.5 rounded-sm border border-white/5 font-bold uppercase">{t.includes(':::') ? t.split(':::')[0] : t}</span>
                                  ))}
                                </div>
                              </div>
@@ -3276,23 +3467,23 @@ function AdminChamber({
                  </div>
                </section>
 
-               {/* Deckbox Content */}
+               {/* Selected Cardboard Content */}
                <section>
                  <div className="flex items-center justify-between mb-6">
                     <h3 className="text-sm font-magic font-black text-emerald-400 uppercase tracking-[0.3em] flex items-center gap-3">
-                      <Layers className="w-4 h-4" /> Current Selection (Deckbox)
+                      <Layers className="w-4 h-4" /> Current Selection (Cardboard)
                     </h3>
                     <button 
                       onClick={clearUserDeckbox}
                       className="text-[9px] font-black uppercase text-red-500/50 hover:text-red-500 flex items-center gap-2 border border-red-500/10 hover:border-red-500/30 px-3 py-1.5 rounded-xl transition-all"
                     >
-                      <Trash2 className="w-3 h-3" /> Purge Deckbox
+                      <Trash2 className="w-3 h-3" /> Purge Selection
                     </button>
                  </div>
                  <div className="bg-emerald-500/[0.02] border border-emerald-500/5 rounded-[2.5rem] p-8">
                      <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4">
-                        {userDeckbox.map(card => (
-                          <div key={card.id || card.name} className="relative aspect-[0.71] rounded-xl overflow-hidden border border-white/5 group shadow-lg hover:border-[#00aeef]/30 transition-all bg-black">
+                        {userDeckbox.map((card, idx) => (
+                          <div key={card.id || `${card.name}-${idx}`} className="relative aspect-[0.71] rounded-xl overflow-hidden border border-white/5 group shadow-lg hover:border-[#00aeef]/30 transition-all bg-black">
                              <img src={card.thumb} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 grayscale opacity-40 group-hover:opacity-100 group-hover:grayscale-0" />
                              
                              {/* Pricing Badge (Subtle Rune Tech) */}
@@ -3388,8 +3579,8 @@ function JudgeView() {
       const typeLine = data.type_line || 'Type: Unknown';
       const cmc = data.cmc !== undefined ? `Mana Value: ${data.cmc}` : '';
       const pt = (data.power && data.toughness) ? `P/T: ${data.power}/${data.toughness}` : '';
-      const oracle = data.oracle_text || 'No oracle text found.';
-      const colors = data.color_identity?.join(', ') || 'Colorless';
+      const oracle = data.oracle_text || 'Geen regeltekst gevonden.';
+      const colors = data.color_identity?.join(', ') || 'Kleurloos';
       return `**Kaart: ${data.name}**\n**Metadata:** ${typeLine} | ${cmc} | ${pt}\n**Color Identity:** ${colors}\n**Regeltekst:** ${oracle}\n`;
     } catch (e) { return `**Kaart: ${name}**\n*Kon kaartdata niet vinden.*\n`; }
   };
@@ -3534,6 +3725,9 @@ function JudgeView() {
         ruling = response.text || "";
       } catch (e: any) {
         console.error("Ruxa API error:", e);
+        if (e.message && e.message.includes("503")) {
+           throw new Error("De AI is momenteel overbelast. Probeer het over een minuutje weer!");
+        }
         if (e.message && e.message.includes("API key expired")) {
           throw new Error("API key expired. Vernieuw je Gemini API key in de instellingen.");
         }
@@ -3666,18 +3860,18 @@ function JudgeView() {
           <div className="px-6 py-4 bg-green-500/5 border-t border-green-500/10 animate-in slide-in-from-bottom-2">
              <div className="flex items-center gap-2 mb-4">
                 <Scale className="w-3.5 h-3.5 text-green-400" />
-                <span className="text-[9px] font-magic font-black text-green-400 uppercase tracking-widest">Verify Identifiers</span>
+                <span className="text-[9px] font-magic font-black text-green-400 uppercase tracking-widest">Identificatie Verifiëren</span>
              </div>
              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {Object.entries(suggestions).map(([term, choices]) => (
                   <div key={term} className="space-y-1">
-                    <p className="text-[8px] font-bold text-green-500/40 uppercase pl-1">For "{term}":</p>
+                    <p className="text-[8px] font-bold text-green-500/40 uppercase pl-1">Voor "{term}":</p>
                     <select 
                       onChange={(e) => setSelectedCards(prev => ({ ...prev, [term]: e.target.value }))}
                       className="w-full bg-black/60 border border-green-500/20 rounded-xl px-4 py-2.5 text-[10px] text-green-100 outline-none focus:border-green-400 transition-all cursor-pointer"
                     >
-                      <option value="">Select Match...</option>
-                      {(choices as string[]).map(c => <option key={c} value={c}>{c}</option>)}
+                      <option value="">Selecteer kaart...</option>
+                      {(choices as string[]).map((c, cidx) => <option key={`${c}-${cidx}`} value={c}>{c}</option>)}
                       <option value={`Negeer ${term}`}>Negeer "{term}"</option>
                     </select>
                   </div>
@@ -3687,7 +3881,7 @@ function JudgeView() {
                 onClick={handleSelectionConfirm}
                 className="mt-4 w-full py-3 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all"
              >
-               Finalize Counsel
+               Bevestig Selectie
              </button>
           </div>
         )}
@@ -3714,7 +3908,7 @@ function JudgeView() {
               </button>
            </form>
            <p className="text-[8px] text-green-500/20 font-black uppercase tracking-[0.2em] mt-4 text-center">
-             Bear Judge Ruxa is an AI assistant. Verify rulings with current Comprehensive Rules for competitive play.
+             Beer Judge Ruxa is een AI-assistent. Verifieer uitspraken altijd met de officiële regels.
            </p>
         </div>
       </div>
@@ -3741,7 +3935,12 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
     { id: 'main', labels: ['core', 'expansion'], name: 'Main Sets' },
     { id: 'commander', labels: ['commander'], name: 'Commander' },
     { id: 'masters', labels: ['masters', 'draft_innovation'], name: 'Masters/Draft' },
-    { id: 'masterpiece', labels: ['masterpiece', 'arsenal', 'spellbook'], name: 'Masterpieces' }
+    { id: 'modern', labels: ['eternal', 'alchemy'], name: 'Modern/Eternal' },
+    { id: 'masterpiece', labels: ['masterpiece', 'arsenal', 'spellbook', 'from_the_vault'], name: 'Masterpieces' },
+    { id: 'decks', labels: ['starter', 'box', 'duel_deck', 'premium_deck'], name: 'Box/Decks' },
+    { id: 'multiplayer', labels: ['planechase', 'archenemy', 'vanguard', 'minigame'], name: 'Multiplayer' },
+    { id: 'promo', labels: ['promo', 'treasure_chest', 'funny'], name: 'Promo/Funny' },
+    { id: 'extras', labels: ['token', 'memorabilia'], name: 'Tokens/Extras' }
   ];
 
   const toggleFilter = (labels: string[]) => {
@@ -3760,20 +3959,15 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
   useEffect(() => {
     async function fetchSets() {
       try {
-        const { data } = await axios.get('https://api.scryfall.com/sets');
+        const data = await fetchScryfallSets();
         const today = new Date();
         
-        // Stricter filtering
-        const validTypes = ['core', 'expansion', 'commander', 'masters', 'starter', 'masterpiece', 'arsenal', 'spellbook', 'draft_innovation'];
         const excludedCodes = ['otp', 'big', 'pip', 'rex', 'mom', 'mat', 'plst', 'ha7', 'ea3']; 
         
         const filtered = data.data.filter((s: ScryfallSet) => {
-          return validTypes.includes(s.set_type) && 
-            !s.digital && 
-            s.card_count > 10 &&
+          return s.card_count > 0 &&
+            (!s.digital || s.set_type === 'alchemy') && 
             !excludedCodes.includes(s.code.toLowerCase()) &&
-            !s.name.toLowerCase().includes("art series") &&
-            !s.name.toLowerCase().includes("promo") &&
             !s.name.toLowerCase().includes("omenpaths");
         }).map((s: any) => {
           const childCodes = data.data
@@ -3797,18 +3991,16 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
         ];
 
         roadmapSets.forEach(rs => {
+          const rsDate = new Date(rs.date);
+          const isFarFuture = rsDate > today;
+
           const existingIdx = filtered.findIndex((m: any) => 
             m.name.toLowerCase().includes(rs.name.toLowerCase().split(' ')[0]) || 
             (m.released_at && m.released_at.startsWith(rs.date.substring(0, 7)))
           );
 
           if (existingIdx !== -1) {
-            filtered[existingIdx] = {
-              ...filtered[existingIdx],
-              name: rs.name,
-              released_at: rs.date,
-              isFuture: true
-            };
+            // Already added from Scryfall. Assure the correct query codes and just rely on Scryfall's date and isFuture.
           } else {
             filtered.push({
               id: `roadmap-${rs.code}`,
@@ -3818,7 +4010,7 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
               code: rs.code,
               queryCodes: [rs.code],
               icon_svg_uri: 'https://svgs.scryfall.io/sets/modern.svg',
-              isFuture: true
+              isFuture: isFarFuture
             } as any);
           }
         });
@@ -3850,7 +4042,8 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
     performSearch({ 
       queryOverride: `(${codes.map(c => `s:${c}`).join(" OR ")}) -is:token -is:art_series`,
       autoSelect: true,
-      skipCI: true
+      skipCI: true,
+      skipFormatFilters: true
     });
   };
 
@@ -3866,7 +4059,7 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
       <div className="flex-1 overflow-y-auto no-scrollbar pb-20 relative z-10 p-4 sm:p-8">
         <div className="max-w-6xl mx-auto space-y-12">
           <div className="text-center space-y-2 pt-4">
-            <h3 className="text-3xl font-magic font-black text-white uppercase tracking-widest">Chronicle Explorer</h3>
+            <h3 className="text-3xl font-magic font-black text-white uppercase tracking-widest">Expansion Explorer</h3>
             <p className="text-[10px] font-mono text-white/40 uppercase tracking-[0.2em]">Witness the Legacy of Magic</p>
           </div>
 
@@ -3877,7 +4070,7 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Filter Chronicles (e.g. MH3, INN)..."
+                placeholder="Filter Expansions (e.g. MH3, INN)..."
                 className="w-full bg-black/60 backdrop-blur-md border border-white/10 rounded-2xl pl-12 pr-4 py-4 text-xs focus:border-cyan-500/50 outline-none transition-all font-sans tracking-wider text-white shadow-xl"
               />
             </div>
@@ -3901,13 +4094,12 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
               <RotateCw className="w-8 h-8 text-cyan-400 animate-spin" />
-              <p className="text-[10px] font-magic font-bold text-white/20 uppercase tracking-widest">Chronicles loading...</p>
+              <p className="text-[10px] font-magic font-bold text-white/20 uppercase tracking-widest">Expansions loading...</p>
             </div>
           ) : (
             <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-x-2 gap-y-4 sm:gap-x-4 sm:gap-y-6 px-2 relative z-10 w-full">
               {filteredSets.map(set => (
-                <button
-                  key={set.id}
+                  <div key={set.id || set.code}
                   onClick={() => onSetClick(set.queryCodes || [set.code])}
                   className="group relative aspect-square flex items-center justify-center p-2 hover:scale-[1.15] active:scale-[0.95] transition-all duration-500"
                 >
@@ -3931,15 +4123,18 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
                   )}
 
                   <div className="absolute inset-x-0 -bottom-8 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none translate-y-2 group-hover:translate-y-0 z-[100]">
-                    <div className="mx-auto w-fit bg-black/90 px-3 py-1 rounded border border-white/10 shadow-2xl backdrop-blur-md">
-                      <span className={`text-[9px] font-magic font-bold uppercase tracking-widest whitespace-nowrap drop-shadow-md
+                    <div className="mx-auto w-fit bg-black/90 px-3 py-1 rounded border border-white/10 shadow-2xl backdrop-blur-md whitespace-nowrap flex items-center gap-2">
+                      <span className={`text-[9px] font-magic font-bold uppercase tracking-widest drop-shadow-md flex-1 text-center
                         ${set.isFuture ? 'text-orange-400' : 'text-cyan-400'}
                       `}>
                         {set.name}
                       </span>
+                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 font-sans tracking-widest font-bold">
+                        {set.code.toUpperCase()}
+                      </span>
                     </div>
                   </div>
-                </button>
+                  </div>
               ))}
             </div>
           )}
@@ -3960,7 +4155,7 @@ function ReleaseCalendar({ setViewMode, performSearch, setSearchQuery }: {
   useEffect(() => {
     async function fetchCalendar() {
       try {
-        const { data } = await axios.get('https://api.scryfall.com/sets');
+        const data = await fetchScryfallSets();
         const today = new Date();
         const futureRaw = data.data.filter((s: any) => {
           if (!s.released_at) return false;
@@ -3968,7 +4163,7 @@ function ReleaseCalendar({ setViewMode, performSearch, setSearchQuery }: {
           return s.released_at.startsWith('2026') || new Date(s.released_at) >= today;
         });
 
-        const validTypes = ['expansion', 'core', 'masters', 'starter'];
+        const validTypes = ['expansion', 'core'];
         const mainSets = futureRaw.filter((s: any) => 
           validTypes.includes(s.set_type) && 
           !s.digital && 
@@ -3988,51 +4183,21 @@ function ReleaseCalendar({ setViewMode, performSearch, setSearchQuery }: {
           };
         });
 
-        // Ensure specific 2026 Roadmap sets are present and replace Scryfall placeholders if needed
-        const roadmapSets = [
-          { name: 'Lorwyn Eclipsed', date: '2026-01-01', code: 'LOR' },
-          { name: 'Teenage Mutant Ninja Turtles', date: '2026-03-01', code: 'TMN' },
-          { name: 'Secrets of Strixhaven', date: '2026-04-01', code: 'STX2' },
-          { name: 'Marvel Super Heroes', date: '2026-06-01', code: 'MVL' },
-          { name: 'The Hobbit', date: '2026-08-01', code: 'HBT' },
-          { name: 'Reality Fracture', date: '2026-10-01', code: 'RF' },
-          { name: 'Universes Beyond: Star Trek', date: '2026-11-01', code: 'STK' }
-        ];
-
-        roadmapSets.forEach(rs => {
-          // Check if a similar set already exists (to avoid duplicates like Lorwyn appearing twice)
-          const existingIdx = mapped.findIndex(m => 
-            m.name.toLowerCase().includes(rs.name.toLowerCase().split(' ')[0]) || // Match first word
-            (m.released_at && m.released_at.startsWith(rs.date.substring(0, 7))) // Match year-month
-          );
-
-          if (existingIdx !== -1) {
-            // Update existing or skip
-            mapped[existingIdx] = {
-              ...mapped[existingIdx],
-              name: rs.name,
-              fullName: rs.name,
-              released_at: rs.date
-            };
-          } else {
-            mapped.push({
-              id: `roadmap-${rs.code}`,
-              name: rs.name,
-              fullName: rs.name,
-              released_at: rs.date,
-              queryCodes: [rs.code],
-              set_type: 'expansion',
-              code: rs.code,
-              icon_svg_uri: 'https://svgs.scryfall.io/sets/modern.svg'
-            });
-          }
-        });
-
         // Filter to show late 2025 and all of 2026
         const filtered = mapped.filter(m => {
           const d = new Date(m.released_at);
           const year = d.getFullYear();
-          return year === 2026 || (year === 2025 && d.getMonth() >= 9); // After September 2025
+          return year === 2026 || (year === 2025 && d.getMonth() >= 9) || year > 2026;
+        });
+
+        filtered.push({
+          code: "stk",
+          name: "Universes Beyond: Star Trek",
+          released_at: "2026-11-01",
+          set_type: "expansion",
+          icon_svg_uri: "",
+          queryCodes: ["stk"],
+          fullName: "Universes Beyond: Star Trek"
         });
 
         filtered.sort((a: any, b: any) => new Date(a.released_at).getTime() - new Date(b.released_at).getTime());
@@ -4052,7 +4217,8 @@ function ReleaseCalendar({ setViewMode, performSearch, setSearchQuery }: {
     performSearch({ 
       queryOverride: `(${codes.map(c => `s:${c}`).join(" OR ")}) -is:token -is:art_series`,
       autoSelect: true,
-      skipCI: true
+      skipCI: true,
+      skipFormatFilters: true
     });
   };
 
@@ -4089,7 +4255,7 @@ function ReleaseCalendar({ setViewMode, performSearch, setSearchQuery }: {
               const maskSrc = set.icon_svg_uri || 'https://svgs.scryfall.io/sets/modern.svg';
 
               return (
-                <div key={set.id} className="relative flex-1 flex justify-center group h-full items-center shrink-0 min-w-[80px]">
+                <div key={set.id || set.code || idx} className="relative flex-1 flex justify-center group h-full items-center shrink-0 min-w-[80px]">
                   {/* Vertical Connector Path */}
                   <div className={`absolute left-1/2 -translate-x-1/2 w-[1px] md:w-px bg-white/10 transition-all duration-700
                     ${isTop ? 'bottom-1/2 h-16 sm:h-24 lg:h-32' : 'top-1/2 h-16 sm:h-24 lg:h-32'}
