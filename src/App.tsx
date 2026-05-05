@@ -65,9 +65,6 @@ async function fetchScryfallSets() {
   return cachedScryfallSets;
 }
 
-// IMPORTANT: DO NOT CHANGE THE LOGO PATH. 
-// The rune_bear.png file is located in the /public folder of the project.
-// Using a local path ensures the logo remains visible even if external repos change.
 const logo = "/runebear.png?v=" + new Date().getTime();
 
 import { 
@@ -308,7 +305,7 @@ export default function App() {
       const localDecks = localStorage.getItem('savedDecks');
       const localDeckbox = localStorage.getItem('deckbox');
 
-      if (localDecks) {
+      if (localDecks && localDecks !== "undefined") {
         try {
           const decks = JSON.parse(localDecks) as SavedDeck[];
           const batch = writeBatch(db);
@@ -327,7 +324,7 @@ export default function App() {
         } catch (e) { console.error("Migration failed for decks", e); }
       }
 
-      if (localDeckbox) {
+      if (localDeckbox && localDeckbox !== "undefined") {
         try {
           const items = JSON.parse(localDeckbox) as DeckCard[];
           const batch = writeBatch(db);
@@ -1011,84 +1008,117 @@ export default function App() {
     setLoading(true);
     setHasSearched(true);
     try {
-      let ci = options?.ciOverride !== undefined ? options.ciOverride : currentCI;
+      // 1. Resolve Parameters
+      let ci = options?.ciOverride !== undefined ? options.ciOverride : (activeDeckId ? currentCI : "");
+      
+      // Hard restriction: If a deck is selected, and no override was given, results MUST fall within its color identity
+      // We force this unless skipCI is explicitly true (e.g. for global set browsing)
+      if (activeDeckId && currentCI && !options?.skipCI && options?.ciOverride === undefined) {
+        ci = currentCI;
+      }
+
+      // 2. Build Query
+      let queryParts: string[] = [];
+
+      // System / Format Filters
+      if (!options?.skipFormatFilters) {
+        queryParts.push("(-is:digital OR is:paper)", "-is:funny", "include:extras");
+      }
+      
+      // Universal Exclusions - ALWAYS exclude tokens and emblems
+      queryParts.push("-is:token", "-t:token", "-t:emblem", "-is:art_series");
+
+      // Color Identity Enforcement
+      if (ci && ci !== "Any" && !options?.skipCI) {
+        queryParts.push(`id<=${ci}`);
+      }
+
       let type = options?.typeOverride !== undefined ? options.typeOverride : typeFilter;
       let rarity = options?.rarityOverride !== undefined ? options.rarityOverride : rarityFilter;
       let set = options?.setOverride !== undefined ? options.setOverride : setFilter;
       let color = options?.colorOverride !== undefined ? options.colorOverride : colorFilter;
       let arch = options?.archOverride !== undefined ? options.archOverride : archFilter;
 
-      let activeContext = contextQuery;
+      // If no options provided (Manual Search), we assume a fresh search and clear context
+      let activeContext = options?.queryOverride !== undefined ? options.queryOverride : (contextQuery || "");
+      if (options === undefined || options.queryOverride === "") {
+        setContextQuery("");
+        activeContext = "";
+        
+        // Clear all filters for manual search
+        type = "Any";
+        rarity = "Any";
+        set = "Any";
+        color = "Any";
+        arch = "Any";
+        
+        setTypeFilter("Any");
+        setRarityFilter("Any");
+        setSetFilter("Any");
+        setColorFilter("Any");
+        setArchFilter("Any");
+      }
 
-      // If a queryOverride is provided, we assume we're entering a funmode/set selection (or clearing it if empty string)
+      // If a queryOverride is provided, we transition context
       if (options?.queryOverride !== undefined) {
         setContextQuery(options.queryOverride);
         activeContext = options.queryOverride;
-        // Reset dropdown filters unless explicitly overridden
-        type = options.typeOverride !== undefined ? options.typeOverride : "Any";
-        rarity = options.rarityOverride !== undefined ? options.rarityOverride : "Any";
-        set = options.setOverride !== undefined ? options.setOverride : "Any";
-        color = options.colorOverride !== undefined ? options.colorOverride : "Any";
-        arch = options.archOverride !== undefined ? options.archOverride : "Any";
         
-        setTypeFilter(type);
-        setRarityFilter(rarity);
-        setSetFilter(set);
-        setColorFilter(color);
-        setArchFilter(arch);
-        setSearchQuery("");
+        // If we are clearing context OR selecting a NEW context, reset filters
+        // Especially clear archFilter (Veggie Search) on manual search or transition
+        if (options.queryOverride === "" || options.queryOverride !== contextQuery) {
+          type = options.typeOverride !== undefined ? options.typeOverride : "Any";
+          rarity = options.rarityOverride !== undefined ? options.rarityOverride : "Any";
+          set = options.setOverride !== undefined ? options.setOverride : "Any";
+          color = options.colorOverride !== undefined ? options.colorOverride : "Any";
+          arch = options.archOverride !== undefined ? options.archOverride : "Any";
+          
+          setTypeFilter(type);
+          setRarityFilter(rarity);
+          setSetFilter(set);
+          setColorFilter(color);
+          setArchFilter(arch);
+        }
+        
+        // Clear local searchQuery state if we are transitioning context (manually or via shortcut)
+        if (options.queryOverride !== undefined) {
+          setSearchQuery("");
+        }
       }
 
-      let filters: string[] = [];
-
-      if (!options?.skipFormatFilters) {
-        filters = [
-          "game:paper",
-          "-is:digital",
-          "-is:art_series",
-          "-is:funny",
-          "-is:token",
-          "-t:token",
-          "-t:emblem",
-          "-banned:commander",
-        ];
-      } else {
-        // When skipping format filters (e.g. browsing a set), we still want to avoid tokens and art cards,
-        // but we want to see everything else that belongs to the set (like un-cards, digital, non-commander-legal formats, etc).
-        filters = [
-          "-is:art_series",
-          "-is:token",
-          "-t:token",
-          "-t:emblem",
-        ];
-      }
-
-      if (ci && ci !== "Any" && !options?.skipCI) {
-        filters.push(`id<=${ci}`);
-      }
-
-      if (type !== "Any") filters.push(`t:${type}`);
-      if (rarity !== "Any") filters.push(`r:${rarity}`);
-      if (set !== "Any") filters.push(`s:${set}`);
+      // Dropdown Filters
+      if (type !== "Any") queryParts.push(`t:${type}`);
+      if (rarity !== "Any") queryParts.push(`r:${rarity}`);
+      if (set !== "Any") queryParts.push(`s:${set}`);
       if (color !== "Any") {
-        if (color === "C") filters.push("c:c");
-        else if (color === "Multi") filters.push("c:m");
-        else filters.push(`c:${color}`);
+        if (color === "C") queryParts.push("c:c");
+        else if (color === "Multi") queryParts.push("c:m");
+        else queryParts.push(`c:${color}`);
       }
 
+      // Veggie Search Filter (Arch)
       if (arch !== "Any") {
         const role = DECK_ROLES.find(r => r.label === arch);
-        if (role) filters.push(role.query);
+        if (role) queryParts.push(`(${role.query})`);
       }
 
+      // User Input / Context 
+      let userLogic: string[] = [];
       if (activeContext) {
-        filters.push(activeContext);
+        userLogic.push(`(${activeContext})`);
       }
-      if (!options?.queryOverride && searchQuery.trim()) {
-        filters.push(`(o:"${searchQuery}" OR t:"${searchQuery}" OR "${searchQuery}")`);
+      
+      const effectiveSearch = (options?.queryOverride !== undefined) ? "" : searchQuery;
+
+      if (effectiveSearch.trim()) {
+        userLogic.push(`(o:"${effectiveSearch}" OR t:"${effectiveSearch}" OR "${effectiveSearch}")`);
       }
 
-      const query = filters.join(" ");
+      if (userLogic.length > 0) {
+        queryParts.push(`(${userLogic.join(" ")})`);
+      }
+
+      const query = queryParts.join(" ");
 
       const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=released&dir=desc`;
       console.log("Searching Scryfall:", url);
@@ -1484,6 +1514,9 @@ Return ONLY JSON. No markdown backticks.`;
       });
 
       let jsonStr = (response.text || "").replace(/```json/g, '').replace(/```/g, '').trim();
+      if (!jsonStr || jsonStr === "undefined") {
+        throw new Error("AI returned invalid JSON: empty or undefined");
+      }
       let parsed = [];
       try {
         parsed = JSON.parse(jsonStr);
@@ -1782,9 +1815,9 @@ Return ONLY JSON. No markdown backticks.`;
                         setActiveDeckId(deck.id);
                         setActiveDeckName(deck.name);
                         setExistingInDeck(new Set(deck.existingNames));
-                        setCurrentCI(deck.ci || "c");
+                        setCurrentCI(deck.ci || "");
                         setViewMode('cards');
-                        performSearch({ ciOverride: deck.ci || "c", queryOverride: "" });
+                        performSearch({ ciOverride: deck.ci || "", queryOverride: "" });
                         const cmdNames = deck.commanderNames || deck.commanders || [];
                         initializeDeckState(deck.id, deck.name, cmdNames, new Set(deck.existingNames), deck.totalCost || 0, true);
                       }
@@ -1847,7 +1880,12 @@ Return ONLY JSON. No markdown backticks.`;
                       }
                       const tagQuery = "(" + deck.tags.map(t => t.includes(':::') ? t.split(':::').slice(1).join(':::') : `o:"${t}" OR t:"${t}"`).join(") OR (") + ")";
                       setViewMode('cards');
-                      performSearch({ queryOverride: tagQuery, ciOverride: deck.ci || "c", skipCI: false });
+                      performSearch({ 
+                        queryOverride: tagQuery, 
+                        ciOverride: deck.ci || currentCI || "c", 
+                        skipCI: false,
+                        skipFormatFilters: false
+                      });
                     }}
                     className="w-full flex items-center justify-center gap-2 py-2.5 rune-panel text-cyan-500/80 hover:text-cyan-400 hover:border-cyan-500/30 font-black text-[10px] transition-all font-magic uppercase tracking-[0.3em] active:scale-[0.98] z-10"
                   >
@@ -1863,7 +1901,12 @@ Return ONLY JSON. No markdown backticks.`;
                         setArchFilter(val);
                         setSearchQuery("");
                         setViewMode('cards');
-                        performSearch({ archOverride: val });
+                        performSearch({ 
+                          queryOverride: "", // Clear tag/set context when picking a generic deck role
+                          archOverride: val,
+                          ciOverride: currentCI || "",
+                          skipFormatFilters: false
+                        });
                       }}
                       className="w-full appearance-none rune-panel rounded-sm px-4 py-2.5 text-[8px] font-magic font-black uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
                     >
@@ -1882,10 +1925,10 @@ Return ONLY JSON. No markdown backticks.`;
                       className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-4 py-2.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch()}
+                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch({ queryOverride: "" })}
                     />
                     <button 
-                      onClick={() => performSearch()}
+                      onClick={() => performSearch({ queryOverride: "" })}
                       className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
                     >
                       <Search className="w-4 h-4" />
@@ -1908,10 +1951,10 @@ Return ONLY JSON. No markdown backticks.`;
                       className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-4 py-2.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
                       value={searchQuery}
                       onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch()}
+                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch({ queryOverride: "" })}
                     />
                     <button 
-                      onClick={() => performSearch()}
+                      onClick={() => performSearch({ queryOverride: "" })}
                       className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
                     >
                       <Search className="w-4 h-4" />
@@ -1964,10 +2007,22 @@ Return ONLY JSON. No markdown backticks.`;
                 onClick={() => {
                   clearDeckSelection();
                   setSearchQuery("");
+                  setTypeFilter("Any");
+                  setRarityFilter("Any");
                   setSetFilter("Any");
+                  setColorFilter("Any");
                   setArchFilter("Any");
                   setViewMode('cards');
-                  performSearch({ queryOverride: "art:bear is:paper order:released", setOverride: "Any", archOverride: "Any", skipCI: true });
+                  performSearch({ 
+                    queryOverride: "art:bear game:paper", 
+                    typeOverride: "Any",
+                    rarityOverride: "Any",
+                    setOverride: "Any", 
+                    colorOverride: "Any",
+                    archOverride: "Any", 
+                    skipCI: true,
+                    skipFormatFilters: true 
+                  });
                 }}
                 className="flex flex-col items-center justify-center py-2 rune-panel text-white/50 hover:text-cyan-400 hover:border-cyan-500/30 font-magic transition-all group z-10 gap-1 rounded-sm"
               >
@@ -2542,9 +2597,15 @@ Return ONLY JSON. No markdown backticks.`;
                                  <button
                                    onClick={() => {
                                      setSearchQuery(query);
-                                     setCurrentCI(deck.ci || "c");
+                                     const tagCI = deck.ci || "";
+                                     setCurrentCI(tagCI);
                                      setViewMode('cards');
-                                     performSearch({ queryOverride: query, ciOverride: deck.ci || "c", skipCI: false });
+                                      performSearch({ 
+                                        queryOverride: query, 
+                                        ciOverride: tagCI, 
+                                        skipCI: false,
+                                        skipFormatFilters: false
+                                      });
                                    }}
                                    className="px-3 py-1.5 bg-white/5 border border-white/5 rounded-l-md text-[10px] hover:bg-cyan-500/20 hover:text-cyan-300 hover:border-cyan-500/30 transition-all font-bold"
                                  >
@@ -3124,6 +3185,15 @@ function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
       loc: "Fun Area Control",
       features: ["Spotify Integration", "Custom OST", "Background Resonance"],
       color: "text-purple-400"
+    },
+    {
+      title: "Rune-Tech Manual V2.5.0",
+      subtitle: "The Future Unfolded",
+      icon: <Zap className="w-5 h-5" />,
+      content: "Version 2.5.0 introduces 'Future Sight'. We've removed strict format legality checks to ensure pre-release and future sets are visible during deckbuilding, while maintaining absolute Color Identity integrity.",
+      loc: "System Core",
+      features: ["Future Set Visibility", "CI-Strict Protocol", "Legacy & Future Harmony"],
+      color: "text-yellow-400"
     }
   ];
 
