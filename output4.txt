@@ -1,0 +1,30 @@
+1775:            className={`w-full flex items-center justify-center gap-3 py-4 rune-panel text-orange-500/80 hover:text-orange-500 hover:border-orange-500/30 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10 ${isLoggingIn ? 'opacity-50 cursor-wait' : ''}`}
+1802:    <div className="h-screen rune-bg text-white flex overflow-hidden font-sans relative">
+1836:        <div className="rune-book-spine" />
+1908:                     className="w-full text-left appearance-none rune-panel rounded-sm px-4 py-3 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
+1914:                    className="w-full appearance-none rune-panel rounded-sm px-4 py-3 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
+2000:                    className="w-full flex items-center justify-center gap-2 py-2.5 rune-panel text-cyan-500/80 hover:text-cyan-400 hover:border-cyan-500/30 font-black text-[10px] transition-all font-magic uppercase tracking-[0.3em] active:scale-[0.98] z-10"
+2021:                      className="w-full appearance-none rune-panel rounded-sm px-4 py-2.5 text-[8px] font-magic font-black uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
+2042:                      className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
+2068:                      className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
+2088:                className="w-full flex items-center justify-center gap-2 py-3 rune-panel rounded-sm text-orange-500/80 font-magic font-bold text-[10px] uppercase tracking-[0.2em] hover:text-orange-500 hover:border-orange-500/30 transition-all group z-10"
+2111:                className="flex flex-col items-center justify-center py-2 rune-panel text-white/40 hover:text-cyan-400 font-magic hover:border-cyan-500/30 transition-all group z-10 gap-1 rounded-sm"
+2137:                className="flex flex-col items-center justify-center py-2 rune-panel text-white/50 hover:text-cyan-400 hover:border-cyan-500/30 font-magic transition-all group z-10 gap-1 rounded-sm"
+2144:                className="flex flex-col items-center justify-center py-2 rune-panel text-white/40 hover:text-orange-500 font-magic hover:border-orange-500/30 transition-all group z-10 gap-1 rounded-sm"
+2151:                className="flex flex-col items-center justify-center py-2 rune-panel text-amber-500/60 hover:text-amber-400 font-magic hover:border-amber-500/50 transition-all group z-10 gap-1 rounded-sm"
+2159:                className="flex flex-col items-center justify-center py-2 rune-panel text-green-500/60 hover:text-green-400 font-magic hover:border-green-500/50 transition-all group z-10 gap-1 rounded-sm"
+2166:                className="flex flex-col items-center justify-center py-2 rune-panel text-purple-500/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10 gap-1 rounded-sm"
+2343:              <div className="rune-panel rounded-lg p-2 flex flex-col sm:flex-row items-center gap-2">
+2506:              className="rune-panel p-8 rounded-[3rem] w-full max-w-2xl relative z-10 border-purple-500/20 shadow-[0_0_50px_rgba(168,85,247,0.1)] bg-black/80 backdrop-blur-3xl"
+2570:                        className="px-8 py-4 rune-panel text-white/40 font-magic font-black text-xs uppercase tracking-widest hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
+2686:              <div className="flex flex-col sm:flex-row items-center gap-6 p-6 rune-panel rounded-xl relative z-0">
+2703:                      className="rune-panel px-4 py-2 text-cyan-500/80 font-black text-[10px] items-center gap-2 flex transition-all active:scale-95 font-magic uppercase hover:text-cyan-400 hover:border-cyan-500/30 z-10"
+3295:                 <div key={item.name} className="flex gap-3 rune-panel bg-black/40 p-3 rounded-sm hover:border-cyan-500/30 transition-all z-10">
+3509:              className="rune-panel p-8 rounded-2xl w-full max-w-4xl relative z-10 space-y-6 max-h-[90vh] overflow-y-auto"
+4483:        <div className="rune-panel flex-1 flex flex-col rounded-[2.5rem] overflow-hidden border-green-500/10 shadow-[0_0_50px_rgba(16,185,129,0.1)] bg-[#020402]/90 backdrop-blur-xl relative z-10">
+4997:                      className="w-full text-center rune-panel p-2 sm:p-4 lg:p-6 bg-black/90 backdrop-blur-md hover:border-white/30 transition-all cursor-pointer group/box shadow-2xl relative"
+5038:            <div className="max-w-2xl mx-auto rune-panel p-6 rounded-3xl bg-cyan-950/20 border-cyan-500/20">
+5047:            <div className="rune-panel p-8 rounded-[2rem] space-y-6 bg-black/60 border-cyan-500/10 group hover:border-cyan-500/30 transition-all">
+5084:            <div className="rune-panel p-8 rounded-[2rem] space-y-6 bg-black/60 border-amber-500/10 group hover:border-amber-500/30 transition-all">
+5149:                <div key={idx} className={`rune-panel p-6 rounded-3xl relative overflow-hidden group hover:scale-[1.02] transition-all bg-[#0a0a0a]/80 border-${role.color}-500/20 border`}>
+5172:          <div className="rune-panel p-8 rounded-[2.5rem] bg-black/60 border border-white/5 relative">

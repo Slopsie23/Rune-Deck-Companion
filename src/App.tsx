@@ -46,15 +46,33 @@ import {
   HelpCircle,
   Wind,
   BookOpen,
+  Map as MapIcon,
+  Hexagon,
   Sparkles,
   LayoutList,
   Book,
   Compass,
+  Grid,
   Radio,
-  Settings2
+  Settings2,
+  Brain,
+  Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  PieChart, 
+  Pie, 
+  Cell,
+  Legend
+} from 'recharts';
 import runesBackground from './assets/images/runes_background_1777929551380.png';
 
 let cachedScryfallSets: any = null;
@@ -99,7 +117,8 @@ import {
   getDocFromServer,
   serverTimestamp,
   increment,
-  writeBatch
+  writeBatch,
+  arrayUnion
 } from 'firebase/firestore';
 import { Card, DeckCard, SavedDeck, ScryfallSet } from './types';
 
@@ -123,6 +142,15 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminChamber, setShowAdminChamber] = useState(false);
   const [showRoadmap, setShowRoadmap] = useState(false);
+  const [tagToVerify, setTagToVerify] = useState<{
+    deckId: string;
+    tag: string;
+    suggestions: string[];
+    isAmbiguous: boolean;
+    originalQuery: string;
+    type?: 'oracle' | 'name' | 'mechanic' | 'other';
+  } | null>(null);
+  const [pendingTags, setPendingTags] = useState<Record<string, string[]>>({});
 
   // Performance and reliability for mobile
   useEffect(() => {
@@ -155,6 +183,43 @@ export default function App() {
       showMessage("Error updating settings", "error");
     }
   };
+    const renderManaSymbols = (manaCost: any, size = 'w-4 h-4') => {
+    if (!manaCost) return null;
+    
+    let symbols: string[] = [];
+    
+    if (Array.isArray(manaCost)) {
+      symbols = manaCost.map(s => `{${String(s).toUpperCase()}}`);
+    } else {
+      let costString = String(manaCost).toUpperCase();
+      // Normalize string: ensure it has {} around everything if it's raw text
+      if (!costString.includes('{')) {
+        costString = costString.replace(/(\d+)/g, '{$1}').replace(/([WUBRGCXTSP])/g, '{$1}');
+      }
+      symbols = costString.match(/\{[^}]+\}/g) || [];
+    }
+
+    return (
+      <div className="flex items-center gap-0.5 flex-wrap justify-center pointer-events-none">
+        {symbols.map((sym, i) => {
+          let inner = sym.replace(/\{|\}/g, '').replace(/\//g, '').toUpperCase();
+          if (!inner) return null;
+          
+          return (
+            <img 
+              key={i}
+              src={`https://svgs.scryfall.io/card-symbols/${inner}.svg`}
+              alt={sym}
+              className={`${size} object-contain shrink-0 select-none block drop-shadow-[0_0_3px_rgba(0,0,0,1)] brightness-125 saturate-150`}
+              referrerPolicy="no-referrer"
+              loading="lazy"
+            />
+          );
+        })}
+      </div>
+    );
+  };
+
   const [authLoading, setAuthLoading] = useState(true);
 
   const [allCards, setAllCards] = useState<Card[]>([]);
@@ -466,6 +531,8 @@ export default function App() {
   const [setFilter, setSetFilter] = useState("Any");
   const [colorFilter, setColorFilter] = useState("Any");
   const [archFilter, setArchFilter] = useState("Any");
+  const [sortBy, setSortBy] = useState("released");
+  const [sortDir, setSortDir] = useState("desc");
   const [newDeckIdInput, setNewDeckIdInput] = useState("");
 
   const [copied, setCopied] = useState(false);
@@ -1001,6 +1068,8 @@ export default function App() {
     setOverride?: string,
     colorOverride?: string,
     archOverride?: string,
+    orderOverride?: string,
+    dirOverride?: string,
     skipCI?: boolean,
     skipViewChange?: boolean,
     skipFormatFilters?: boolean
@@ -1010,6 +1079,8 @@ export default function App() {
     try {
       // 1. Resolve Parameters
       let ci = options?.ciOverride !== undefined ? options.ciOverride : (activeDeckId ? currentCI : "");
+      let order = options?.orderOverride !== undefined ? options.orderOverride : sortBy;
+      let dir = options?.dirOverride !== undefined ? options.dirOverride : sortDir;
       
       // Hard restriction: If a deck is selected, and no override was given, results MUST fall within its color identity
       // We force this unless skipCI is explicitly true (e.g. for global set browsing)
@@ -1039,13 +1110,13 @@ export default function App() {
       let color = options?.colorOverride !== undefined ? options.colorOverride : colorFilter;
       let arch = options?.archOverride !== undefined ? options.archOverride : archFilter;
 
-      // If no options provided (Manual Search), we assume a fresh search and clear context
+      // If a specific queryOverride is provided, we assume a fresh search and clear context
       let activeContext = options?.queryOverride !== undefined ? options.queryOverride : (contextQuery || "");
-      if (options === undefined || options.queryOverride === "") {
+      if (options?.queryOverride === "") {
         setContextQuery("");
         activeContext = "";
         
-        // Clear all filters for manual search
+        // Only clear all filters if we are explicitly resetting the search
         type = "Any";
         rarity = "Any";
         set = "Any";
@@ -1091,9 +1162,9 @@ export default function App() {
       if (rarity !== "Any") queryParts.push(`r:${rarity}`);
       if (set !== "Any") queryParts.push(`s:${set}`);
       if (color !== "Any") {
-        if (color === "C") queryParts.push("c:c");
-        else if (color === "Multi") queryParts.push("c:m");
-        else queryParts.push(`c:${color}`);
+        if (color === "C") queryParts.push("identity:c");
+        else if (color === "M") queryParts.push("id:multi");
+        else queryParts.push(`identity:${color.toLowerCase()}`);
       }
 
       // Veggie Search Filter (Arch)
@@ -1120,7 +1191,7 @@ export default function App() {
 
       const query = queryParts.join(" ");
 
-      const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=released&dir=desc`;
+      const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=${order}&dir=${dir}`;
       console.log("Searching Scryfall:", url);
       const { data } = await axios.get(url);
       setAllCards(data.data || []);
@@ -1351,92 +1422,118 @@ export default function App() {
     const tag = tagString.trim();
     if (!tag) return;
 
-    const deckRef = doc(db, 'users', user.uid, 'decks', deckId);
-    let deck = savedDecks.find(d => d.id === deckId);
+    const deck = savedDecks.find(d => d.id === deckId);
     if (!deck) return;
 
-    // Optimistic Save
-    const tempEntry = tag.includes(':::') || tag.includes(':') || tag.includes('=') ? tag : `${tag}:::${tag}`;
-    
-    // Check if tag exists (either exactly, or with the same prefix)
-    const exists = deck.tags.some(t => t === tempEntry || (t.includes(':::') && t.split(':::')[0].toLowerCase() === tag.toLowerCase()));
-    
-    if (!exists) {
-      const newTags = [...deck.tags, tempEntry];
-      await updateDoc(deckRef, { 
-        tags: newTags,
-        updatedAt: serverTimestamp() 
-      }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${deckId}`));
+    // Provide instant visual feedback
+    setPendingTags(prev => ({
+      ...prev,
+      [deckId]: [...(prev[deckId] || []), tag]
+    }));
 
-      // Background AI call to format as Scryfall query
-      if (!tag.includes(':::') && !tag.includes(':') && !tag.includes('=')) {
-        try {
-          let q = tag;
-          if (ai) {
-            const res = await ai.models.generateContent({
-              model: "gemini-3-pro-preview",
-              contents: [{ parts: [{ text: `Convert the MTG concept "${tag}" into a valid concise Scryfall search string. Only output the string with no formatting or quotes. E.g. t:elf or o:token` }] }]
-            });
-            q = (res.text || tag).trim().replace(/```/g, '').replace(/\n/g, ' ');
-          }
-
-          let finalEntry = `${tag}:::${q}`;
-          let isValid = false;
+    if (!tag.includes(':::') && !tag.includes(':') && !tag.includes('=')) {
+      try {
+        let q = tag;
+        let analysis: any = null;
+        
+        if (ai) {
+          const prompt = `Analyze MTG concept "${tag}" for color identity ${deck.ci || 'c'}. 
+          Category: name, mechanic, oracle, or other?
+          Convert to valid Scryfall search string.
+          If 0 results likely or ambiguous, suggest 3 alternatives.
+          Return ONLY JSON: { "type": "name"|"mechanic"|"oracle"|"other", "query": "...", "suggestions": ["...", "..."], "isAmbiguous": boolean }`;
           
-          try {
-            const testQuery = `(${q}) id:${deck.ci || 'c'}`;
-            const scryRes = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
-            if (scryRes.data.total_cards > 0) {
-              isValid = true;
-            }
-          } catch(e: any) {
-             // 404 means no cards found
-             isValid = false;
-          }
-
-          const snap = await getDocFromServer(deckRef);
-          if (snap.exists()) {
-             const latestTags: string[] = snap.data().tags || [];
-             let finalTags = [];
-             if (isValid) {
-               finalTags = latestTags.map(t => t === tempEntry ? finalEntry : t);
-             } else {
-               // Remove it
-               finalTags = latestTags.filter(t => t !== tempEntry);
-               showMessage(`Tag removed: "${tag}" yielded no results in this commander's color identity.`);
-             }
-
-             await updateDoc(deckRef, {
-               tags: finalTags,
-               updatedAt: serverTimestamp()
-             }).catch(err => console.error("failed background tag update", err));
-          }
-        } catch (e) {
-          console.error("AI tag syntax generation failed", e);
+          const res = await ai.models.generateContent({
+            model: "gemini-3-flash-preview",
+            contents: prompt,
+            config: { responseMimeType: "application/json" }
+          });
+          analysis = JSON.parse(res.text || '{}');
+          q = analysis.query || tag;
         }
-      } else {
-         // It was an explicit syntax tag, validate it against Scryfall
-         try {
-            const syntaxPart = tempEntry.includes(':::') ? tempEntry.split(':::').slice(1).join(':::') : tempEntry;
-            const testQuery = `(${syntaxPart}) id:${deck.ci || 'c'}`;
-            const scryRes = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
-            // valid
-         } catch(e: any) {
-             // remove if invalid
-             const snap = await getDocFromServer(deckRef);
-             if (snap.exists()) {
-                const latestTags: string[] = snap.data().tags || [];
-                const finalTags = latestTags.filter(t => t !== tempEntry);
-                await updateDoc(deckRef, {
-                  tags: finalTags,
-                  updatedAt: serverTimestamp()
-                });
-                showMessage(`Tag removed: Scryfall query "${tempEntry}" yielded no results.`);
-             }
-         }
+
+        const testQuery = `(${q}) id:${deck.ci || 'c'}`;
+        let resultsCount = 0;
+        try {
+          const scryRes = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
+          resultsCount = scryRes.data.total_cards;
+        } catch(e) {}
+
+        if (resultsCount === 0 || (analysis && analysis.isAmbiguous)) {
+          setTagToVerify({
+            deckId,
+            tag,
+            suggestions: analysis?.suggestions || [],
+            isAmbiguous: analysis?.isAmbiguous || false,
+            originalQuery: q,
+            type: analysis?.type
+          });
+          
+          // Remove from pending as it needs user decision
+          setPendingTags(prev => ({
+            ...prev,
+            [deckId]: (prev[deckId] || []).filter(t => t !== tag)
+          }));
+          return;
+        }
+        
+        const finalEntry = `${tag}:::${q}`;
+        const deckRef = doc(db, 'users', user.uid, 'decks', deckId);
+        const exists = (deck.tags || []).some(t => t.toLowerCase().startsWith(tag.toLowerCase() + ':::') || t === finalEntry);
+        
+        if (!exists) {
+          await updateDoc(deckRef, {
+            tags: arrayUnion(finalEntry),
+            updatedAt: serverTimestamp()
+          }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${deckId}`));
+        }
+
+        // Cleanup pending
+        setPendingTags(prev => ({
+          ...prev,
+          [deckId]: (prev[deckId] || []).filter(t => t !== tag)
+        }));
+      } catch (e) {
+        console.error("Tag verification error", e);
+        const deckRef = doc(db, 'users', user.uid, 'decks', deckId);
+        await updateDoc(deckRef, {
+          tags: arrayUnion(`${tag}:::${tag}`),
+          updatedAt: serverTimestamp()
+        }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${deckId}`));
+        
+        setPendingTags(prev => ({
+          ...prev,
+          [deckId]: (prev[deckId] || []).filter(t => t !== tag)
+        }));
       }
+    } else {
+      const deckRef = doc(db, 'users', user.uid, 'decks', deckId);
+      await updateDoc(deckRef, {
+        tags: arrayUnion(tag),
+        updatedAt: serverTimestamp()
+      }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${deckId}`));
+      
+      setPendingTags(prev => ({
+        ...prev,
+        [deckId]: (prev[deckId] || []).filter(t => t !== tag)
+      }));
     }
   };
+
+  const finalizeTag = async (deckId: string, tag: string, query: string) => {
+    if (!user) return;
+    const deckRef = doc(db, 'users', user.uid, 'decks', deckId);
+    await updateDoc(deckRef, {
+      tags: arrayUnion(`${tag}:::${query}`),
+      updatedAt: serverTimestamp()
+    }).catch(err => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}/decks/${deckId}`));
+    setTagToVerify(null);
+    setPendingTags(prev => ({
+      ...prev,
+      [deckId]: (prev[deckId] || []).filter(t => t !== tag)
+    }));
+  };
+
 
   const removeTag = async (deckId: string, tag: string) => {
     if (!user) return;
@@ -1570,13 +1667,21 @@ Return ONLY JSON. No markdown backticks.`;
     }
   };
 
-  const renderManaSymbols = (ci: string) => {
+  const renderColorIdentity = (ci: string) => {
     const fixedCI = ci || "c";
     return (
       <div className="flex gap-1">
         {fixedCI.split("").map((s, i) => {
-          const symbol = `{${s.toUpperCase()}}`;
-          return <img key={`${s}-${i}`} src={MANA_SYMBOL_URIS[symbol]} className="w-4 h-4" alt={s} />;
+          const inner = s.toUpperCase();
+          return (
+            <img 
+              key={`${s}-${i}`}
+              src={`https://svgs.scryfall.io/card-symbols/${inner}.svg`}
+              className="w-4 h-4" 
+              alt={s}
+              referrerPolicy="no-referrer"
+            />
+          );
         })}
       </div>
     );
@@ -1692,15 +1797,20 @@ Return ONLY JSON. No markdown backticks.`;
     );
   }
 
+
   return (
     <div className="h-screen rune-bg text-white flex overflow-hidden font-sans relative">
+      <div 
+        className="fixed inset-0 z-0 opacity-[0.04] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat bg-fixed object-cover"
+        style={{ backgroundImage: `url(${runesBackground})` }}
+      />
       <div className="absolute top-0 right-0 w-[50vh] h-[50vh] bg-cyan-500/5 blur-[150px] rounded-full pointer-events-none" />
       <div className="absolute bottom-0 left-[20%] w-[40vh] h-[40vh] bg-orange-500/5 blur-[120px] rounded-full pointer-events-none" />
       {/* Mobile Top Bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#070707]/60 backdrop-blur-2xl border-b border-white/[0.04] z-40 flex items-center justify-between px-4">
         <div className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
           <Zap className="w-5 h-5 text-orange-500" />
-          <h1 className="text-sm font-magic font-black uppercase tracking-[0.2em] text-white">Rune Deck</h1>
+          <h1 className="text-sm font-magic font-black uppercase tracking-[0.2em] text-white">Rune Deck Companion</h1>
         </div>
         <div className="flex items-center gap-2">
           {viewMode === 'cards' && (
@@ -1721,7 +1831,9 @@ Return ONLY JSON. No markdown backticks.`;
       </div>
 
       {/* Sidebar */}
-      <aside className={`
+      <aside 
+        id="sidebar-root"
+        className={`
         fixed inset-y-0 left-0 z-[100] w-[300px] bg-[#0c0c0c] border-r-2 border-[#1a1a1a] shadow-[4px_0_24px_rgba(0,0,0,0.8)] flex flex-col shrink-0 transition-transform duration-500 ease-in-out md:relative md:translate-x-0
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
@@ -1746,8 +1858,8 @@ Return ONLY JSON. No markdown backticks.`;
               className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,152,0,0.6)]"
             />
           </div>
-          <h1 onClick={goHome} className="cursor-pointer text-2xl font-magic font-extrabold text-orange-500 tracking-tighter text-center leading-none uppercase">Rune Deck <br/> <span className="text-lg opacity-80">Companion</span></h1>
-          <p className="text-[9px] text-cyan-500/40 uppercase tracking-[0.4em] font-bold mt-2">Quick Add-tech</p>
+          <h1 onClick={goHome} className="cursor-pointer text-2xl font-magic font-extrabold text-white tracking-tighter text-center leading-none uppercase">Rune Deck <br/> <span className="text-lg opacity-80">Companion</span></h1>
+          <p className="text-[9px] text-orange-500/60 uppercase tracking-[0.4em] font-bold mt-2">Quick add tech</p>
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
@@ -1771,10 +1883,11 @@ Return ONLY JSON. No markdown backticks.`;
                   setArchFilter("Any");
                   setViewMode('manage_decks');
                 }}
-                className="text-white/30 hover:text-cyan-400 p-1.5 hover:bg-white/5 rounded-md transition-all group"
+                className="flex items-center gap-2 px-3 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 hover:border-cyan-400/40 rounded-xl transition-all group shadow-[0_0_15px_rgba(6,182,212,0.1)] hover:shadow-[0_0_20px_rgba(6,182,212,0.2)]"
                 title="Manage Decks"
               >
-                <Settings2 className="w-3.5 h-3.5 group-hover:rotate-90 transition-transform" />
+                <Settings2 className="w-4.5 h-4.5 text-cyan-400/60 group-hover:text-cyan-400 group-hover:rotate-90 transition-all" />
+                <span className="text-[10px] font-magic font-black text-cyan-400/40 group-hover:text-cyan-400 uppercase tracking-widest">Library</span>
               </button>
             </div>
             
@@ -1835,34 +1948,35 @@ Return ONLY JSON. No markdown backticks.`;
             </div>
             
             {activeDeckId && (
-              <div className="space-y-6 pt-2">
+              <div className="space-y-2 pt-0.5">
                 {commanders.length > 0 && (
                   <div className="flex flex-col items-center gap-2">
                     <div className="flex justify-center items-center w-full">
-                      <div className="flex items-center -space-x-4">
-                         {[...commanders].reverse().map((cmd, i) => (
-                            <div key={i} className="relative group hover:z-50 transition-all duration-300 hover:scale-105" style={{ zIndex: i }}>
-                              <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full overflow-hidden border-2 border-[#0A0A0A] shadow-[0_0_15px_rgba(0,0,0,0.8)] relative group-hover:border-orange-500/50">
+                      <div className="flex items-center -space-x-8">
+                          {[...commanders].reverse().map((cmd, i) => (
+                            <div key={i} className="relative group hover:z-[100] transition-all duration-300 hover:scale-110" style={{ zIndex: commanders.length - i }}>
+                              <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-[#0A0A0A] shadow-[0_0_35px_rgba(0,0,0,0.9)] relative group-hover:border-cyan-500/60 transition-all">
                                 <img src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
-                                <div className="absolute inset-0 bg-gradient-to-b from-transparent to-black/40 mix-blend-overlay" />
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent pointer-events-none" />
                               </div>
-                              <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-max max-w-[120px] text-[8px] font-magic font-bold text-white bg-black/80 backdrop-blur px-2 py-0.5 rounded-full uppercase tracking-wider text-center opacity-0 group-hover:opacity-100 transition-opacity border border-white/10 pointer-events-none z-[60]">
-                                 {cmd.name}
-                              </div>
+
                             </div>
                          ))}
                       </div>
                     </div>
                     {currentCI && (
-                      <div className="flex justify-center drop-shadow-[0_0_10px_rgba(255,255,255,0.1)] opacity-80 mt-1">
-                         {renderManaSymbols(currentCI)}
+                      <div className="flex justify-center drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]">
+                         {renderManaSymbols(currentCI, 'w-6 h-6')}
                       </div>
                     )}
                   </div>
                 )}
 
-                <div className="space-y-2 border-t border-white/5 pt-3">
-                  <div className="flex items-center gap-2 mb-2">
+            <div 
+              id="search-bar-root"
+              className="space-y-2 border-t border-white/5 pt-3"
+            >
+              <div className="flex items-center gap-2 mb-2">
                     <Search className="w-3 h-3 text-orange-500" />
                     <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Search Engine</h2>
                   </div>
@@ -2044,6 +2158,7 @@ Return ONLY JSON. No markdown backticks.`;
                 <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none text-amber-500/80 group-hover:text-amber-400">Sheriff</span>
               </button>
               <button 
+                id="ruxa-beacon"
                 onClick={() => handleFunModeClick('judge')}
                 className="flex flex-col items-center justify-center py-2 rune-panel text-green-500/60 hover:text-green-400 font-magic hover:border-green-500/50 transition-all group z-10 gap-1 rounded-sm"
               >
@@ -2247,57 +2362,119 @@ Return ONLY JSON. No markdown backticks.`;
               </div>
 
               {isFiltersOpen && (
-                <div className="flex flex-wrap gap-2 w-full flex-1 justify-center sm:justify-start animate-in fade-in slide-in-from-top-2 z-10">
-                  <div className="flex flex-col gap-1.5 w-full sm:w-28">
-                    <select 
-                      value={typeFilter} 
-                      onChange={(e) => setTypeFilter(e.target.value)}
-                      className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)]"
-                    >
-                      <option value="Any" className="bg-[#111]">Type</option>
-                      <option value="Creature" className="bg-[#111]">Creature</option>
-                      <option value="Sorcery" className="bg-[#111]">Sorcery</option>
-                      <option value="Instant" className="bg-[#111]">Instant</option>
-                      <option value="Artifact" className="bg-[#111]">Artifact</option>
-                      <option value="Enchantment" className="bg-[#111]">Enchantment</option>
-                    </select>
+                <div className="flex flex-wrap gap-4 w-full flex-1 justify-center sm:justify-start animate-in fade-in slide-in-from-top-2 z-10 px-2 py-1">
+                  
+                  {/* FILTER COLUMN */}
+                  <div className="flex flex-wrap items-end gap-2 pr-4 border-r border-white/5">
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Category</span>
+                      <select 
+                        value={typeFilter} 
+                        onChange={(e) => setTypeFilter(e.target.value)}
+                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[100px]"
+                      >
+                        <option value="Any" className="bg-[#111]">All Types</option>
+                        <option value="Creature" className="bg-[#111]">Creature</option>
+                        <option value="Sorcery" className="bg-[#111]">Sorcery</option>
+                        <option value="Instant" className="bg-[#111]">Instant</option>
+                        <option value="Artifact" className="bg-[#111]">Artifact</option>
+                        <option value="Enchantment" className="bg-[#111]">Enchantment</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Rarity</span>
+                      <select 
+                        value={rarityFilter} 
+                        onChange={(e) => setRarityFilter(e.target.value)}
+                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[100px]"
+                      >
+                        <option value="Any" className="bg-[#111]">All Rarities</option>
+                        <option value="common" className="bg-[#111]">Common</option>
+                        <option value="uncommon" className="bg-[#111]">Uncommon</option>
+                        <option value="rare" className="bg-[#111]">Rare</option>
+                        <option value="mythic" className="bg-[#111]">Mythic</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Identity</span>
+                      <select 
+                        value={colorFilter} 
+                        onChange={(e) => setColorFilter(e.target.value)}
+                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[100px]"
+                      >
+                        <option value="Any" className="bg-[#111]">All Colors</option>
+                        <option value="W" className="bg-[#111]">White</option>
+                        <option value="U" className="bg-[#111]">Blue</option>
+                        <option value="B" className="bg-[#111]">Black</option>
+                        <option value="R" className="bg-[#111]">Red</option>
+                        <option value="G" className="bg-[#111]">Green</option>
+                        <option value="C" className="bg-[#111]">Colorless</option>
+                        <option value="M" className="bg-[#111]">Multicolor</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="flex flex-col gap-1.5 w-full sm:w-28">
-                    <select 
-                      value={rarityFilter} 
-                      onChange={(e) => setRarityFilter(e.target.value)}
-                      className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)]"
-                    >
-                      <option value="Any" className="bg-[#111]">Rarity</option>
-                      <option value="common" className="bg-[#111]">Common</option>
-                      <option value="uncommon" className="bg-[#111]">Uncommon</option>
-                      <option value="rare" className="bg-[#111]">Rare</option>
-                      <option value="mythic" className="bg-[#111]">Mythic</option>
-                    </select>
+                  {/* SORT COLUMN */}
+                  <div className="flex flex-wrap items-end gap-2 pr-4 border-r border-white/5">
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Order By</span>
+                      <select 
+                        value={sortBy} 
+                        onChange={(e) => setSortBy(e.target.value)}
+                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[110px]"
+                      >
+                        <option value="released" className="bg-[#111]">Release Date</option>
+                        <option value="name" className="bg-[#111]">Name (A-Z)</option>
+                        <option value="eur" className="bg-[#111]">Value (EUR)</option>
+                        <option value="cmc" className="bg-[#111]">Mana Value</option>
+                        <option value="rarity" className="bg-[#111]">Rarity Rank</option>
+                        <option value="power" className="bg-[#111]">Strength</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1.5">
+                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Flow</span>
+                      <select 
+                        value={sortDir} 
+                        onChange={(e) => setSortDir(e.target.value)}
+                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[70px]"
+                      >
+                        <option value="desc" className="bg-[#111]">DESC</option>
+                        <option value="asc" className="bg-[#111]">ASC</option>
+                      </select>
+                    </div>
                   </div>
 
-                  <div className="flex flex-col gap-1.5 w-full sm:w-28">
-                    <select 
-                      value={colorFilter} 
-                      onChange={(e) => setColorFilter(e.target.value)}
-                      className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)]"
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button 
+                      onClick={() => performSearch()}
+                      className="px-5 py-2.5 rounded-sm bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-magic font-black text-[10px] hover:bg-cyan-500/20 hover:border-cyan-500/40 transition-all uppercase tracking-widest z-10"
                     >
-                      <option value="Any" className="bg-[#111]">Colors</option>
-                      <option value="W" className="bg-[#111]">White</option>
-                      <option value="U" className="bg-[#111]">Blue</option>
-                      <option value="B" className="bg-[#111]">Black</option>
-                      <option value="R" className="bg-[#111]">Red</option>
-                      <option value="G" className="bg-[#111]">Green</option>
-                    </select>
+                      Apply Filters
+                    </button>
+                    
+                    <button 
+                      onClick={() => {
+                        setTypeFilter("Any");
+                        setRarityFilter("Any");
+                        setColorFilter("Any");
+                        setSortBy("released");
+                        setSortDir("desc");
+                        performSearch({ 
+                          typeOverride: "Any", 
+                          rarityOverride: "Any", 
+                          colorOverride: "Any", 
+                          orderOverride: "released", 
+                          dirOverride: "desc" 
+                        });
+                      }}
+                      className="px-4 py-2.5 rounded-sm border border-white/5 text-white/40 font-mono text-[9px] hover:text-white/80 hover:bg-white/5 transition-all uppercase tracking-widest z-10"
+                    >
+                      Clear Filters
+                    </button>
                   </div>
-
-                  <button 
-                    onClick={() => performSearch()}
-                    className="px-4 py-3 rune-panel text-orange-500/80 font-magic font-black text-[10px] hover:text-orange-500 hover:border-orange-500/30 transition-all uppercase tracking-widest z-10"
-                  >
-                    Apply Filters
-                  </button>
                   <button 
                     onClick={() => setIsFiltersOpen(false)}
                     className="p-1 px-2 bg-white/5 hover:bg-white/10 rounded-lg text-white/40 transition-all"
@@ -2428,13 +2605,15 @@ Return ONLY JSON. No markdown backticks.`;
                        
                        <div className="mt-10 sm:mt-20 relative z-10 flex flex-col items-center">
                          <h2 className="text-5xl md:text-7xl font-magic font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white via-white to-cyan-500 uppercase tracking-tighter mb-6 shadow-black text-center drop-shadow-[0_0_60px_rgba(6,182,212,0.7)]">The Runes Await</h2>
-                         <div className="text-sm text-orange-100/90 max-w-lg mx-auto leading-relaxed mb-6 px-10 font-mono tracking-widest text-center bg-black/90 p-10 rounded-[3rem] backdrop-blur-3xl border border-orange-500/20 shadow-[0_0_50px_rgba(0,0,0,0.8)] scale-105 flex flex-col items-center gap-4">
+                         <div className="text-sm text-orange-100/90 max-w-xl mx-auto leading-relaxed mb-6 px-10 font-mono tracking-widest text-center bg-black/90 p-10 rounded-[3rem] backdrop-blur-3xl border border-orange-500/20 shadow-[0_0_50px_rgba(0,0,0,0.8)] scale-105 flex flex-col items-center gap-4">
                            <span className="text-orange-500 font-black text-lg block tracking-[0.2em]">FORGE YOUR SYNERGIES</span>
                            <div className="space-y-1">
-                             <p>Discover Recent and Future Releases</p>
-                             <p>& Summon the Perfect Additions To Your Decks.</p>
+                             <p className="opacity-80 text-[13px] font-sans uppercase font-medium">
+                               Discover Recent and Future Releases <br/>
+                               & Summon the Perfect Additions To Your Decks.
+                             </p>
                            </div>
-                           <span className="w-full text-[10px] opacity-40 mt-2 block border-t border-white/10 pt-6 font-bold uppercase transition-all duration-1000">SYNERGY SCRIBED • SLOPSIE APPROVED</span>
+                           <span className="w-full text-[10px] opacity-40 mt-2 block border-t border-white/10 pt-6 font-magic font-bold uppercase transition-all duration-1000">SYNERGY SCRIBED • SLOPSIE APPROVED</span>
                          </div>
 
                          <div className="flex justify-center gap-4 mt-8 relative z-10">
@@ -2546,7 +2725,11 @@ Return ONLY JSON. No markdown backticks.`;
                       <div className="absolute inset-0 bg-gradient-to-t from-[#080808] via-transparent to-transparent" />
                       
                       <div className="absolute inset-x-6 top-6 flex justify-between items-start">
-                         <div className="bg-black/60 backdrop-blur-md p-1.5 rounded-full border border-white/10 shadow-xl">{renderManaSymbols(deck.ci)}</div>
+                         <div className="relative group/manas">
+                            <div className="bg-white/[0.03] backdrop-blur-md p-1 rounded-lg border border-white/5 shadow-2xl relative z-10 flex items-center justify-center min-w-[32px]">
+                               {renderManaSymbols(deck.ci, 'w-3 h-3')}
+                            </div>
+                         </div>
                          {deck.totalCost ? (
                             <div className="flex flex-col items-end gap-1">
                               <div className="flex items-center bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-[#00aeef]/20 shadow-xl group-hover:border-[#00aeef]/40 transition-all">
@@ -2584,7 +2767,7 @@ Return ONLY JSON. No markdown backticks.`;
 
                       <div className="flex-1 space-y-4">
                         <div className="flex flex-wrap gap-2">
-                           {deck.tags.map(tag => {
+                           {(deck.tags || []).map(tag => {
                              let label = tag;
                              let query = tag;
                              if (tag.includes(':::')) {
@@ -2607,7 +2790,7 @@ Return ONLY JSON. No markdown backticks.`;
                                         skipFormatFilters: false
                                       });
                                    }}
-                                   className="px-3 py-1.5 bg-white/5 border border-white/5 rounded-l-md text-[10px] hover:bg-cyan-500/20 hover:text-cyan-300 hover:border-cyan-500/30 transition-all font-bold"
+                                   className="px-3 py-1.5 bg-cyan-500/5 border border-white/5 rounded-l-md text-[10px] hover:bg-cyan-500/20 hover:text-cyan-300 hover:border-cyan-500/30 transition-all font-bold text-cyan-400/80"
                                  >
                                    {label}
                                  </button>
@@ -2620,9 +2803,18 @@ Return ONLY JSON. No markdown backticks.`;
                                </span>
                              );
                            })}
+                           {(pendingTags[deck.id] || []).map((tag: string, i: number) => (
+                              <span key={`pending-${i}`} className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded-md text-[10px] text-white/40 animate-pulse border-dashed">
+                                <RotateCw className="w-2.5 h-2.5 animate-spin text-cyan-500/50" />
+                                {tag}
+                              </span>
+                           ))}
                         </div>
 
-                        <div className="flex gap-2">
+                        <div 
+                          id="tag-input"
+                          className="flex gap-2"
+                        >
                           <input 
                             type="text" 
                             placeholder="Add a custom tag (e.g. 'Bear' or 'Infect')"
@@ -2672,157 +2864,362 @@ Return ONLY JSON. No markdown backticks.`;
               <OutlawSheriff />
             </div>
           )}
+
+          {viewMode === 'stats' && viewingDeckCards && (
+            <div className="p-4 lg:p-8">
+              <DeckAnalysis cards={viewingDeckCards} />
+            </div>
+          )}
         </div>
       </div>
     </main>
 
       {/* Onboarding Tutorial Modal */}
+      {/* DECK_VIEW_MODAL_COMPLETE_START */}
       <AnimatePresence>
         {isViewingDeck && viewingDeckCards && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1100] flex items-center justify-center p-2 sm:p-6 bg-black/90 backdrop-blur-xl"
-          >
             <motion.div 
-              initial={{ scale: 0.9, y: 20 }}
-              animate={{ scale: 1, y: 0 }}
-              className="w-full max-w-5xl h-[85vh] bg-[#0A0A0A] border border-white/10 rounded-3xl overflow-hidden shadow-2xl flex flex-col relative"
-            >
-               <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
-                  <div className="flex flex-col">
-                    <h2 className="text-xl font-magic font-black text-orange-500 uppercase tracking-tighter truncate max-w-md">{viewingDeckName || 'Deck Overview'}</h2>
-                    <p className="text-[10px] text-white/30 uppercase font-black tracking-[0.2em]">{viewingDeckCards.length} Cards in Deck</p>
-                  </div>
-                  <button onClick={() => { setIsViewingDeck(false); setViewingDeckCards(null); }} className="p-3 hover:bg-white/5 rounded-full transition-colors border border-white/5 group">
-                    <X className="w-6 h-6 text-white/40 group-hover:text-white" />
-                  </button>
-               </div>
+               id="analysis-pane-root"
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               exit={{ opacity: 0 }}
+               className="fixed inset-0 z-[1100] flex items-center justify-center p-2 sm:p-6 bg-black/90 backdrop-blur-xl"
+             >
+               <motion.div 
+                  initial={{ scale: 0.9, y: 20 }}
+                  animate={{ scale: 1, y: 0 }}
+               className="w-full max-w-6xl h-[90vh] bg-[#050808] border border-cyan-500/20 rounded-[3rem] overflow-hidden shadow-[0_0_100px_rgba(6,182,212,0.15)] flex flex-col relative"
+             >
+                {/* Arch-Rune Background Signature Floor */}
+                <div className="absolute inset-0 z-0 opacity-[0.03] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat" style={{ backgroundImage: `url(${runesBackground})` }} />
 
-               <div className="flex flex-1 bg-[#050505] rounded-b-3xl overflow-hidden relative">
-                     <div className="flex-1 overflow-y-auto no-scrollbar p-4 sm:p-6 pb-32 border-t border-white/[0.05]">
-                       <div className="space-y-16">
+                {/* Header Decoration */}
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4/5 h-[1px] bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_rgba(34,211,238,0.5)] z-20" />
+                
+                <div className="p-8 border-b border-white/5 flex items-center justify-between bg-[#081011] relative z-10">
+                   <div className="flex items-center gap-6">
+                     <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.2)]">
+                       <Database className="w-6 h-6 text-cyan-400" />
+                     </div>
+                     <div className="flex flex-col">
+                       <h2 className="text-2xl font-magic font-black text-cyan-400 uppercase tracking-[0.1em] truncate max-w-lg drop-shadow-[0_0_8px_rgba(34,211,238,0.3)]">{viewingDeckName || 'Deckinfo'}</h2>
+                       <div className="flex items-center gap-2">
+                         <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
+                         <p className="text-[10px] text-white/40 uppercase font-mono tracking-[0.2em]">{viewingDeckCards.length} Cards Analyzed</p>
+                       </div>
+                     </div>
+                   </div>
+                   <button 
+                     onClick={() => { setIsViewingDeck(false); setViewingDeckCards(null); }} 
+                     className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all group shadow-xl"
+                   >
+                     <X className="w-8 h-8 opacity-40 group-hover:opacity-100 transition-opacity" />
+                   </button>
+                </div>
+
+                <div className="flex flex-1 bg-[#030603] relative overflow-hidden h-full">
+                     {/* Ambient Background Glow */}
+                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/5 rounded-full blur-[120px] pointer-events-none" />
+                     
+                     {/* LEFT COLUMN: TACTICAL LIST */}
+                     <div className="w-full lg:w-[45%] xl:w-[40%] overflow-y-auto no-scrollbar p-6 lg:px-10 lg:py-8 pb-32 relative z-10 border-r border-white/5">
+                       <div className="space-y-14">
+
                          {Object.entries(groupedDeckCards)
                            .filter(([_, cards]) => (cards as any[]).length > 0)
                            .map(([category, cards]) => (
-                             <div key={category} className="space-y-6">
-                               <div className="flex items-center gap-3">
-                                 <h3 className="text-[10px] font-magic font-black text-white/40 uppercase tracking-[0.4em]">{category}</h3>
-                                 <div className="h-px bg-white/10 flex-1" />
-                                 <span className="text-[10px] font-mono text-cyan-400/40 font-bold">{(cards as any[]).length}</span>
+                             <div key={category} className="space-y-4">
+                               <div className="flex items-center gap-4 group">
+                                 <div className="w-1.5 h-1.5 bg-cyan-500 rotate-45 group-hover:scale-150 transition-transform" />
+                                 <h3 className="text-[11px] font-magic font-black text-white/50 uppercase tracking-[0.5em] group-hover:text-cyan-400 transition-colors">{category}</h3>
+                                 <div className="h-[1px] bg-gradient-to-r from-white/10 to-transparent flex-1" />
+                                 <span className="text-[10px] font-mono text-cyan-400 font-bold px-3 py-1 bg-white/5 rounded-full border border-white/5">{(cards as any[]).length}</span>
                                </div>
                                
-                               <div className="grid grid-cols-5 gap-y-0 gap-x-2">
-                                 {/* Full art stacked grid - 5 columns tight */}
-                                 {(() => {
-                                   const commanderCards = (cards as any[]).filter(dc => dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander')));
-                                   const otherCards = (cards as any[]).filter(dc => !dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander')));
+                               <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6 gap-y-1.5">
+                                 {(cards as any[]).map((dc, i) => {
+                                   const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                   const edition = dc.card?.edition;
+                                   const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                   const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                   const manaCost = oracle?.mana_cost || scryfall?.mana_cost || edition?.mana_cost || '';
+                                   const cardName = c?.name || dc.card?.name || 'Unknown Card';
+                                   const typeLine = oracle?.type_line || scryfall?.type_line || edition?.type_line || '';
                                    
-                                   const renderCard = (dc: any, isFull: boolean = true) => {
-                                      const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                      const isFoil = dc.modifier === 'Foil' || dc.modifier === 'Etched Foil';
-                                      const edition = dc.card?.edition;
-                                      const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
-                                      const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                      
-                                      let img = edition?.image_uris?.large || edition?.image_uris?.normal || edition?.imageUrl || edition?.image_url || scryfall?.image_uris?.large || scryfall?.image_uris?.normal || oracle?.image_uris?.large || oracle?.image_uris?.normal;
-                                      const scryfallId = dc.card?.scryfall_id || dc.card?.scryfallId || dc.card?.uids?.scryfall || scryfall?.id || dc.uids?.scryfall;
-                                      
-                                      if (!img && scryfallId) {
-                                         img = `https://cards.scryfall.io/large/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
-                                      }
-                                      
-                                      const cardName = c?.name || dc.card?.name || 'Unknown Card';
-                                      const priceEur = scryfall?.prices?.eur || edition?.prices?.eur || oracle?.prices?.eur || 0;
-
-                                      return (
-                                        <div 
-                                          key={cardName} 
-                                          className={`group relative aspect-[0.713] w-full bg-[#121212] rounded-lg sm:rounded-xl overflow-hidden shadow-[0_10px_30px_rgba(0,0,0,0.8)] border border-white/5 transition-all duration-300 cursor-pointer ${isFull ? 'hover:border-[#00aeef]/50 hover:shadow-[0_0_40px_rgba(6,182,212,0.4)] hover:-translate-y-4' : ''}`}
-                                          style={{ zIndex: isFull ? 50 : 1 }}
-                                          onMouseEnter={() => {
-                                             setHoveredPreviewCard(img || null);
-                                           }}
-                                          onMouseLeave={() => {
-                                             setHoveredPreviewCard(null);
-                                           }}
-                                        >
-                                           {img ? (
-                                             <div className="relative w-full h-full">
-                                               <img src={img} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105" alt={cardName} loading="lazy" referrerPolicy="no-referrer" />
-                                               {isFoil && <div className="absolute inset-0 pointer-events-none mix-blend-color-dodge opacity-40 group-hover:opacity-60 transition-opacity" style={{ background: 'linear-gradient(110deg, transparent 20%, rgba(255,255,255,0.4) 50%, transparent 80%)', backgroundSize: '200% 200%', animation: 'holographic 4s linear infinite' }} />}
-                                               
-                                               <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black via-black/60 to-transparent p-2 pt-6 transition-all duration-300 ${!isFull ? 'translate-y-full group-hover:translate-y-0' : 'translate-y-0'}`}>
-                                                  <div className="flex flex-col items-center gap-1">
-                                                     <p className="text-[7px] font-magic font-bold text-white uppercase tracking-tighter truncate w-full text-center leading-tight">{cardName}</p>
-                                                  </div>
-                                               </div>
-                                             </div>
-                                           ) : (
-                                             <div className="flex items-center justify-center h-full p-4 text-center">
-                                               <span className="text-[9px] font-magic text-white/20 uppercase">{cardName}</span>
-                                             </div>
-                                           )}
-                                        </div>
-                                      );
-                                   };
-
-                                   const items: React.ReactNode[] = [];
-                                   commanderCards.forEach((dc, i) => items.push(<div key={`cmd-${i}`}>{renderCard(dc, true)}</div>));
-
-                                   // Stack remaining cards in chunks of 5
-                                   for (let i = 0; i < otherCards.length; i += 5) {
-                                     const chunk = otherCards.slice(i, i + 5);
-                                     items.push(
-                                       <div key={`stack-${i}`} className="card-stack">
-                                          {chunk.map((dc, idx) => (
-                                            <div key={`stack-${i}-${idx}`} className="card-stack-item">
-                                               {renderCard(dc, idx === chunk.length - 1)}
-                                            </div>
-                                          ))}
-                                       </div>
-                                     );
+                                   let img = scryfall?.image_uris?.large || scryfall?.image_uris?.png || edition?.image_uris?.large || edition?.image_uris?.png || edition?.imageUrl || edition?.image_url || scryfall?.image_uris?.normal || oracle?.image_uris?.large || oracle?.image_uris?.normal;
+                                   const scryfallId = dc.card?.scryfall_id || dc.card?.scryfallId || dc.card?.uids?.scryfall || scryfall?.id || dc.uids?.scryfall;
+                                   if (!img && scryfallId) {
+                                      img = `https://cards.scryfall.io/large/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
                                    }
-                                   return items;
-                                 })()}
+
+                                   return (
+                                     <motion.div 
+                                       key={`${category}-${i}`}
+                                       initial={{ opacity: 0, x: -10 }}
+                                       animate={{ opacity: 1, x: 0 }}
+                                       transition={{ delay: i * 0.01 }}
+                                       onMouseEnter={() => setHoveredPreviewCard(img || null)}
+                                       onClick={() => setHoveredPreviewCard(img || null)}
+                                       className="group relative flex items-center justify-between p-3 rounded-xl border border-white/5 bg-white/[0.02] hover:border-cyan-500/40 hover:bg-cyan-500/[0.04] transition-all cursor-pointer"
+                                     >
+                                       <div className="flex items-center gap-4 min-w-0">
+                                         <div className="w-1.5 h-1.5 rounded-full bg-white/10 group-hover:bg-cyan-500 group-hover:shadow-[0_0_8px_rgba(6,182,212,0.6)] transition-all" />
+                                         <div className="flex flex-col min-w-0">
+                                           <span className="text-sm sm:text-base font-magic font-black text-white group-hover:text-cyan-400 transition-colors uppercase tracking-tight truncate">{cardName}</span>
+                                           <span className="text-xs font-mono text-white/50 truncate group-hover:text-white/70 transition-colors">{typeLine}</span>
+                                         </div>
+                                       </div>
+                                       
+                                       <div className="flex items-center gap-4 shrink-0">
+                                         <div className="text-xs font-mono text-white/60 group-hover:text-white transition-colors flex items-center gap-2">
+                                           <span className="font-bold">MV: {oracle?.cmc || scryfall?.cmc || edition?.cmc || dc.card?.cmc || 0}</span>
+                                           {renderManaSymbols(manaCost)}
+                                         </div>
+                                         <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-black/40 border border-white/20 flex items-center justify-center text-sm font-mono font-bold text-white/80 group-hover:border-cyan-500/60 group-hover:text-cyan-400 transition-all">
+                                           {dc.quantity || 1}
+                                         </div>
+                                       </div>
+                                     </motion.div>
+                                   );
+                                 })}
                                </div>
                              </div>
                            ))}
                        </div>
-                     </div>
-                 {/* Desktop Preview Sidebar */}
-                 <div className="hidden lg:flex flex-col w-64 xl:w-80 bg-[#0A0A0A] border-l border-white/[0.05] p-6 shrink-0 relative z-10 shadow-[-10px_0_30px_rgba(0,0,0,0.5)] justify-center items-center">
-                    <h3 className="absolute top-6 left-6 text-white/30 font-magic text-[10px] uppercase tracking-widest text-center mt-2 w-full pr-12">Card Preview</h3>
-                    {hoveredPreviewCard ? (
-                      <div className="relative w-full px-4">
-                        <img src={hoveredPreviewCard} className="w-full h-auto rounded-xl shadow-[0_0_40px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 transition-all duration-300" />
-                      </div>
-                    ) : (
-                      <div className="w-full aspect-[0.71] rounded-xl border border-white/[0.05] bg-white/[0.02] flex items-center justify-center text-white/20 text-xs font-magic uppercase tracking-widest text-center px-4">
-                          Hover a card <br/>to preview
-                      </div>
-                    )}
-                 </div>
-               </div>
-               
-               <AnimatePresence>
-                 {hoveredPreviewCard && (
-                   <motion.div 
-                     initial={{ opacity: 0, scale: 0.95, y: 10 }}
-                     animate={{ opacity: 1, scale: 1, y: 0 }}
-                     exit={{ opacity: 0, scale: 0.95, y: 10 }}
-                     transition={{ duration: 0.15 }}
-                     className="lg:hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] w-48 sm:w-56 rounded-xl overflow-hidden shadow-[0_0_40px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 pointer-events-none"
-                   >
-                     <div className="relative w-full">
-                       <img src={hoveredPreviewCard} className="w-full h-auto rounded-xl" alt="Preview" />
-                       {/* Price Removed */}
-                     </div>
-                   </motion.div>
-                 )}
-               </AnimatePresence>
+                    </div>
+                                {/* MIDDLE COLUMN: CARD FOCUS */}
+                                <div className="hidden lg:flex flex-[1.2] xl:flex-[1.4] bg-[#020404] items-center justify-center p-8 relative z-20 overflow-hidden relative">
+                                    <div className="absolute inset-0 opacity-[0.02] pointer-events-none flex items-center justify-center mix-blend-screen bg-center bg-cover bg-no-repeat" style={{ backgroundImage: `url(${runesBackground})` }} />
+                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.05)_0%,transparent_70%)] animate-pulse" />
+                                    <AnimatePresence mode="wait">
+                                        {hoveredPreviewCard ? (
+                                        <motion.div 
+                                            key={hoveredPreviewCard}
+                                            initial={{ opacity: 0, scale: 0.9, y: 30 }}
+                                            animate={{ opacity: 1, scale: 1, y: 0 }}
+                                            exit={{ opacity: 0, scale: 0.9, y: -30 }}
+                                            transition={{ type: "spring", damping: 25, stiffness: 120 }}
+                                            className="relative z-20 flex items-center justify-center pointer-events-none"
+                                        >
+                                            <img 
+                                            src={hoveredPreviewCard} 
+                                            alt="Optic Focus" 
+                                            className="w-48 xl:w-56 max-w-full h-auto object-contain rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_30px_rgba(6,182,212,0.2)] border border-cyan-500/30"
+                                            referrerPolicy="no-referrer"
+                                            />
+                                        </motion.div>
+                                        ) : (
+                                        <motion.div 
+                                            initial={{ opacity: 0 }}
+                                            animate={{ opacity: 1 }}
+                                            className="flex flex-col items-center gap-10 text-cyan-400/10"
+                                        >
+                                            <p className="text-xs uppercase tracking-widest font-magic">Awaiting Selection</p>
+                                        </motion.div>
+                                        )}
+                                    </AnimatePresence>
+                                </div>
+
+                                {/* RIGHT COLUMN: DECKINFO MODULE */}
+                                <div className="hidden lg:flex flex-col lg:w-[320px] xl:w-[380px] bg-[#050505] border-l border-white/5 relative z-30 shadow-[-40px_0_100px_rgba(0,0,0,0.9)] overflow-y-auto no-scrollbar">
+                                  {/* Arcane Background Signature */}
+                                  <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
+                                    <Zap className="w-[80%] h-auto text-cyan-500 rotate-12" />
+                                  </div>
+
+                                  <div className="flex flex-col min-h-max relative z-10 font-sans h-full">
+                                    {/* MODULE HEADER */}
+                                    <div className="px-6 py-6 border-b border-white/5 bg-black/40 backdrop-blur-sm sticky top-0 z-20">
+                                      <div className="flex flex-col gap-1">
+                                         <div className="flex items-center justify-between">
+                                            <h3 className="text-[10px] font-magic font-black text-cyan-400 uppercase tracking-[0.4em]">Deckinfo</h3>
+                                            <div className="flex gap-1">
+                                               <div className="w-1 h-1 bg-cyan-500/40 rounded-full animate-pulse" />
+                                               <div className="w-1 h-1 bg-cyan-500/20 rounded-full" />
+                                            </div>
+                                         </div>
+                                         <p className="text-[11px] font-mono text-white/20 uppercase tracking-widest truncate">{viewingDeckName || 'No Manifest Selected'}</p>
+                                      </div>
+                                    </div>
+                                    {/* LOWER DATA: TELEMETRY & SYNERGY */}
+                                   <div className="flex-1 bg-black/60 border-t border-white/5 backdrop-blur-xl p-8 overflow-y-auto no-scrollbar font-sans">
+                                      <div className="space-y-10">
+                                         {/* MANA CURVE SECTION */}
+                                         <section>
+                                            <div className="flex items-center gap-3 mb-6">
+                                               <div className="w-1.5 h-1.5 bg-orange-500 rotate-45 shadow-[0_0_10px_rgba(249,115,22,0.4)]" />
+                                               <h4 className="text-[10px] font-magic font-black text-white/50 uppercase tracking-[0.3em]">Manabase Curve</h4>
+                                            </div>
+                                            <div className="h-40 w-full">
+                                               <ResponsiveContainer width="100%" height="100%">
+                                                  <BarChart data={
+                                                     (() => {
+                                                        const counts: Record<string, number> = {};
+                                                        for (let i = 0; i <= 7; i++) counts[i === 7 ? '7+' : i.toString()] = 0;
+                                                        viewingDeckCards.forEach(dc => {
+                                                           const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                                           const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                                           const tl = (card?.type_line || scryfall?.type_line || '').toLowerCase();
+                                                           if (tl.includes('land')) return;
+                                                           let cmc = Math.floor(card?.cmc || scryfall?.cmc || 0);
+                                                           const qty = dc.quantity || 1;
+                                                           if (cmc >= 7) counts['7+'] += qty;
+                                                           else counts[cmc.toString()] += qty;
+                                                        });
+                                                        return Object.entries(counts).map(([name, value]) => ({ name, value }));
+                                                     })()
+                                                  }>
+                                                     <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.03)" vertical={false} />
+                                                     <XAxis dataKey="name" stroke="rgba(255,255,255,0.2)" fontSize={9} axisLine={false} tickLine={false} />
+                                                     <YAxis hide />
+                                                     <Tooltip 
+                                                        contentStyle={{ backgroundColor: '#050505', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '8px', fontSize: '9px' }}
+                                                        itemStyle={{ color: '#06b6d4' }}
+                                                        cursor={{ fill: 'rgba(255,255,255,0.02)' }}
+                                                     />
+                                                     <Bar dataKey="value" fill="#06b6d4" radius={[2, 2, 0, 0]} />
+                                                  </BarChart>
+                                               </ResponsiveContainer>
+                                            </div>
+                                         </section>
+
+                                         {/* COLOR IDENTITY SECTION */}
+                                         <section>
+                                            <div className="flex items-center gap-3 mb-6">
+                                               <div className="w-1.5 h-1.5 bg-emerald-500 rotate-45 shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
+                                               <h4 className="text-[10px] font-magic font-black text-white/50 uppercase tracking-[0.3em]">Mana Alignment</h4>
+                                            </div>
+                                            <div className="flex items-center gap-10">
+                                               <div className="w-28 h-28">
+                                                  <ResponsiveContainer width="100%" height="100%">
+                                                     <PieChart>
+                                                        <Pie
+                                                           data={(() => {
+                                                              const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
+                                                              viewingDeckCards.forEach(dc => {
+                                                                 const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                                                 const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                                                 const tl = (card?.type_line || scryfall?.type_line || '').toLowerCase();
+                                                                 if (tl.includes('land')) return;
+                                                                 const colors = card?.colors || scryfall?.colors || card?.color_identity || scryfall?.color_identity || [];
+                                                                 const qty = dc.quantity || 1;
+                                                                 if (colors.length > 0) colors.forEach((c: string) => { if(counts[c] !== undefined) counts[c] += qty; });
+                                                                 else counts.C += qty;
+                                                              });
+                                                              return Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value }));
+                                                           })()}
+                                                           cx="50%"
+                                                           cy="50%"
+                                                           innerRadius={24}
+                                                           outerRadius={36}
+                                                           paddingAngle={4}
+                                                           dataKey="value"
+                                                        >
+                                                           {(() => {
+                                                              const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
+                                                              viewingDeckCards.forEach(dc => {
+                                                                 const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                                                 const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                                                 const tl = (card?.type_line || scryfall?.type_line || '').toLowerCase();
+                                                                 if (tl.includes('land')) return;
+                                                                 const colors = card?.colors || scryfall?.colors || card?.color_identity || scryfall?.color_identity || [];
+                                                                 const qty = dc.quantity || 1;
+                                                                 if (colors.length > 0) colors.forEach((c: string) => { if(counts[c] !== undefined) counts[c] += qty; });
+                                                                 else counts.C += qty;
+                                                              });
+                                                              const data = Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value }));
+                                                              const COLORS = { W: '#f0e6d2', U: '#00aeef', B: '#333333', R: '#ef5350', G: '#4caf50', C: '#9e9e9e' };
+                                                              return data.map(entry => <Cell key={entry.name} fill={COLORS[entry.name as keyof typeof COLORS]} />);
+                                                           })()}
+                                                        </Pie>
+                                                     </PieChart>
+                                                  </ResponsiveContainer>
+                                               </div>
+                                               <div className="flex-1 grid grid-cols-2 gap-y-2 gap-x-4">
+                                                  {(() => {
+                                                     let totalCmc = 0;
+                                                     let nonLandCount = 0;
+                                                     let landCount = 0;
+                                                     let artifactCount = 0;
+                                                     let creatureCount = 0;
+                                                     let spellCount = 0;
+                                                     let enchantmentCount = 0;
+
+                                                     viewingDeckCards.forEach(c => {
+                                                        const oracle = c.card?.oracleCard || c.card?.oracle_card || c.card;
+                                                        const scryfall = c.card?.scryfallData || c.card?.scryfall_data;
+                                                        const edition = c.card?.edition;
+                                                        const typeLine = (oracle?.type_line || scryfall?.type_line || edition?.type_line || c.card?.type_line || '').toLowerCase();
+                                                        const qty = c.quantity || 1;
+
+                                                        if (typeLine.includes('land')) {
+                                                          landCount += qty;
+                                                        } else {
+                                                          const cmc = oracle?.cmc || scryfall?.cmc || edition?.cmc || c.card?.cmc || 0;
+                                                          totalCmc += (cmc * qty);
+                                                          nonLandCount += qty;
+                                                        }
+
+                                                        if (typeLine.includes('artifact')) artifactCount += qty;
+                                                        if (typeLine.includes('creature')) creatureCount += qty;
+                                                        if (typeLine.includes('enchantment')) enchantmentCount += qty;
+                                                        if (typeLine.includes('instant') || typeLine.includes('sorcery')) spellCount += qty;
+                                                     });
+
+                                                     const avgCmc = nonLandCount > 0 ? (totalCmc / nonLandCount).toFixed(2) : "0.00";
+
+                                                     return [
+                                                        { label: 'Avg CMC', val: avgCmc, icon: Zap },
+                                                        { label: 'Spells', val: spellCount, icon: BookOpen },
+                                                        { label: 'Enchant', val: enchantmentCount, icon: Sparkles },
+                                                        { label: 'Creatures', val: creatureCount, icon: User },
+                                                        { label: 'Artifacts', val: artifactCount, icon: Hexagon },
+                                                        { label: 'Lands', val: landCount, icon: MapIcon }
+                                                     ].map(stat => (
+                                                        <div key={stat.label} className="bg-white/[0.02] border border-white/5 p-2 rounded-sm group hover:border-cyan-500/20 transition-colors">
+                                                           <p className="text-[7px] font-magic font-bold text-white/20 uppercase tracking-widest">{stat.label}</p>
+                                                           <div className="flex items-center gap-2 mt-1">
+                                                              <span className="text-xs font-mono font-bold text-cyan-400/80 group-hover:text-cyan-400">{stat.val}</span>
+                                                           </div>
+                                                        </div>
+                                                     ));
+                                                  })()}
+                                               </div>
+                                            </div>
+                                         </section>
+
+                                         {/* QUICK ACTIONS FOOTER */}
+                                         <div className="pt-6 border-t border-white/5 flex justify-between items-center opacity-40 hover:opacity-100 transition-opacity">
+                                            <span className="text-[8px] font-mono uppercase tracking-[0.4em] text-white/30">Sync Status: Optimised</span>
+                                            <button 
+                                               onClick={() => { setViewMode('stats'); setIsViewingDeck(false); }}
+                                               className="text-[9px] font-magic font-bold uppercase tracking-widest text-cyan-400/60 hover:text-cyan-400 transition-colors py-1 px-3 border border-cyan-500/20 rounded-full"
+                                            >
+                                               Full Analysis
+                                            </button>
+                                         </div>
+                                      </div>
+                                   </div>
+                                 </div>
+                              </div>
+                           </div>
+                 </motion.div>
             </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {hoveredPreviewCard && isViewingDeck && (
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 10 }}
+            transition={{ duration: 0.15 }}
+            className="lg:hidden fixed bottom-[8vh] left-1/2 -translate-x-1/2 z-[1200] w-[85vw] max-w-[320px] rounded-xl overflow-hidden shadow-[0_0_80px_rgba(6,182,212,0.6)] border-2 border-cyan-500/50 pointer-events-none"
+          >
+            <div className="relative w-full">
+              <img src={hoveredPreviewCard} className="w-full h-auto rounded-xl" alt="Preview" />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -2855,7 +3252,7 @@ Return ONLY JSON. No markdown backticks.`;
                       <LayoutDashboard className="w-5 h-5" />
                     </div>
                     <div>
-                      <p className="text-xs font-magic font-bold text-white uppercase tracking-wider mb-1">The Vault</p>
+                      <p className="text-xs font-magic font-bold text-white uppercase tracking-wider mb-1">The Library</p>
                       <p className="text-[10px] text-white/40 leading-relaxed font-sans">Connect your Archidekt or TappedOut decks via their ID or URL to access your collection instantly.</p>
                     </div>
                   </div>
@@ -3061,7 +3458,74 @@ Return ONLY JSON. No markdown backticks.`;
       {/* Roadmap Modal */}
       <AnimatePresence>
         {showRoadmap && (
-          <RoadmapModal isOpen={showRoadmap} onClose={() => setShowRoadmap(false)} />
+          <RoadmapModal 
+            isOpen={showRoadmap} 
+            onClose={() => setShowRoadmap(false)} 
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {tagToVerify && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[600] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="w-full max-w-md bg-[#0a0a0a] border border-emerald-500/30 rounded-3xl p-8 shadow-[0_0_50px_rgba(16,185,129,0.2)]"
+            >
+              <div className="flex items-center gap-4 mb-6">
+                <div className="p-3 bg-emerald-500/10 rounded-2xl border border-emerald-500/20">
+                  <Brain className="w-6 h-6 text-emerald-400" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-magic font-bold text-emerald-400 uppercase tracking-wider">Tag Verification</h3>
+                  <p className="text-[10px] font-mono text-emerald-500/50 uppercase tracking-[0.2em]">Semantic Analysis Active</p>
+                </div>
+              </div>
+
+              <div className="space-y-6">
+                <p className="text-gray-400 text-[13px] leading-relaxed">
+                  Your tag <span className="text-emerald-400 font-bold">"{tagToVerify.tag}"</span> 
+                  {tagToVerify.isAmbiguous 
+                    ? " seems ambiguous. It might be a name, a mechanic, or oracle text. Please clarify."
+                    : " yielded no precise matches in this Commander's color identity. Did you mean one of these?"}
+                </p>
+
+                <div className="space-y-2">
+                   {tagToVerify.suggestions.map((suggestion, idx) => (
+                     <button
+                       key={idx}
+                       onClick={() => finalizeTag(tagToVerify.deckId, tagToVerify.tag, suggestion)}
+                       className="w-full text-left p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-emerald-500/10 hover:border-emerald-500/40 transition-all group flex items-center justify-between"
+                     >
+                       <span className="text-white group-hover:text-emerald-400 transition-colors font-mono text-xs">{suggestion}</span>
+                       <span className="text-[10px] font-magic font-bold text-white/20 group-hover:text-emerald-500/40 uppercase tracking-widest">Apply</span>
+                     </button>
+                   ))}
+                </div>
+
+                <div className="pt-4 flex gap-4">
+                  <button
+                    onClick={() => finalizeTag(tagToVerify.deckId, tagToVerify.tag, tagToVerify.originalQuery)}
+                    className="flex-1 px-4 py-3 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-[10px] font-magic font-bold text-emerald-400 hover:bg-emerald-500/20 transition-all uppercase tracking-widest"
+                  >
+                    Keep Original ({tagToVerify.originalQuery})
+                  </button>
+                  <button
+                    onClick={() => setTagToVerify(null)}
+                    className="px-4 py-3 bg-white/5 border border-white/10 rounded-2xl text-[10px] font-magic font-bold text-white/40 hover:text-white transition-all uppercase tracking-widest"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -3115,7 +3579,6 @@ Return ONLY JSON. No markdown backticks.`;
           </motion.div>
         )}
       </AnimatePresence>
-
     </div>
   );
 }
@@ -3124,179 +3587,382 @@ Return ONLY JSON. No markdown backticks.`;
 function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
   const manualSections = [
     {
-      title: "The Bifrost Link",
-      subtitle: "Deck Import & Sync",
-      icon: <Database className="w-5 h-5" />,
-      content: "Input an Archidekt or TappedOut ID to bridge your digital collection. Use the 'Sync' rune in the sidebar to fetch real-time updates and inventory quantities.",
-      loc: "Sidebar Input",
-      features: ["Multi-Platform Sync", "Archive Refresh", "Inventory Loading"],
-      color: "text-green-400"
-    },
-    {
-      title: "Commander Scouting",
-      subtitle: "Set & Color Filter",
-      icon: <Compass className="w-5 h-5" />,
-      content: "The primary mission console. Filter the multiverse by specific Sets (like OTJ) or Color Identity to find cards that fit your deck's spiritual criteria.",
-      loc: "Main Control Bar",
-      features: ["Expansion Scouting", "Color Logic", "Synergy Match"],
-      color: "text-cyan-400"
-    },
-    {
-      title: "The Rune-Scribe",
-      subtitle: "Suggest Tags Button",
-      icon: <Sparkles className="w-5 h-5" />,
-      content: "Summon the Archives' intelligence. This rune analyzes your Commander and suggests specific internal tags, explaining exactly 'why' a card synergizes with your deck.",
-      loc: "Card Detail View",
-      features: ["AI Explainer", "Strategic Tagging", "Automatic Analysis"],
-      color: "text-orange-400"
-    },
-    {
-      title: "Temporal Archive",
-      subtitle: "Calendar Sorting",
-      icon: <Calendar className="w-5 h-5" />,
-      content: "Navigate through time! Use the Calendar rune to filter cards by their release era, allowing you to focus on specific blocks of Magic's history.",
-      loc: "Filter Toolbar",
-      features: ["Era Navigation", "Set History", "Chronological Sort"],
-      color: "text-blue-400"
-    },
-    {
-      title: "The High Judge",
-      subtitle: "Ruxa's Bear Court",
-      icon: <Gavel className="w-5 h-5" />,
-      content: "Consult the Bear Seer for complex rules. Ruxa uses AI to provide brief, wise rulings on card interactions specifically between your cards.",
-      loc: "Floating Beacon",
-      features: ["Rule Interpretation", "Brief Wisdom", "Deck Context Awareness"],
-      color: "text-amber-400"
-    },
-    {
-      title: "The Sheriff's Mark",
-      subtitle: "Thunder Junction Protocol",
-      icon: <Shield className="w-5 h-5" />,
-      content: "A specialized protocol for 'Outlaws' and 'Wanted' cards. This system identifies high-priority targets and specific set-mechanics for your raiding party.",
-      loc: "Special Grid Overlay",
-      features: ["Outlaw Identification", "Set-Specific Logic", "Meta Tracking"],
-      color: "text-red-400"
-    },
-    {
-      title: "MOB Radio",
-      subtitle: "Vault Resonance",
-      icon: <Radio className="w-5 h-5" />,
-      content: "The rhythm of the multiverse. Tune into the 'Magic Over Bitches' archives via Spotify to fuel your deckbuilding rituals with high-energy resonance.",
-      loc: "Fun Area Control",
-      features: ["Spotify Integration", "Custom OST", "Background Resonance"],
-      color: "text-purple-400"
-    },
-    {
-      title: "Rune-Tech Manual V2.5.0",
-      subtitle: "The Future Unfolded",
-      icon: <Zap className="w-5 h-5" />,
-      content: "Version 2.5.0 introduces 'Future Sight'. We've removed strict format legality checks to ensure pre-release and future sets are visible during deckbuilding, while maintaining absolute Color Identity integrity.",
-      loc: "System Core",
-      features: ["Future Set Visibility", "CI-Strict Protocol", "Legacy & Future Harmony"],
-      color: "text-yellow-400"
+      group: "VAULT ACCESS",
+      nodes: [
+        { term: "LIBRARY BRIDGE", flow: "Import Deck", desc: "Input your Archidekt ID into the scryer to synchronize your magical manifests with the Library." },
+        { term: "RUNE SEARCH", flow: "Filter Engine", desc: "Execute deep searches across the multiverse using keywords and color identity alignments." },
+        { term: "SET CHRONICLE", flow: "Temporal Sweep", desc: "Browse expansion collections in their original temporal order, from ancient relics to new spells." }
+      ]
+    }, {
+      group: "LIBRARY CONTROL",
+      nodes: [
+        { term: "MANIFEST DEPOT", flow: "Manage Decks", desc: "The repository of your saved manifests. Toggle between 'CARDS' for raw data and 'STATS' for analysis." },
+        { term: "RITUAL HUD", flow: "Deck Briefing", desc: "Immediate oversight of your manifest metadata, including costs and tactical tag distribution." },
+        { term: "MOB RHYTHM", flow: "Audio Stream", desc: "Sync your building focus with multiversal frequency bands via the integrated Spotify node." }
+      ]
+    }, {
+      group: "TACTICAL SIGHT",
+      nodes: [
+        { term: "OPTIC LENS", flow: "Inspect Card", desc: "Engage high-fidelity magnification by hovering over manifest labels for deep visual extraction." },
+        { term: "HIGH JUDGE", flow: "Rules Terminal", desc: "Magic interaction node. Consult the elder terminal to verify complex ritual mechanics." }
+      ]
+    }, {
+      group: "REVISION HISTORY",
+      nodes: [
+        { term: "V2.6.5 UPDATES", flow: "Status: Live", desc: "Hardened Mana Symbol protocols. Removed terminology redundancy. Perfectly centered Optic Relay optics." },
+        { term: "OPTIC UPGRADE", flow: "Optic v2", desc: "Maximized card preview focus. Refined padding for uniform inspection across all resolutions." }
+      ]
     }
   ];
 
   return (
-    <motion.div 
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      exit={{ opacity: 0 }}
-      className="fixed inset-0 z-[500] flex items-center justify-center p-4 bg-[#030704]/96 backdrop-blur-3xl"
-    >
-      <motion.div 
-        initial={{ scale: 0.9, y: 30, rotateX: 10 }}
-        animate={{ scale: 1, y: 0, rotateX: 0 }}
-        className="w-full max-w-6xl bg-[#08110a] border border-green-500/20 rounded-[3.5rem] overflow-hidden shadow-[0_0_100px_rgba(34,197,94,0.2)] relative"
-      >
-        {/* Decorative Runes */}
-        <div className="absolute inset-0 opacity-5 pointer-events-none overflow-hidden select-none flex flex-wrap justify-around items-center p-12 font-magic text-[12rem] text-green-500">
-          ᚠᚢᚦᚨᚱᚲᚷᚹᚺᚾᛁᛃᛇᛈᛉᛊᛏᛒᛖᛗᛚᛜᛞᛟ
-        </div>
-        
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4/5 h-[2px] bg-gradient-to-r from-transparent via-green-400 to-transparent shadow-[0_0_20px_rgba(74,222,128,0.4)]" />
-        
-        <div className="relative p-10 lg:p-14 flex flex-col h-[92vh] lg:h-auto max-h-[94vh]">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-12">
-            <div className="flex items-center gap-8">
-              <div className="w-20 h-20 rounded-[2rem] bg-green-500/10 border border-green-500/20 flex items-center justify-center shadow-[0_0_40px_rgba(34,197,94,0.3)] relative group overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-br from-green-500/20 to-transparent animate-pulse" />
-                <BookOpen className="w-10 h-10 text-green-400 relative z-10" />
-              </div>
-              <div>
-                <h2 className="text-4xl font-magic font-black uppercase tracking-[0.25em] text-green-400">Rune-Tech Manual</h2>
-                <div className="text-[12px] font-mono text-green-500/40 uppercase tracking-[0.5em] flex items-center gap-3">
-                  <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_8px_green]" />
-                  Deck Companion v2.4 // Complete Feature Manifest
+    <AnimatePresence>
+      {isOpen && (
+        <motion.div 
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-[600] flex items-center justify-center p-4 lg:p-10 bg-black/98 backdrop-blur-3xl"
+        >
+          {/* Wireframe Grid */}
+          <div className="absolute inset-0 opacity-[0.05] pointer-events-none" 
+               style={{ backgroundImage: 'linear-gradient(rgba(34,197,94,0.2) 1px, transparent 1px), linear-gradient(90deg, rgba(34,197,94,0.2) 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
+          
+          {/* Large Background Runes */}
+          <div className="absolute inset-0 flex items-center justify-between px-10 opacity-[0.08] pointer-events-none select-none font-magic text-[40rem] text-green-500/40 overflow-hidden mix-blend-screen">
+            <span className="blur-sm">ᚠ</span>
+            <span className="blur-sm">ᛉ</span>
+          </div>
+
+          <motion.div 
+            initial={{ scale: 0.98, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.98, opacity: 0 }}
+            className="w-full max-w-7xl bg-[#030704] border border-green-500/30 rounded-lg overflow-hidden shadow-[0_0_120px_rgba(34,197,94,0.15)] relative flex flex-col max-h-[92vh]"
+          >
+            {/* Header: Tech Bar */}
+            <div className="p-8 border-b border-green-500/20 flex items-center justify-between bg-white/[0.01]">
+               <div className="flex items-center gap-12">
+                  <div className="w-16 h-16 border border-green-500/30 bg-green-500/5 flex items-center justify-center relative">
+                     <div className="absolute inset-[-1px] border border-green-500 animate-pulse opacity-20" />
+                     <Compass className="w-8 h-8 text-green-500" />
+                  </div>
+                  <div>
+                     <h2 className="text-2xl font-magic font-black text-green-400 uppercase tracking-[0.5em] leading-none mb-3">Rune Deck Manual // v2.6.5</h2>
+                     <div className="flex items-center gap-4">
+                        <div className="w-2 h-2 bg-amber-500 shadow-[0_0_10px_orange]" />
+                        <p className="text-[10px] font-mono text-cyan-500/40 uppercase tracking-[0.8em]">Library_Active // Rune-Tech_Active</p>
+                     </div>
+                  </div>
+               </div>
+               <button 
+                  onClick={onClose}
+                  className="px-8 py-3 border border-white/10 rounded group hover:border-cyan-500/40 hover:text-cyan-400 transition-all font-mono text-[11px] text-white/20 uppercase tracking-[0.3em]"
+               >
+                  Close Manual <X className="w-4 h-4 inline-block ml-3 group-hover:rotate-90 transition-transform" />
+               </button>
+            </div>
+
+            {/* Sitemap Grid */}
+            <div className="flex-1 overflow-y-auto no-scrollbar p-12 lg:p-16">
+               <div className="grid grid-cols-1 lg:grid-cols-4 gap-12">
+                  {manualSections.map((section, idx) => (
+                    <div key={idx} className="space-y-12">
+                       <div className="flex items-center gap-4">
+                          <h3 className={`text-sm font-magic font-black uppercase tracking-[0.4em] ${idx === 3 ? 'text-amber-400' : 'text-green-400'}`}>{section.group}</h3>
+                          <div className={`flex-1 h-px ${idx === 3 ? 'bg-amber-500/10' : 'bg-green-500/10'}`} />
+                       </div>
+
+                       <div className="space-y-10">
+                          {section.nodes.map((node, nIdx) => (
+                            <motion.div 
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: (idx * 0.1) + (nIdx * 0.05) }}
+                              key={nIdx}
+                              className="relative pl-10 border-l border-white/5 group"
+                            >
+                               <div className="absolute left-[-1px] top-3 w-[3px] h-6 bg-green-500/0 group-hover:bg-green-500 transition-all" />
+                               <div className="absolute left-[-4px] top-[14px] w-2 h-2 bg-black border border-white/20 rotate-45 group-hover:border-green-500 group-hover:bg-green-500/20 transition-all" />
+
+                               <div className="space-y-4">
+                                  <div className="flex items-center justify-between">
+                                     <span className={`text-[13px] font-magic font-black uppercase tracking-widest transition-colors ${idx === 3 ? 'text-amber-400/80 group-hover:text-amber-300' : 'text-white/80 group-hover:text-green-400'}`}>
+                                        {node.term}
+                                     </span>
+                                     <span className={`text-[9px] font-mono font-bold uppercase tracking-wider ${idx === 3 ? 'text-amber-500/30' : 'text-green-500/30'}`}>{node.flow}</span>
+                                  </div>
+                                  <p className="text-[12px] text-white/30 leading-relaxed font-sans font-light group-hover:text-white/60 transition-colors">
+                                     {node.desc}
+                                  </p>
+                               </div>
+                            </motion.div>
+                          ))}
+                       </div>
+                    </div>
+                  ))}
+               </div>
+
+               {/* System Logic Banner */}
+               <div className="mt-24 p-12 border border-green-500/10 bg-white/[0.01] flex flex-col md:flex-row items-center justify-between gap-12 relative overflow-hidden">
+                  <div className="absolute inset-0 bg-gradient-to-r from-green-500/[0.02] to-transparent pointer-events-none" />
+                  <div className="flex items-center gap-10 relative z-10">
+                    <Zap className="w-12 h-12 text-green-500 animate-pulse shadow-[0_0_30px_rgba(34,197,94,0.2)]" />
+                    <div>
+                      <h4 className="text-xs font-magic font-black text-green-400 uppercase tracking-[0.4em] mb-3">Manifest Integrity Protocol</h4>
+                      <div className="flex items-center gap-6 text-[10px] font-mono text-white/20 uppercase tracking-[0.5em]">
+                         <span>Discovery</span>
+                         <div className="w-8 h-px bg-white/5" />
+                         <span>Library</span>
+                         <div className="w-8 h-px bg-white/5" />
+                         <span>Execution</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex gap-6 relative z-10">
+                     {["ᚠ","ᚢ","ᚦ","ᚨ","ᚱ"].map(r => (
+                        <div key={r} className="w-12 h-12 border border-white/5 flex items-center justify-center font-magic text-green-500/10 text-2xl hover:text-green-500/40 hover:border-green-500/20 transition-all cursor-default">{r}</div>
+                     ))}
+                  </div>
                 </div>
-              </div>
             </div>
-            <button 
-              onClick={onClose}
-              className="p-5 rounded-2xl bg-white/[0.02] border border-white/10 hover:border-red-500/50 hover:bg-red-500/10 hover:text-red-400 transition-all group shadow-2xl relative overflow-hidden"
-            >
-              <div className="absolute inset-0 bg-red-500/5 opacity-0 group-hover:opacity-100 transition-opacity" />
-              <X className="w-8 h-8 relative z-10" />
-            </button>
-          </div>
 
-          <div className="flex-1 overflow-y-auto pr-8 custom-scrollbar">
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 pb-12">
-              {manualSections.map((item, i) => (
-                <motion.div 
-                  initial={{ opacity: 0, y: 30 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.05 }}
-                  key={i} 
-                  className="p-8 rounded-[3rem] bg-white/[0.02] border border-white/[0.04] hover:border-green-400/30 hover:bg-green-400/[0.02] transition-all group relative overflow-hidden shadow-sm"
+            {/* Footer Bottom Bar */}
+            <div className="px-10 py-6 border-t border-white/5 bg-black/80 flex items-center justify-between">
+               <div className="flex items-center gap-8">
+                  <span className="text-[10px] font-mono text-white/10 uppercase tracking-[0.8em]">MOB Library Command Centre</span>
+               </div>
+               <div className="flex items-center gap-6">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                    <span className="text-[10px] font-magic text-green-500/40 uppercase tracking-widest">Library Secured</span>
+                  </div>
+               </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// --- DECK ANALYSIS COMPONENT ---
+function DeckAnalysis({ cards }: { cards: any[] }) {
+  const manaCurve = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (let i = 0; i <= 7; i++) counts[i === 7 ? '7+' : i.toString()] = 0;
+    
+    cards.forEach(dc => {
+      const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+      const typeLine = (card?.type_line || '').toLowerCase();
+      if (typeLine.includes('land')) return;
+      let cmc = Math.floor(card?.cmc || 0);
+      if (cmc >= 7) counts['7+']++;
+      else counts[cmc.toString()]++;
+    });
+    
+    return Object.entries(counts).map(([name, value]) => ({ name, value }));
+  }, [cards]);
+
+  const colorData = useMemo(() => {
+    // Defensive counting to ensure accurate visualization
+    const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
+    cards.forEach(dc => {
+      const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+      if (!card) return;
+      
+      const typeLine = (card.type_line || '').toLowerCase();
+      if (typeLine.includes('land')) return; 
+
+      // Try colors first, then color_identity
+      const colors = card.colors || card.color_identity || [];
+      
+      if (colors.length > 0) {
+        colors.forEach((c: string) => {
+          if (counts[c] !== undefined) counts[c]++;
+        });
+      } else {
+        counts.C++; 
+      }
+    });
+
+    return Object.entries(counts)
+      .filter(([_, count]) => count > 0)
+      .map(([name, value]) => ({ name, value }));
+  }, [cards]);
+
+  const typeData = useMemo(() => {
+    const counts: Record<string, number> = { 
+      Creatures: 0, 
+      Instants: 0, 
+      Sorceries: 0, 
+      Artifacts: 0, 
+      Enchantments: 0, 
+      Lands: 0, 
+      Planeswalkers: 0,
+      Other: 0
+    };
+    
+    cards.forEach(dc => {
+      const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+      const tl = (card?.type_line || '').toLowerCase();
+      if (tl.includes('creature')) counts.Creatures++;
+      else if (tl.includes('instant')) counts.Instants++;
+      else if (tl.includes('sorcery')) counts.Sorceries++;
+      else if (tl.includes('artifact')) counts.Artifacts++;
+      else if (tl.includes('enchantment')) counts.Enchantments++;
+      else if (tl.includes('land')) counts.Lands++;
+      else if (tl.includes('planeswalker')) counts.Planeswalkers++;
+      else counts.Other++;
+    });
+    
+    return Object.entries(counts)
+      .filter(([_, v]) => v > 0)
+      .map(([name, value]) => ({ name, value }));
+  }, [cards]);
+
+  const stats = useMemo(() => {
+    let lands = 0;
+    let creatures = 0;
+    let totalCmc = 0;
+    let nonLands = 0;
+    let total = 0;
+    
+    cards.forEach(dc => {
+       const qty = dc.quantity || 1;
+       total += qty;
+       const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+       const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+       const tl = (oracle?.type_line || scryfall?.type_line || dc.card?.type_line || '').toLowerCase();
+       
+       if (tl.includes('land')) {
+          lands += qty;
+       } else {
+          const cmc = oracle?.cmc || scryfall?.cmc || dc.card?.cmc || 0;
+          totalCmc += (cmc * qty);
+          nonLands += qty;
+       }
+       if (tl.includes('creature')) creatures += qty;
+    });
+    
+    const avgCmc = nonLands > 0 ? (totalCmc / nonLands) : 0;
+    
+    // Synergies summary
+    const categories: string[] = [];
+    cards.forEach(dc => {
+      const qty = dc.quantity || 1;
+      const cats = dc.categories || [];
+      for (let i = 0; i < qty; i++) categories.push(...cats);
+    });
+    const topCategories = [...new Set(categories)].map(cat => ({
+      name: cat,
+      count: categories.filter(c => c === cat).length
+    })).sort((a, b) => b.count - a.count).slice(0, 3);
+
+    return { total, lands, creatures, avgCmc, topCategories };
+  }, [cards]);
+
+  const COLORS_RECHART = {
+    W: '#f8f6d3',
+    U: '#0e68ab',
+    B: '#1a1a1a',
+    R: '#d3202a',
+    G: '#00733e',
+    C: '#90adbb'
+  };
+
+  const TYPE_COLORS = ['#22d3ee', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#6366f1', '#ec4899'];
+
+  return (
+    <div className="space-y-8 max-w-7xl mx-auto relative z-10 w-full mb-32">
+      <div className="absolute inset-0 opacity-[0.06] pointer-events-none flex items-center justify-center mix-blend-screen bg-center bg-cover bg-no-repeat rounded-[3rem]" style={{ backgroundImage: `url(${runesBackground})` }} />
+      {/* Tactical Briefing */}
+      <div className="rune-panel bg-green-500/5 border border-green-500/10 rounded-3xl p-8 relative z-20 overflow-hidden shadow-[0_0_30px_rgba(16,185,129,0.1)]">
+         <h4 className="text-[12px] font-magic font-black text-green-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+            <Radio className="w-4 h-4" />
+            Tactical Briefing
+         </h4>
+         <div className="space-y-3">
+            <p className="text-[11px] text-white/70 leading-relaxed">
+               Manifest consists of <span className="text-white font-bold">{stats.total} entries</span>. 
+               The energy core maintains an average of <span className="text-green-400 font-bold">{stats.avgCmc.toFixed(2)} CMC</span>.
+            </p>
+            <p className="text-[11px] text-white/50 leading-relaxed">
+               Primary strategic anchors detected: {stats.topCategories.map(c => <span key={c.name} className="text-white/80 font-mono px-1.5 py-0.5 bg-white/5 rounded border border-white/5 mx-0.5">{c.name}</span>)}
+            </p>
+         </div>
+      </div>
+
+      <div className="bg-white/[0.03] border border-white/5 rounded-3xl p-6">
+        <h3 className="text-xs font-magic font-bold text-cyan-400 uppercase tracking-widest mb-6 flex items-center gap-2">
+          <Layers className="w-4 h-4" />
+          Mana Curve
+        </h3>
+        <div className="h-40 w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={manaCurve}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+              <XAxis dataKey="name" stroke="rgba(255,255,255,0.3)" fontSize={10} axisLine={false} tickLine={false} />
+              <YAxis hide />
+              <Tooltip 
+                contentStyle={{ backgroundColor: '#0c0c0c', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '12px' }}
+                itemStyle={{ fontSize: '10px', color: '#22d3ee' }}
+                cursor={{ fill: 'rgba(34,211,238,0.05)' }}
+              />
+              <Bar dataKey="value" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-4">
+          <h3 className="text-[8px] font-magic font-bold text-cyan-400 uppercase tracking-widest mb-4">Color Weight</h3>
+          <div className="h-28 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={colorData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={20}
+                  outerRadius={35}
+                  paddingAngle={5}
+                  dataKey="value"
                 >
-                  <div className="absolute top-4 right-8 font-mono text-[8px] text-white/10 group-hover:text-green-500/20 transition-colors uppercase tracking-widest whitespace-nowrap">
-                    LOC: {item.loc}
-                  </div>
-                  <div className={`w-14 h-14 rounded-2xl bg-current/10 flex items-center justify-center mb-8 shadow-inner ${item.color} group-hover:scale-110 transition-transform`}>
-                    {item.icon}
-                  </div>
-                  <div className="mb-6">
-                    <h3 className={`text-xl font-bold uppercase tracking-wider ${item.color} mb-1`}>
-                      {item.title}
-                    </h3>
-                    <p className="text-[10px] font-mono opacity-50 uppercase tracking-[0.3em] font-bold">{item.subtitle}</p>
-                  </div>
-                  <p className="text-sm text-green-100/70 leading-relaxed font-sans mb-8">
-                    {item.content}
-                  </p>
-                  <div className="flex flex-wrap gap-2.5">
-                    {item.features.map((f, j) => (
-                      <span key={j} className="text-[9px] font-mono bg-white/[0.06] border border-white/[0.1] px-3 py-1.5 rounded-lg text-white/50 uppercase tracking-widest group-hover:text-green-400 transition-colors">
-                        {f}
-                      </span>
-                    ))}
-                  </div>
-                </motion.div>
-              ))}
-            </div>
-
-            {/* Support Message */}
-            <div className="flex flex-col items-center py-12 border-t border-green-500/10">
-              <div className="flex gap-8 mb-10 opacity-30">
-                {['ᚠ','ᚢ','ᚦ','ᚨ','ᚱ','ᚲ','ᚷ','ᚹ','ᚺ','ᚾ','ᛁ'].map(r => (
-                  <span key={r} className="text-3xl font-magic text-green-400 hover:text-green-300 hover:scale-125 transition-all cursor-default">{r}</span>
-                ))}
-              </div>
-              <div className="text-center max-w-lg">
-                <p className="text-sm font-magic text-green-400/60 uppercase tracking-[0.4em] mb-4">
-                  Identify the runes. Upgrade the deck. Conquer the table.
-                </p>
-                <p className="text-[10px] font-mono text-green-500/20 uppercase tracking-[0.8em]">
-                  Skål, Seeker of the Archives.
-                </p>
-              </div>
-            </div>
+                  {colorData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS_RECHART[entry.name as keyof typeof COLORS_RECHART] || '#8884d8'} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
           </div>
         </div>
-      </motion.div>
-    </motion.div>
+
+        <div className="bg-white/[0.03] border border-white/5 rounded-2xl p-4">
+          <h3 className="text-[8px] font-magic font-bold text-cyan-400 uppercase tracking-widest mb-4">Type Logistics</h3>
+          <div className="h-28 w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={typeData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={20}
+                  outerRadius={35}
+                  paddingAngle={2}
+                  dataKey="value"
+                >
+                  {typeData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={TYPE_COLORS[index % TYPE_COLORS.length]} />
+                  ))}
+                </Pie>
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3362,7 +4028,7 @@ function AdminChamber({
 
   const deleteUserDeck = async (deckId: string) => {
      if (!selectedUser) return;
-     if (!window.confirm("Are you sure you want to purge this record from the Archives?")) return;
+     if (!window.confirm("Are you sure you want to purge this record from The Library?")) return;
      setLocalLoading(true);
      try {
        await deleteDoc(doc(db, 'users', selectedUser.id, 'decks', deckId));
@@ -3400,8 +4066,8 @@ function AdminChamber({
             <Shield className="w-6 h-6 text-emerald-400" />
           </div>
           <div>
-            <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-emerald-400">Admin Archive</h2>
-            <p className="text-[10px] uppercase tracking-widest opacity-40 font-bold">Seeker Oversight Protocol</p>
+            <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-cyan-400">Admin Library</h2>
+            <p className="text-[10px] uppercase tracking-widest opacity-40 font-bold">Seeker Oversight Active</p>
           </div>
         </div>
         <button onClick={onClose} className="p-3 hover:bg-emerald-500/10 rounded-2xl transition-all border border-transparent hover:border-emerald-500/20 group">
@@ -3440,7 +4106,7 @@ function AdminChamber({
             <div className="max-w-5xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
                <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-emerald-500/10 pb-8">
                   <div>
-                    <h1 className="text-4xl font-magic font-black text-white mb-2 uppercase tracking-tighter">{selectedUser.displayName}</h1>
+                    <h2 className="text-xl font-magic font-extrabold text-white mb-2 uppercase tracking-tighter">{selectedUser.displayName}</h2>
                     <div className="flex items-center gap-2">
                       <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded-md border border-emerald-500/20 font-mono tracking-widest">{selectedUser.id}</span>
                       <span className="text-[9px] text-white/30 font-bold uppercase tracking-widest ml-2">{selectedUser.email}</span>
@@ -3452,7 +4118,7 @@ function AdminChamber({
                        <span className="text-3xl font-magic font-black text-emerald-400">{userDecks.length}</span>
                      </div>
                      <div className="flex flex-col items-center md:items-end">
-                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Selected Cardboard</span>
+                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Selection Count</span>
                        <span className="text-3xl font-magic font-black text-emerald-400">{userDeckbox.length}</span>
                      </div>
                   </div>
@@ -3462,7 +4128,7 @@ function AdminChamber({
                <section>
                  <div className="flex items-center justify-between mb-6">
                     <h3 className="text-sm font-magic font-black text-emerald-400 uppercase tracking-[0.3em] flex items-center gap-3">
-                      <LayoutDashboard className="w-4 h-4" /> User Deck Archives
+                      <LayoutDashboard className="w-4 h-4" /> User Deck Library
                     </h3>
                  </div>
                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3590,7 +4256,7 @@ function AdminChamber({
                   <div className="absolute inset-0 bg-emerald-500/10 blur-[60px] animate-pulse rounded-full" />
                   <Database className="w-32 h-32 relative text-emerald-500/20 animate-bounce transition-all duration-1000" />
                </div>
-               <p className="font-magic font-black uppercase tracking-[0.6em] text-2xl text-emerald-100/30">Archive Repository</p>
+               <p className="font-magic font-black uppercase tracking-[0.6em] text-2xl text-emerald-100/30">Library Repository</p>
                <p className="text-[10px] mt-4 font-black uppercase tracking-[0.2em] text-emerald-500/40 border border-emerald-500/10 px-6 py-2 rounded-full">Select a Seeker to commence inspection</p>
             </div>
           )}
@@ -3860,7 +4526,7 @@ function JudgeView() {
             </div>
             <div>
               <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-green-400">Ruxa's Court</h2>
-              <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">Bear Judge Protocol</p>
+              <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">Bear Judge Oversight</p>
             </div>
           </div>
           <div className="flex items-center gap-2 px-3 py-1 bg-green-500/5 rounded-full border border-green-500/10">
@@ -4405,7 +5071,7 @@ function OutlawSheriff() {
               <span className="text-4xl font-magic">Ж</span>
             </div>
             <h2 className="text-5xl font-magic font-black text-white uppercase tracking-[0.3em] mb-2 drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]">Outlaw Sheriff</h2>
-            <p className="text-xs text-white/50 font-mono tracking-[0.5em] uppercase mb-8">Protocol Alpha-02: Social Subversion</p>
+            <p className="text-xs text-white/50 font-mono tracking-[0.5em] uppercase mb-8">Ethereal-02: Social Subversion</p>
             <div className="max-w-2xl mx-auto rune-panel p-6 rounded-3xl bg-cyan-950/20 border-cyan-500/20">
               <p className="text-sm text-cyan-100/80 font-sans leading-relaxed">
                 Sheriff is a social Commander variant where players receive secret roles with different objectives. In addition to normal Magic play, it involves bluffing, cooperation, and betrayal.
@@ -4480,7 +5146,7 @@ function OutlawSheriff() {
 
           {/* Roles & Objectives */}
           <div className="space-y-8 relative">
-            <h3 className="text-3xl font-magic font-black text-center text-white uppercase tracking-[0.4em]">Roles & Matrix</h3>
+            <h3 className="text-3xl font-magic font-black text-center text-white uppercase tracking-[0.4em]">Roles & Alliances</h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               {[
@@ -4541,7 +5207,7 @@ function OutlawSheriff() {
 
           {/* Player Count Distribution */}
           <div className="rune-panel p-8 rounded-[2.5rem] bg-black/60 border border-white/5 relative">
-            <h3 className="text-lg font-magic font-bold text-white/80 uppercase tracking-[0.3em] text-center mb-8">Infiltration Matrix</h3>
+            <h3 className="text-lg font-magic font-bold text-white/80 uppercase tracking-[0.3em] text-center mb-8">Infiltration Overview</h3>
             
             <div className="grid grid-cols-5 gap-4 mb-6 text-center">
               {[

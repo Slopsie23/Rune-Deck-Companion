@@ -1,0 +1,17 @@
+3039-                                                        const counts: Record<string, number> = {};
+3040-                                                        for (let i = 0; i <= 7; i++) counts[i === 7 ? '7+' : i.toString()] = 0;
+3041:                                                        viewingDeckCards.forEach(dc => {
+3042-                                                           const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+3043-                                                           if (!card || (card.type_line || '').toLowerCase().includes('land')) return;
+3044-                                                           let cmc = Math.floor(card?.cmc || 0);
+3045-                                                           const qty = dc.quantity || 1;
+3046-                                                           if (cmc >= 7) counts['7+'] += qty;
+--
+3077-                                                           data={(() => {
+3078-                                                              const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
+3079:                                                              viewingDeckCards.forEach(dc => {
+3080-                                                                 const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+3081-                                                                 if (!card || (card.type_line || '').toLowerCase().includes('land')) return;
+3082-                                                                 const colors = card.colors || card.color_identity || [];
+3083-                                                                 const qty = dc.quantity || 1;
+3084-                                                                 if (colors.length > 0) colors.forEach((c: string) => { if(counts[c] !== undefined) counts[c] += qty; });

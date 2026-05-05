@@ -1,0 +1,7 @@
+3134-                 </motion.div>
+3135-            </motion.div>
+3136-        )}
+3137-      </AnimatePresence>
+3138-
+3139-      <AnimatePresence>
+3140:        {hoveredPreviewCard && isViewingDeck && (
