@@ -9,16 +9,23 @@ import {
   Search, 
   Plus, 
   Trash2, 
+  Minus,
   Copy, 
   RotateCw, 
   PawPrint, 
   Wand2,
+  Play,
+  Pause,
+  Volume2,
+  VolumeX,
   LayoutDashboard,
   ExternalLink,
   ChevronRight,
   ChevronLeft,
   X,
   PlusCircle,
+  SkipBack,
+  SkipForward,
   Hash,
   Filter,
   Package,
@@ -30,6 +37,8 @@ import {
   Menu,
   Settings,
   Library,
+  ArrowLeft,
+  Music,
   Database,
   Layers,
   Moon,
@@ -56,7 +65,8 @@ import {
   Radio,
   Settings2,
   Brain,
-  Play
+  PieChart as PieChartIcon,
+  Maximize2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
@@ -73,7 +83,8 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import runesBackground from './assets/images/runes_background_1777929551380.png';
+// import runesBackground from './assets/images/runes_background_1777929551380.png';
+const runesBackground = "/runebg.png";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
@@ -84,6 +95,7 @@ async function fetchScryfallSets() {
 }
 
 const logo = "/runebear.png?v=" + new Date().getTime();
+const logoUrl = "/runebg.png";
 
 import { 
   ORANGE_ACCENT, 
@@ -142,6 +154,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminChamber, setShowAdminChamber] = useState(false);
   const [showRoadmap, setShowRoadmap] = useState(false);
+
   const [tagToVerify, setTagToVerify] = useState<{
     deckId: string;
     tag: string;
@@ -168,7 +181,7 @@ export default function App() {
     checkConnection();
   }, []);
 
-  const saveUserSettings = async (updates: { userTitle?: string, cardsPerRow?: number }) => {
+  const saveUserSettings = async (updates: { userTitle?: string, cardsPerRow?: number, userName?: string }) => {
     if (!user) return;
     try {
       await setDoc(doc(db, 'users', user.uid), {
@@ -177,6 +190,7 @@ export default function App() {
       }, { merge: true });
       if (updates.userTitle !== undefined) setUserTitle(updates.userTitle);
       if (updates.cardsPerRow !== undefined) setCardsPerRow(updates.cardsPerRow);
+      if (updates.userName !== undefined) setUserName(updates.userName);
       showMessage("Settings updated", "success");
     } catch (err) {
       console.error("Failed to save settings", err);
@@ -222,7 +236,83 @@ export default function App() {
 
   const [authLoading, setAuthLoading] = useState(true);
 
+  // Music State
+  const MUSIC_VIBES = [
+    { 
+      id: 'building', 
+      name: 'Workshop Focus', 
+      spotifyId: '37i9dQZF1DWWQRwui0Ex7v', // Lofi Beats
+      desc: 'Focused lo-fi frequencies for master architects',
+      rune: 'ᚠ'
+    },
+    { 
+      id: 'drafting', 
+      name: 'Drafting Currents', 
+      spotifyId: '37i9dQZF1DX8UebIWGreaterFocus', // Chill Lofi Study
+      desc: 'High-stakes selection and ritual analysis',
+      rune: 'ᚢ'
+    },
+    { 
+      id: 'commander', 
+      name: 'Epic Commander', 
+      spotifyId: '37i9dQZF1DX2ue96bZArpT', // Ambient Fantasy
+      desc: 'Atmospheric themes for the ultimate table',
+      rune: 'ᚦ'
+    },
+    { 
+      id: 'arcane', 
+      name: 'Arcane Wisdom', 
+      spotifyId: '37i9dQZF1DX4sWsp6KmOws', // Deep Focus
+      desc: 'Deep ethereal mana resonance',
+      rune: 'ᚨ'
+    }
+  ];
+
+  const [activeVibe, setActiveVibe] = useState(0);
+  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
+  const [musicVolume, setMusicVolume] = useState(0.5);
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const toggleGlobalMusic = () => {
+    setIsMusicPlaying(!isMusicPlaying);
+  };
+
+  const handleVibeChange = (index: number) => {
+    if (index === activeVibe) return;
+    setIsConnecting(true);
+    setActiveVibe(index);
+    setTimeout(() => setIsConnecting(false), 800);
+  };
+
   const [allCards, setAllCards] = useState<Card[]>([]);
+  const [isBearSearch, setIsBearSearch] = useState(false);
+
+  const searchSummary = useMemo(() => {
+    if (allCards.length === 0 || !isBearSearch) return null;
+    
+    const colors: Record<string, number> = {};
+    const types: Record<string, number> = {};
+    
+    allCards.forEach(card => {
+      const id = card.color_identity || [];
+      if (id.length === 0) {
+        colors['C'] = (colors['C'] || 0) + 1;
+      } else {
+        id.forEach((c: string) => {
+          colors[c] = (colors[c] || 0) + 1;
+        });
+      }
+      
+      const type = card.type_line?.split('—')[0].trim().split(' ')[0] || 'Unknown';
+      types[type] = (types[type] || 0) + 1;
+    });
+    
+    return {
+      total: allCards.length,
+      colors: Object.entries(colors).sort((a, b) => b[1] - a[1]),
+      types: Object.entries(types).sort((a, b) => b[1] - a[1]).slice(0, 5)
+    };
+  }, [allCards]);
   const [deckbox, setDeckbox] = useState<DeckCard[]>([]);
   const [savedDecks, setSavedDecks] = useState<SavedDeck[]>([]);
 
@@ -297,6 +387,7 @@ export default function App() {
 
   const [cardsPerRow, setCardsPerRow] = useState<number>(0); // 0 means 'auto' (~220px)
   const [userTitle, setUserTitle] = useState("Deckmaster");
+  const [userName, setUserName] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   
   // --- Auth & Firestore Sync ---
@@ -315,6 +406,7 @@ export default function App() {
           if (userSnap.exists()) {
             const data = userSnap.data();
             if (data.userTitle) setUserTitle(data.userTitle);
+            if (data.userName) setUserName(data.userName);
             if (data.cardsPerRow !== undefined) setCardsPerRow(data.cardsPerRow);
 
           }
@@ -444,6 +536,7 @@ export default function App() {
   const [activeDeckId, setActiveDeckId] = useState<string | null>(null);
   const [activeDeckName, setActiveDeckName] = useState("");
   const [isDeckboxOpen, setIsDeckboxOpen] = useState(false);
+  const [commanderPreview, setCommanderPreview] = useState<any[] | null>(null);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [isFiltersOpen, setIsFiltersOpen] = useState(false);
   const [mobileCardsPerRow, setMobileCardsPerRow] = useState<1 | 2>(1);
@@ -521,16 +614,42 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
   const [viewMode, setViewMode] = useState<'cards' | 'manage_decks' | 'sets' | 'calendar' | 'sheriff' | 'judge' | 'radio'>('cards');
+
+  useEffect(() => {
+    // If we switch views away from search, clear the bear tech box
+    if (viewMode !== 'search' && (viewMode as string) !== 'cards') {
+      setIsBearSearch(false);
+    }
+  }, [viewMode]);
+  
+  // Browser History Sync
+  useEffect(() => {
+    const handlePopState = (event: PopStateEvent) => {
+      if (event.state && event.state.viewMode) {
+        setViewMode(event.state.viewMode);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (window.history.state?.viewMode !== viewMode) {
+      window.history.pushState({ viewMode }, '', '');
+    }
+  }, [viewMode]);
   
   // Search state
   const [searchQuery, setSearchQuery] = useState("");
   const [contextQuery, setContextQuery] = useState("");
   const [suggestedDecks, setSuggestedDecks] = useState<Set<string>>(new Set());
-  const [typeFilter, setTypeFilter] = useState("Any");
-  const [rarityFilter, setRarityFilter] = useState("Any");
+  const [typeFilters, setTypeFilters] = useState<string[]>([]);
+  const [rarityFilters, setRarityFilters] = useState<string[]>([]);
   const [setFilter, setSetFilter] = useState("Any");
-  const [colorFilter, setColorFilter] = useState("Any");
+  const [colorFilters, setColorFilters] = useState<string[]>([]);
   const [archFilter, setArchFilter] = useState("Any");
+  const [isFiltersExpanded, setIsFiltersExpanded] = useState(false);
+  const [selectedDeckCard, setSelectedDeckCard] = useState<any>(null);
   const [sortBy, setSortBy] = useState("released");
   const [sortDir, setSortDir] = useState("desc");
   const [newDeckIdInput, setNewDeckIdInput] = useState("");
@@ -690,7 +809,7 @@ export default function App() {
     );
 
     const ciSet = new Set<string>();
-    const commandersData: {name: string, art_crop: string, isBackground: boolean}[] = [];
+    const commandersData: {name: string, art_crop: string, isBackground: boolean, scryfallData?: any}[] = [];
 
     commanderDetails.forEach((res, index) => {
       const c = res.data;
@@ -711,7 +830,8 @@ export default function App() {
         commandersData.push({ 
           name: c.name, 
           art_crop: crop,
-          isBackground: !!isBackground
+          isBackground: !!isBackground,
+          scryfallData: c
         });
       }
     });
@@ -774,11 +894,11 @@ export default function App() {
     }
     
     // Reset filters when loading a new deck
-    setTypeFilter("Any");
-    setRarityFilter("Any");
+    setTypeFilters([]);
+    setRarityFilters([]);
     setSetFilter("Any");
     setArchFilter("Any");
-    setColorFilter("Any");
+    setColorFilters([]);
     
     // Perform initial search after loading deck
     performSearch({ ciOverride: ciStr, queryOverride: "", skipViewChange: !autoSelect });
@@ -1033,14 +1153,23 @@ export default function App() {
     setCommanders([]);
   };
 
+  const [glowIndex, setGlowIndex] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setGlowIndex(prev => (prev + 1) % 10); // Slower cycle for 5 mana + 5 runes
+    }, 5000); // 5 seconds per step
+    return () => clearInterval(interval);
+  }, []);
+
   const goHome = () => {
     clearDeckSelection();
     setSearchQuery("");
     setContextQuery("");
-    setTypeFilter("Any");
-    setRarityFilter("Any");
+    setTypeFilters([]);
+    setRarityFilters([]);
     setSetFilter("Any");
-    setColorFilter("Any");
+    setColorFilters([]);
     setArchFilter("Any");
     setViewMode('cards');
     setHasSearched(false);
@@ -1048,15 +1177,15 @@ export default function App() {
     if (isMobileMenuOpen) setIsMobileMenuOpen(false);
   };
 
-  const handleFunModeClick = (mode: 'sets' | 'calendar' | 'sheriff' | 'judge' | 'radio') => {
+  const handleFunModeClick = (mode: 'sets' | 'calendar' | 'sheriff' | 'judge') => {
     clearDeckSelection();
     setViewMode(mode);
     setSearchQuery("");
     setContextQuery("");
-    setTypeFilter("Any");
-    setRarityFilter("Any");
+    setTypeFilters([]);
+    setRarityFilters([]);
     setSetFilter("Any");
-    setColorFilter("Any");
+    setColorFilters([]);
     setArchFilter("Any");
   };
 
@@ -1064,28 +1193,37 @@ export default function App() {
     queryOverride?: string, 
     ciOverride?: string,
     typeOverride?: string,
+    typesOverride?: string[],
     rarityOverride?: string,
+    raritiesOverride?: string[],
     setOverride?: string,
     colorOverride?: string,
+    colorsOverride?: string[],
     archOverride?: string,
     orderOverride?: string,
     dirOverride?: string,
     skipCI?: boolean,
     skipViewChange?: boolean,
-    skipFormatFilters?: boolean
+    skipFormatFilters?: boolean,
+    isBearActivation?: boolean
   }) => {
     setLoading(true);
     setHasSearched(true);
+    setIsBearSearch(options?.isBearActivation || false);
     try {
-      // 1. Resolve Parameters
-      let ci = options?.ciOverride !== undefined ? options.ciOverride : (activeDeckId ? currentCI : "");
+      // Resolve Parameters
+      let ci = options?.ciOverride !== undefined ? options.ciOverride : (activeDeckId ? currentCI : "Any");
       let order = options?.orderOverride !== undefined ? options.orderOverride : sortBy;
       let dir = options?.dirOverride !== undefined ? options.dirOverride : sortDir;
       
-      // Hard restriction: If a deck is selected, and no override was given, results MUST fall within its color identity
-      // We force this unless skipCI is explicitly true (e.g. for global set browsing)
-      if (activeDeckId && currentCI && !options?.skipCI && options?.ciOverride === undefined) {
+      // Hard restriction: If a deck is selected, results MUST fall within its color identity
+      // unless we are explicitly doing a global search (skipCI: true)
+      // prioritize ciOverride if provided
+      if (options?.ciOverride === undefined && activeDeckId && currentCI && !options?.skipCI) {
         ci = currentCI;
+      } else if (!activeDeckId && options?.ciOverride === undefined) {
+        // No deck selected and no specific override: search ALL colors
+        ci = "Any";
       }
 
       // 2. Build Query
@@ -1104,10 +1242,10 @@ export default function App() {
         queryParts.push(`id<=${ci}`);
       }
 
-      let type = options?.typeOverride !== undefined ? options.typeOverride : typeFilter;
-      let rarity = options?.rarityOverride !== undefined ? options.rarityOverride : rarityFilter;
+      let types = options?.typesOverride !== undefined ? options.typesOverride : (options?.typeOverride !== undefined ? [options.typeOverride] : typeFilters);
+      let rarities = options?.raritiesOverride !== undefined ? options.raritiesOverride : (options?.rarityOverride !== undefined ? [options.rarityOverride] : rarityFilters);
       let set = options?.setOverride !== undefined ? options.setOverride : setFilter;
-      let color = options?.colorOverride !== undefined ? options.colorOverride : colorFilter;
+      let colors = options?.colorsOverride !== undefined ? options.colorsOverride : (options?.colorOverride !== undefined ? [options.colorOverride] : colorFilters);
       let arch = options?.archOverride !== undefined ? options.archOverride : archFilter;
 
       // If a specific queryOverride is provided, we assume a fresh search and clear context
@@ -1117,16 +1255,16 @@ export default function App() {
         activeContext = "";
         
         // Only clear all filters if we are explicitly resetting the search
-        type = "Any";
-        rarity = "Any";
+        types = [];
+        rarities = [];
         set = "Any";
-        color = "Any";
+        colors = [];
         arch = "Any";
         
-        setTypeFilter("Any");
-        setRarityFilter("Any");
+        setTypeFilters([]);
+        setRarityFilters([]);
         setSetFilter("Any");
-        setColorFilter("Any");
+        setColorFilters([]);
         setArchFilter("Any");
       }
 
@@ -1138,16 +1276,19 @@ export default function App() {
         // If we are clearing context OR selecting a NEW context, reset filters
         // Especially clear archFilter (Veggie Search) on manual search or transition
         if (options.queryOverride === "" || options.queryOverride !== contextQuery) {
-          type = options.typeOverride !== undefined ? options.typeOverride : "Any";
-          rarity = options.rarityOverride !== undefined ? options.rarityOverride : "Any";
+          types = options.typesOverride !== undefined ? options.typesOverride : 
+                (options.typeOverride !== undefined ? [options.typeOverride] : []);
+          rarities = options.raritiesOverride !== undefined ? options.raritiesOverride : 
+                  (options.rarityOverride !== undefined ? [options.rarityOverride] : []);
           set = options.setOverride !== undefined ? options.setOverride : "Any";
-          color = options.colorOverride !== undefined ? options.colorOverride : "Any";
+          colors = options.colorsOverride !== undefined ? options.colorsOverride : 
+                 (options.colorOverride !== undefined ? [options.colorOverride] : []);
           arch = options.archOverride !== undefined ? options.archOverride : "Any";
           
-          setTypeFilter(type);
-          setRarityFilter(rarity);
+          setTypeFilters(types);
+          setRarityFilters(rarities);
           setSetFilter(set);
-          setColorFilter(color);
+          setColorFilters(colors);
           setArchFilter(arch);
         }
         
@@ -1158,13 +1299,27 @@ export default function App() {
       }
 
       // Dropdown Filters
-      if (type !== "Any") queryParts.push(`t:${type}`);
-      if (rarity !== "Any") queryParts.push(`r:${rarity}`);
+      if (types.length > 0) {
+        queryParts.push(`(${types.map(t => `t:${t}`).join(" OR ")})`);
+      }
+      if (rarities.length > 0) {
+        queryParts.push(`(${rarities.map(r => `r:${r}`).join(" OR ")})`);
+      }
       if (set !== "Any") queryParts.push(`s:${set}`);
-      if (color !== "Any") {
-        if (color === "C") queryParts.push("identity:c");
-        else if (color === "M") queryParts.push("id:multi");
-        else queryParts.push(`identity:${color.toLowerCase()}`);
+      if (colors.length > 0) {
+        const colorQueries = colors.map(colorChar => {
+          if (colorChar === "C") return "identity:c";
+          if (colorChar === "M") return "id:multi";
+          return `identity:${colorChar.toLowerCase()}`;
+        });
+        
+        // If we have specific colors selected but NOT colorless (C), 
+        // we explicitly exclude colorless cards to satisfy user request.
+        let finalColorQuery = `(${colorQueries.join(" OR ")})`;
+        if (!colors.includes("C")) {
+          finalColorQuery += " -identity:c";
+        }
+        queryParts.push(finalColorQuery);
       }
 
       // Veggie Search Filter (Arch)
@@ -1179,10 +1334,11 @@ export default function App() {
         userLogic.push(`(${activeContext})`);
       }
       
-      const effectiveSearch = (options?.queryOverride !== undefined) ? "" : searchQuery;
+      const effectiveSearch = (options?.queryOverride !== undefined && options.queryOverride !== "") ? "" : searchQuery;
 
       if (effectiveSearch.trim()) {
-        userLogic.push(`(o:"${effectiveSearch}" OR t:"${effectiveSearch}" OR "${effectiveSearch}")`);
+        // Expand search to be more inclusive as requested
+        userLogic.push(`("${effectiveSearch}" OR name:"${effectiveSearch}" OR o:"${effectiveSearch}" OR t:"${effectiveSearch}")`);
       }
 
       if (userLogic.length > 0) {
@@ -1191,7 +1347,8 @@ export default function App() {
 
       const query = queryParts.join(" ");
 
-      const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=${order}&dir=${dir}`;
+      // Use unique=cards to get distinct cards, or unique=prints if we want variants
+      const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=${order}&dir=${dir}&unique=cards`;
       console.log("Searching Scryfall:", url);
       const { data } = await axios.get(url);
       setAllCards(data.data || []);
@@ -1232,6 +1389,7 @@ export default function App() {
         userId: user.uid,
         name: card.name,
         thumb: images.small || "",
+        highRes: images.normal || images.large || "",
         from_deck: activeDeckName || "Manual",
         qty: 1,
         prices: card.prices || {}
@@ -1276,11 +1434,14 @@ export default function App() {
     }
   };
 
+  const [deckToDelete, setDeckToDelete] = useState<string | null>(null);
+
   const deleteSavedDeck = async (id: string) => {
     if (!user) return;
     const deckRef = doc(db, 'users', user.uid, 'decks', id);
     await deleteDoc(deckRef).catch(err => handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/decks/${id}`));
     if (activeDeckId === id) setActiveDeckId(null);
+    setDeckToDelete(null);
   };
 
   const viewDeckDetails = async (id: string, source?: string) => {
@@ -1311,15 +1472,19 @@ export default function App() {
 
             if (cardName.includes('Sideboard:')) return; 
 
-            if (cardName.includes('*CMDR*')) {
-              cardName = cardName.replace('*CMDR*', '').trim();
-            }
-
-            const match = cardName.match(/^(\d+)x?\s+(.+)$/);
+            // Improve quantity and name matching
+            // Match formats like "1x Card Name" or "1 Card Name"
+            const match = cardName.match(/^(\d+)x?\s+(.+)$/i);
             if (match) {
               qty = parseInt(match[1]);
               cardName = match[2].trim();
             }
+
+            // Remove TappedOut specific markers
+            cardName = cardName.replace(/\*CMDR\*/g, '').trim();
+            cardName = cardName.replace(/\*F\*/g, '').trim(); // Foil
+            cardName = cardName.replace(/\*A\*/g, '').trim(); // Altered
+            cardName = cardName.split(' #')[0].trim(); // Card tags like #Bear
 
             if (cardName) {
                cards.push({ card: { oracleCard: { name: cardName } }, quantity: qty });
@@ -1806,6 +1971,9 @@ Return ONLY JSON. No markdown backticks.`;
       />
       <div className="absolute top-0 right-0 w-[50vh] h-[50vh] bg-cyan-500/5 blur-[150px] rounded-full pointer-events-none" />
       <div className="absolute bottom-0 left-[20%] w-[40vh] h-[40vh] bg-orange-500/5 blur-[120px] rounded-full pointer-events-none" />
+      
+      {/* Audio Engine Removed - Spotify Bridge replaces this logic */}
+
       {/* Mobile Top Bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#070707]/60 backdrop-blur-2xl border-b border-white/[0.04] z-40 flex items-center justify-between px-4">
         <div className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
@@ -1840,7 +2008,7 @@ Return ONLY JSON. No markdown backticks.`;
         <div className="rune-book-spine" />
         <div className="absolute top-0 bottom-0 right-0 w-px bg-gradient-to-b from-transparent via-cyan-500/30 to-transparent" />
         
-        <div className="flex flex-col items-center p-4 pb-2 relative z-10">
+        <div className="flex flex-col items-center p-4 pl-10 pb-2 relative z-10">
           <button 
             onClick={() => setIsMobileMenuOpen(false)}
             className="md:hidden absolute top-4 right-4 p-2 text-white/20"
@@ -1848,23 +2016,51 @@ Return ONLY JSON. No markdown backticks.`;
             <X className="w-5 h-5" />
           </button>
           <div 
-            className="w-24 h-24 mb-3 hover:scale-105 transition-transform cursor-pointer group relative"
+            className="flex flex-col items-center cursor-pointer group relative"
             onClick={goHome}
           >
-            <div className="absolute inset-0 bg-orange-500/20 blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
-            <img 
-              src={logo} 
-              alt="Logo" 
-              className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,152,0,0.6)]"
-            />
+            <div className="w-24 h-24 mb-3 group-hover:scale-105 transition-transform relative">
+              <div className="absolute inset-0 bg-orange-500/20 blur-3xl rounded-full opacity-0 group-hover:opacity-100 transition-opacity" />
+              <img 
+                src={logo} 
+                alt="Logo" 
+                className="w-full h-full object-contain filter drop-shadow-[0_0_25px_rgba(255,152,0,0.6)]"
+              />
+            </div>
+            <h1 className="text-2xl font-magic font-extrabold text-white tracking-tighter text-center leading-none uppercase">Rune Deck <br/> <span className="text-lg opacity-80 uppercase tracking-widest text-orange-500/80">Companion</span></h1>
           </div>
-          <h1 onClick={goHome} className="cursor-pointer text-2xl font-magic font-extrabold text-white tracking-tighter text-center leading-none uppercase">Rune Deck <br/> <span className="text-lg opacity-80">Companion</span></h1>
           <p className="text-[9px] text-orange-500/60 uppercase tracking-[0.4em] font-bold mt-2">Quick add tech</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 pl-10 space-y-6">
           {/* Section 1: Decks and Search Fields */}
           <section className="space-y-4">
+            {activeDeckId && commanders.length > 0 && (
+              <div className="flex flex-col items-center gap-4 p-4 rune-panel rounded-2xl bg-cyan-500/5 mb-2">
+                <div 
+                  className="flex justify-center items-center w-full cursor-pointer group"
+                  onClick={() => setCommanderPreview(commanders)}
+                >
+                  <div className="flex items-center -space-x-8">
+                    {[...commanders].reverse().map((cmd, i) => (
+                      <div key={i} className="relative group hover:z-[100] transition-all duration-300 hover:scale-110" style={{ zIndex: commanders.length - i }}>
+                        <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border-2 border-orange-500/40 shadow-[0_0_20px_rgba(0,0,0,0.5)] relative group-hover:border-orange-500 transition-all">
+                          <img src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none opacity-60 group-hover:opacity-0 transition-opacity" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="flex flex-col items-center gap-1">
+                   <h3 className="text-[10px] font-magic font-black text-orange-500/80 uppercase tracking-tighter text-center line-clamp-1">{activeDeckName}</h3>
+                   <div className="flex justify-center scale-75">
+                      {renderManaSymbols(currentCI, 'w-5 h-5')}
+                   </div>
+                </div>
+              </div>
+            )}
+
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
                 <Database className="w-3 h-3 text-orange-500" />
@@ -1876,10 +2072,10 @@ Return ONLY JSON. No markdown backticks.`;
                   clearDeckSelection();
                   setSearchQuery("");
                   setContextQuery("");
-                  setTypeFilter("Any");
-                  setRarityFilter("Any");
+                  setTypeFilters([]);
+                  setRarityFilters([]);
                   setSetFilter("Any");
-                  setColorFilter("Any");
+                  setColorFilters([]);
                   setArchFilter("Any");
                   setViewMode('manage_decks');
                 }}
@@ -1946,159 +2142,202 @@ Return ONLY JSON. No markdown backticks.`;
                 <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
               </div>
             </div>
+
+
             
-            {activeDeckId && (
-              <div className="space-y-2 pt-0.5">
-                {commanders.length > 0 && (
-                  <div className="flex flex-col items-center gap-2">
-                    <div className="flex justify-center items-center w-full">
-                      <div className="flex items-center -space-x-8">
-                          {[...commanders].reverse().map((cmd, i) => (
-                            <div key={i} className="relative group hover:z-[100] transition-all duration-300 hover:scale-110" style={{ zIndex: commanders.length - i }}>
-                              <div className="w-24 h-24 sm:w-28 sm:h-28 rounded-full overflow-hidden border-2 border-[#0A0A0A] shadow-[0_0_35px_rgba(0,0,0,0.9)] relative group-hover:border-cyan-500/60 transition-all">
-                                <img src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-transparent pointer-events-none" />
-                              </div>
-
-                            </div>
-                         ))}
-                      </div>
-                    </div>
-                    {currentCI && (
-                      <div className="flex justify-center drop-shadow-[0_0_20px_rgba(255,255,255,0.4)]">
-                         {renderManaSymbols(currentCI, 'w-6 h-6')}
-                      </div>
-                    )}
-                  </div>
-                )}
-
-            <div 
-              id="search-bar-root"
-              className="space-y-2 border-t border-white/5 pt-3"
-            >
-              <div className="flex items-center gap-2 mb-2">
-                    <Search className="w-3 h-3 text-orange-500" />
-                    <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Search Engine</h2>
-                  </div>
-                  
-                  <button 
-                    onClick={() => {
-                      if (!activeDeckId) {
-                        showMessage("Select a deck first to build a resonance profile.", "info");
-                        return;
-                      }
-                      const deck = savedDecks.find(d => d.id === activeDeckId);
-                      if (!deck || !deck.tags || deck.tags.length === 0) {
-                        showMessage("No synergy tags found. Initiate 'Generate Tags' at your deck profile first.", "info");
-                        return;
-                      }
-                      const tagQuery = "(" + deck.tags.map(t => t.includes(':::') ? t.split(':::').slice(1).join(':::') : `o:"${t}" OR t:"${t}"`).join(") OR (") + ")";
-                      setViewMode('cards');
-                      performSearch({ 
-                        queryOverride: tagQuery, 
-                        ciOverride: deck.ci || currentCI || "c", 
-                        skipCI: false,
-                        skipFormatFilters: false
-                      });
-                    }}
-                    className="w-full flex items-center justify-center gap-2 py-2.5 rune-panel text-cyan-500/80 hover:text-cyan-400 hover:border-cyan-500/30 font-black text-[10px] transition-all font-magic uppercase tracking-[0.3em] active:scale-[0.98] z-10"
-                  >
-                    <Zap className="w-4 h-4" />
-                    Tag Based Search
-                  </button>
-
-                  <div className="relative group">
-                    <select
-                      value={archFilter}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setArchFilter(val);
-                        setSearchQuery("");
-                        setViewMode('cards');
-                        performSearch({ 
-                          queryOverride: "", // Clear tag/set context when picking a generic deck role
-                          archOverride: val,
-                          ciOverride: currentCI || "",
-                          skipFormatFilters: false
-                        });
-                      }}
-                      className="w-full appearance-none rune-panel rounded-sm px-4 py-2.5 text-[8px] font-magic font-black uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
-                    >
-                      <option value="Any" className="bg-[#0A0A0A]">Veggie Search</option>
-                      {DECK_ROLES.map(r => (
-                        <option key={r.label} value={r.label} className="bg-[#0A0A0A]">{r.label}</option>
-                      ))}
-                    </select>
-                    <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
-                  </div>
-
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="Manual search..."
-                      className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-4 py-2.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch({ queryOverride: "" })}
-                    />
-                    <button 
-                      onClick={() => performSearch({ queryOverride: "" })}
-                      className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
-                    >
-                      <Search className="w-4 h-4" />
-                    </button>
-                  </div>
+            {/* Section 4: Search & Filters (Unified) */}
+            <section className="space-y-4">
+              <div className="flex items-center justify-between border-t border-white/5 pt-3">
+                <div className="flex items-center gap-2">
+                  <Search className="w-3 h-3 text-orange-500" />
+                  <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Search Engine</h2>
                 </div>
               </div>
-            )}
 
-             {!activeDeckId && (
-               <div className="space-y-3 pt-3 border-t border-white/5">
-                 <div className="flex items-center gap-2">
-                   <Search className="w-3 h-3 text-orange-500" />
-                   <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Search Engine</h2>
-                 </div>
-                 <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      placeholder="Manual search..."
-                      className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-4 py-2.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch({ queryOverride: "" })}
-                    />
-                    <button 
-                      onClick={() => performSearch({ queryOverride: "" })}
-                      className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
-                    >
-                      <Search className="w-4 h-4" />
-                    </button>
-                 </div>
-               </div>
-            )}
-          </section>
+              {activeDeckId && (
+                <button 
+                  onClick={() => {
+                    const deck = savedDecks.find(d => d.id === activeDeckId);
+                    if (!deck || !deck.tags || deck.tags.length === 0) {
+                      showMessage("No synergy tags found. Initiate 'Generate Tags' at your deck profile first.", "info");
+                      return;
+                    }
+                    const tagQuery = "(" + deck.tags.map(t => t.includes(':::') ? t.split(':::').slice(1).join(':::') : `o:"${t}" OR t:"${t}"`).join(") OR (") + ")";
+                    setViewMode('cards');
+                    performSearch({ 
+                      queryOverride: tagQuery, 
+                      ciOverride: deck.ci || currentCI || "c", 
+                      skipCI: false,
+                      skipFormatFilters: false
+                    });
+                  }}
+                  className="w-full flex items-center justify-center gap-2 py-2.5 rune-panel text-cyan-500/80 hover:text-cyan-400 hover:border-cyan-500/30 font-black text-[10px] transition-all font-magic uppercase tracking-[0.3em] active:scale-[0.98] z-10"
+                >
+                  <Zap className="w-4 h-4" />
+                  Tag Based Search
+                </button>
+              )}
 
-          {/* Section 4: Selected Cardboard */}
-          <section className="space-y-2">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Layers className="w-3 h-3 text-orange-500" />
-                <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Selected Cardboard</h2>
+              <div className="relative group">
+                <select
+                  value={archFilter}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setArchFilter(val);
+                    setSearchQuery("");
+                    setViewMode('cards');
+                    performSearch({ 
+                      queryOverride: "", 
+                      archOverride: val,
+                      ciOverride: currentCI || "",
+                      skipFormatFilters: false
+                    });
+                  }}
+                  className="w-full appearance-none rune-panel rounded-sm px-4 py-2.5 text-[8px] font-magic font-black uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
+                >
+                  <option value="Any" className="bg-[#0A0A0A]">Veggie Search</option>
+                  {DECK_ROLES.map(r => (
+                    <option key={r.label} value={r.label} className="bg-[#0A0A0A]">{r.label}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
               </div>
-            </div>
-            <div className="flex flex-col gap-2">
-              <button 
-                onClick={() => setIsDeckboxOpen(true)}
-                className="w-full flex items-center justify-center gap-2 py-3 rune-panel rounded-sm text-orange-500/80 font-magic font-bold text-[10px] uppercase tracking-[0.2em] hover:text-orange-500 hover:border-orange-500/30 transition-all group z-10"
-              >
-                View Selection
-                {deckbox.length > 0 && (
-                  <span className="bg-orange-500 text-black px-1.5 py-0.5 rounded-sm text-[8px] font-black shadow-[0_0_10px_rgba(249,115,22,0.5)]">
-                    {deckbox.length}
-                  </span>
-                )}
-              </button>
-            </div>
+
+              <div className="flex gap-2">
+                <input 
+                  type="text" 
+                  placeholder="Manual search..."
+                  className="bg-white/[0.02] backdrop-blur-md shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)] border border-white/[0.04] rounded-[1.5rem] px-4 py-2.5 text-[10px] font-bold flex-1 focus:border-orange-500/50 outline-none text-white/80 placeholder:text-white/20 transition-all font-sans uppercase tracking-widest"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => (e.key === 'Enter' || e.key === 'NumpadEnter') && performSearch({ queryOverride: "" })}
+                />
+                <button 
+                  onClick={() => performSearch({ queryOverride: "" })}
+                  className="rune-panel px-4 py-2.5 flex items-center justify-center text-white/30 hover:text-cyan-400 hover:border-cyan-500/30 transition-all z-10"
+                >
+                  <Search className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Integrated Filters Section - Visible always if results or viewing cards */}
+              {(allCards.length > 0 || viewMode === 'cards') && (
+                <div className="pt-4 border-t border-white/5 mt-4">
+                  <button 
+                    onClick={() => setIsFiltersExpanded(!isFiltersExpanded)}
+                    className="w-full flex items-center justify-between mb-2 group"
+                  >
+                    <div className="flex items-center gap-2">
+                      <Filter className={`w-3 h-3 ${isFiltersExpanded ? 'text-cyan-400' : 'text-cyan-400/40'}`} />
+                      <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Live Filters</h2>
+                    </div>
+                    <div className={`transition-transform duration-300 ${isFiltersExpanded ? 'rotate-180' : ''}`}>
+                      <ChevronDown className="w-3 h-3 text-white/20 group-hover:text-cyan-400" />
+                    </div>
+                  </button>
+                  
+                  {isFiltersExpanded && (
+                    <div className="space-y-4 py-2 animate-in fade-in slide-in-from-top-1 duration-300">
+                      <div className="space-y-1">
+                        <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em]">Category</span>
+                        <div className="flex flex-wrap gap-1">
+                          {['Creature', 'Sorcery', 'Instant', 'Artifact', 'Enchantment', 'Land', 'Planeswalker'].map(t => (
+                            <button
+                              key={t}
+                              onClick={() => {
+                                const next = typeFilters.includes(t) ? typeFilters.filter(f => f !== t) : [...typeFilters, t];
+                                setTypeFilters(next);
+                                performSearch({ typesOverride: next });
+                              }}
+                              className={`px-2 py-1 rounded-sm text-[8px] font-magic font-bold uppercase transition-all border ${
+                                typeFilters.includes(t) ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-white/5 border-white/5 text-white/30 hover:text-white/60'
+                              }`}
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em]">Rarity</span>
+                        <div className="flex flex-wrap gap-1">
+                          {['common', 'uncommon', 'rare', 'mythic'].map(r => (
+                            <button
+                              key={r}
+                              onClick={() => {
+                                const next = rarityFilters.includes(r) ? rarityFilters.filter(f => f !== r) : [...rarityFilters, r];
+                                setRarityFilters(next);
+                                performSearch({ raritiesOverride: next });
+                              }}
+                              className={`px-2 py-1 rounded-sm text-[8px] font-magic font-bold uppercase transition-all border ${
+                                rarityFilters.includes(r) ? 'bg-orange-500/20 border-orange-500 text-orange-400' : 'bg-white/5 border-white/5 text-white/30 hover:text-white/60'
+                              }`}
+                            >
+                              {r}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="space-y-1">
+                        <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em]">Identity</span>
+                        <div className="flex flex-wrap gap-1">
+                          {['W', 'U', 'B', 'R', 'G', 'C', 'M'].map(c => (
+                            <button
+                              key={c}
+                              onClick={() => {
+                                const next = colorFilters.includes(c) ? colorFilters.filter(f => f !== c) : [...colorFilters, c];
+                                setColorFilters(next);
+                                performSearch({ colorsOverride: next });
+                              }}
+                              className={`w-7 h-7 flex items-center justify-center rounded-full transition-all border ${
+                                colorFilters.includes(c) ? 'bg-white/20 border-white text-white' : 'bg-white/5 border-white/5 text-white/20 hover:text-white/60'
+                              }`}
+                            >
+                              {['W','U','B','R','G'].includes(c) ? (
+                                <img src={MANA_SYMBOL_URIS[`{${c}}`]} className="w-4 h-4" alt={c} />
+                              ) : (
+                                <span className="text-[10px] font-magic font-bold">{c === 'C' ? '♢' : '★'}</span>
+                              )}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-4 mt-2">
+                         <div className="space-y-1">
+                           <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em]">Sort Order</span>
+                           <select 
+                             value={sortBy} 
+                             onChange={(e) => { setSortBy(e.target.value); performSearch({ orderOverride: e.target.value }); }}
+                             className="w-full bg-black/60 border border-white/5 rounded-sm px-2 py-2 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)]"
+                           >
+                             <option value="released">Release Date</option>
+                             <option value="name">Name (A-Z)</option>
+                             <option value="eur">Value (EUR)</option>
+                             <option value="cmc">Mana Value</option>
+                             <option value="rarity">Rarity Rank</option>
+                           </select>
+                         </div>
+                         <button 
+                           onClick={() => {
+                             setTypeFilters([]);
+                             setRarityFilters([]);
+                             setColorFilters([]);
+                             setIsFiltersExpanded(false);
+                             performSearch({ queryOverride: "" });
+                           }}
+                           className="w-full py-2 bg-white/5 border border-white/10 text-white/40 font-magic font-bold text-[9px] hover:bg-white/10 transition-all uppercase tracking-widest rounded-sm"
+                         >
+                           Reset
+                         </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
           </section>
 
           {/* Section 5: Fun Area */}
@@ -2109,39 +2348,13 @@ Return ONLY JSON. No markdown backticks.`;
                 <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">Fun Area</h2>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-1 grid-rows-2">
+            <div className="grid grid-cols-2 gap-1 grid-rows-3">
               <button 
                 onClick={() => handleFunModeClick('sets')}
                 className="flex flex-col items-center justify-center py-2 rune-panel text-white/40 hover:text-cyan-400 font-magic hover:border-cyan-500/30 transition-all group z-10 gap-1 rounded-sm"
               >
                 <Library className="w-4 h-4 group-hover:scale-110 transition-transform" />
                 <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Sets</span>
-              </button>
-              <button 
-                onClick={() => {
-                  clearDeckSelection();
-                  setSearchQuery("");
-                  setTypeFilter("Any");
-                  setRarityFilter("Any");
-                  setSetFilter("Any");
-                  setColorFilter("Any");
-                  setArchFilter("Any");
-                  setViewMode('cards');
-                  performSearch({ 
-                    queryOverride: "art:bear game:paper", 
-                    typeOverride: "Any",
-                    rarityOverride: "Any",
-                    setOverride: "Any", 
-                    colorOverride: "Any",
-                    archOverride: "Any", 
-                    skipCI: true,
-                    skipFormatFilters: true 
-                  });
-                }}
-                className="flex flex-col items-center justify-center py-2 rune-panel text-white/50 hover:text-cyan-400 hover:border-cyan-500/30 font-magic transition-all group z-10 gap-1 rounded-sm"
-              >
-                <div className="text-[12px] leading-none group-hover:scale-110 transition-transform">🐾</div>
-                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Bears</span>
               </button>
               <button 
                 onClick={() => handleFunModeClick('calendar')}
@@ -2166,11 +2379,27 @@ Return ONLY JSON. No markdown backticks.`;
                 <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none text-green-500/80 group-hover:text-green-400">Judge</span>
               </button>
               <button 
-                onClick={() => handleFunModeClick('radio')}
-                className="flex flex-col items-center justify-center py-2 rune-panel text-purple-500/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10 gap-1 rounded-sm"
+                onClick={() => {
+                  setSearchQuery("Bear");
+                  performSearch({ 
+                    queryOverride: 'art:bear f:paper', 
+                    skipCI: true, 
+                    orderOverride: 'released', 
+                    dirOverride: 'desc',
+                    isBearActivation: true
+                  });
+                }}
+                className="flex flex-col items-center justify-center py-2 rune-panel text-orange-400/60 hover:text-orange-400 font-magic hover:border-orange-500/50 transition-all group z-10 gap-1 rounded-sm shadow-[0_0_15px_rgba(249,115,22,0.1)] hover:shadow-orange-500/20"
               >
-                <Radio className="w-4 h-4 group-hover:scale-110 transition-transform text-purple-500/80 group-hover:text-purple-500" />
-                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none text-purple-500/80 group-hover:text-purple-400">Radio</span>
+                <PawPrint className="w-4 h-4 group-hover:scale-125 transition-transform text-orange-500/60 group-hover:text-orange-400" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Bears</span>
+              </button>
+              <button 
+                onClick={() => setViewMode('radio')}
+                className="flex flex-col items-center justify-center py-2 rune-panel text-purple-400/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10 gap-1 rounded-sm shadow-[0_0_15px_rgba(168,85,247,0.1)] hover:shadow-purple-500/20"
+              >
+                <Radio className="w-4 h-4 group-hover:animate-pulse transition-transform text-purple-500/60 group-hover:text-purple-400" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Radio</span>
               </button>
             </div>
           </section>
@@ -2199,7 +2428,7 @@ Return ONLY JSON. No markdown backticks.`;
             </button>
 
             <div className="flex-1 flex flex-col items-start min-w-0">
-               <span className="text-[10px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">{user?.displayName || 'Seeker'}</span>
+               <span className="text-[10px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">{userName || user?.displayName || 'User'}</span>
                <span className="text-[9px] font-sans font-black text-orange-500/80 uppercase tracking-widest truncate w-full">{userTitle || 'Novice'}</span>
                <div className="mt-1 flex flex-col gap-0.5">
                  <p className="text-[5px] font-sans font-bold text-white/20 uppercase leading-tight tracking-wider">
@@ -2252,6 +2481,28 @@ Return ONLY JSON. No markdown backticks.`;
                   </div>
 
                   <div className="p-8 space-y-8">
+                     <div className="space-y-3">
+                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">User Identity</label>
+                        <p className="text-[8px] text-white/20 uppercase tracking-tighter -mt-2">This name appears as the author of your decks.</p>
+                        <div className="flex gap-2">
+                           <input 
+                              type="text"
+                              value={userName}
+                              onChange={(e) => setUserName(e.target.value)}
+                              onBlur={() => saveUserSettings({ userName })}
+                              onKeyDown={(e) => e.key === 'Enter' && saveUserSettings({ userName })}
+                              placeholder="Enter your name"
+                              className="w-full bg-black/40 backdrop-blur-xl shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] border border-white/[0.05] rounded-[1.5rem] px-5 py-3.5 text-xs focus:border-orange-500 outline-none text-white/80 transition-all font-sans"
+                           />
+                           <button 
+                             onClick={() => saveUserSettings({ userName })}
+                             className="px-5 py-3.5 bg-white/[0.04] shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] border border-white/[0.05] rounded-[1.5rem] text-white/60 hover:text-white hover:bg-white/10 transition-all font-black text-xs uppercase tracking-widest font-magic"
+                           >
+                             Update
+                           </button>
+                        </div>
+                     </div>
+
                      <div className="space-y-3">
                         <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">User Title</label>
                         <p className="text-[8px] text-white/20 uppercase tracking-tighter -mt-2">This title appears beneath your name.</p>
@@ -2341,205 +2592,107 @@ Return ONLY JSON. No markdown backticks.`;
             )}
           </AnimatePresence>
 
-          {/* Top Filter Bar */}
-          {viewMode === 'cards' && (
-            <div className={`transition-all duration-500 ${isFiltersOpen ? 'w-full opacity-100' : 'w-auto'}`}>
-              <div className="rune-panel rounded-lg p-2 flex flex-col sm:flex-row items-center gap-2">
-              <div className="flex items-center gap-1 z-10">
-                <div 
-                  onClick={() => setIsFiltersOpen(!isFiltersOpen)}
-                  className="flex items-center gap-3 pl-3 pr-4 cursor-pointer group h-10"
-                >
-                  <div className="w-8 h-8 rounded-sm bg-cyan-500/10 flex items-center justify-center text-cyan-400 group-hover:scale-110 transition-transform">
-                    <Filter className="w-4 h-4" />
+          {/* Top Floating Filters & Mobile Header Spacing */}
+          {/* Filters moved to sidebar */}
+          
+          <div className="flex-1 overflow-y-auto no-scrollbar relative" ref={contentRef}>
+            {/* Search Summary Box (Rune-Bear-Tech Style) */}
+            {hasSearched && searchSummary && isBearSearch && (
+              <motion.div 
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="mx-2 mb-8 max-w-[400px]"
+              >
+                <div className="rune-panel p-6 bg-black/80 border border-orange-500/20 backdrop-blur-3xl relative overflow-hidden group shadow-[0_0_50px_rgba(249,115,22,0.15)] rounded-2xl">
+                  {/* Bear Watermark */}
+                  <div className="absolute -right-8 -bottom-8 opacity-[0.05] pointer-events-none group-hover:opacity-[0.1] transition-opacity">
+                     <BearIcon className="w-48 h-48 text-orange-500" />
                   </div>
-                  {!isFiltersOpen && (
-                    <div className="flex flex-col">
-                      <span className="text-[9px] font-magic font-black text-white/60 uppercase tracking-widest leading-none">Filters</span>
-                    </div>
+                  
+                  <div className="space-y-6 relative z-10">
+                     <div className="flex items-center justify-between border-b border-orange-500/10 pb-4">
+                        <div className="flex flex-col">
+                           <span className="text-[9px] font-magic font-black text-orange-400 uppercase tracking-[0.4em]">Ursine Resonance</span>
+                           <h3 className="text-2xl font-magic font-black text-white">Rune-Bear-Tech</h3>
+                        </div>
+                        <div className="flex flex-col items-end">
+                           <span className="text-[8px] font-mono text-white/30 uppercase tracking-widest">Nodes</span>
+                           <span className="text-3xl font-magic font-black text-white leading-none">{searchSummary.total}</span>
+                        </div>
+                     </div>
+
+                     <div className="grid grid-cols-2 gap-6">
+                        {/* Color Identity */}
+                        <div className="space-y-3">
+                           <div className="flex items-center gap-2">
+                              <div className="w-1 h-1 bg-orange-500 rotate-45" />
+                              <span className="text-[8px] font-magic font-black text-white/40 uppercase tracking-widest">Aura Spectrum</span>
+                           </div>
+                           <div className="flex flex-wrap gap-1.5">
+                              {searchSummary.colors.map(([color, count]) => (
+                                <div key={color} className="flex items-center gap-2 px-2.5 py-1 bg-white/5 border border-white/5 rounded-md">
+                                  {MANA_SYMBOL_URIS[`{${color.toUpperCase()}}`] ? (
+                                    <img src={MANA_SYMBOL_URIS[`{${color.toUpperCase()}}`]} alt={color} className="w-3.5 h-3.5" />
+                                  ) : (
+                                    <span className="text-[10px] font-mono font-bold text-white/60">{color}</span>
+                                  )}
+                                  <span className="text-[10px] font-mono font-black text-white">{count}</span>
+                                </div>
+                              ))}
+                           </div>
+                        </div>
+
+                        {/* Morphology */}
+                        <div className="space-y-3">
+                           <div className="flex items-center gap-2">
+                              <div className="w-1 h-1 bg-cyan-500 rotate-45" />
+                              <span className="text-[8px] font-magic font-black text-white/40 uppercase tracking-widest">Cellular Matrix</span>
+                           </div>
+                           <div className="space-y-1.5">
+                              {searchSummary.types.slice(0, 3).map(([type, count]) => (
+                                <div key={type} className="flex items-center justify-between px-2.5 py-1 bg-white/5 border border-white/5 rounded-md group/type">
+                                  <span className="text-[8px] font-magic font-black text-cyan-400/80 uppercase tracking-tight">{type}</span>
+                                  <span className="text-[9px] font-mono font-black text-white/60">{count}</span>
+                                </div>
+                              ))}
+                           </div>
+                        </div>
+                     </div>
+
+                     <div className="pt-4 border-t border-orange-500/10">
+                        <div className="flex items-center gap-2 mb-1">
+                           <Zap className="w-3 h-3 text-orange-500 animate-pulse" />
+                           <span className="text-[8px] font-magic font-black text-orange-400 uppercase tracking-widest">Tactical Briefing</span>
+                        </div>
+                        <p className="text-[10px] font-mono text-white/30 uppercase leading-relaxed italic">
+                           The Ursine weave is dense. High concentration of {searchSummary.types[0]?.[0]} energy identified. Proceed with reverence.
+                        </p>
+                     </div>
+                  </div>
+
+                  {/* Decorative corner runes */}
+                  <div className="absolute top-2 left-2 text-[10px] font-magic text-orange-500/10">ᚱ</div>
+                  <div className="absolute top-2 right-2 text-[10px] font-magic text-orange-500/10">ᚦ</div>
+                </div>
+              </motion.div>
+            )}
+            <div className="fixed bottom-12 right-12 z-[100] pointer-events-auto">
+              <button 
+                onClick={() => setIsDeckboxOpen(true)}
+                className="flex items-center gap-4 px-6 py-4 bg-black/60 shadow-[0_0_30px_rgba(0,0,0,0.8),0_0_20px_rgba(249,115,22,0.1)] backdrop-blur-xl text-white/40 hover:text-orange-400 rounded-3xl border border-white/10 hover:border-orange-500/40 transition-all group scale-110"
+              >
+                <div className="relative">
+                  <Layers className="w-5 h-5 group-hover:rotate-12 transition-transform text-orange-500/60" />
+                  {deckbox.length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-orange-500 rounded-full shadow-[0_0_15px_rgba(249,115,22,0.8)] animate-pulse" />
                   )}
                 </div>
-              </div>
-
-              {isFiltersOpen && (
-                <div className="flex flex-wrap gap-4 w-full flex-1 justify-center sm:justify-start animate-in fade-in slide-in-from-top-2 z-10 px-2 py-1">
-                  
-                  {/* FILTER COLUMN */}
-                  <div className="flex flex-wrap items-end gap-2 pr-4 border-r border-white/5">
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Category</span>
-                      <select 
-                        value={typeFilter} 
-                        onChange={(e) => setTypeFilter(e.target.value)}
-                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[100px]"
-                      >
-                        <option value="Any" className="bg-[#111]">All Types</option>
-                        <option value="Creature" className="bg-[#111]">Creature</option>
-                        <option value="Sorcery" className="bg-[#111]">Sorcery</option>
-                        <option value="Instant" className="bg-[#111]">Instant</option>
-                        <option value="Artifact" className="bg-[#111]">Artifact</option>
-                        <option value="Enchantment" className="bg-[#111]">Enchantment</option>
-                      </select>
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Rarity</span>
-                      <select 
-                        value={rarityFilter} 
-                        onChange={(e) => setRarityFilter(e.target.value)}
-                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[100px]"
-                      >
-                        <option value="Any" className="bg-[#111]">All Rarities</option>
-                        <option value="common" className="bg-[#111]">Common</option>
-                        <option value="uncommon" className="bg-[#111]">Uncommon</option>
-                        <option value="rare" className="bg-[#111]">Rare</option>
-                        <option value="mythic" className="bg-[#111]">Mythic</option>
-                      </select>
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Identity</span>
-                      <select 
-                        value={colorFilter} 
-                        onChange={(e) => setColorFilter(e.target.value)}
-                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[100px]"
-                      >
-                        <option value="Any" className="bg-[#111]">All Colors</option>
-                        <option value="W" className="bg-[#111]">White</option>
-                        <option value="U" className="bg-[#111]">Blue</option>
-                        <option value="B" className="bg-[#111]">Black</option>
-                        <option value="R" className="bg-[#111]">Red</option>
-                        <option value="G" className="bg-[#111]">Green</option>
-                        <option value="C" className="bg-[#111]">Colorless</option>
-                        <option value="M" className="bg-[#111]">Multicolor</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* SORT COLUMN */}
-                  <div className="flex flex-wrap items-end gap-2 pr-4 border-r border-white/5">
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Order By</span>
-                      <select 
-                        value={sortBy} 
-                        onChange={(e) => setSortBy(e.target.value)}
-                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[110px]"
-                      >
-                        <option value="released" className="bg-[#111]">Release Date</option>
-                        <option value="name" className="bg-[#111]">Name (A-Z)</option>
-                        <option value="eur" className="bg-[#111]">Value (EUR)</option>
-                        <option value="cmc" className="bg-[#111]">Mana Value</option>
-                        <option value="rarity" className="bg-[#111]">Rarity Rank</option>
-                        <option value="power" className="bg-[#111]">Strength</option>
-                      </select>
-                    </div>
-
-                    <div className="flex flex-col gap-1.5">
-                      <span className="text-[7px] font-bold text-white/20 uppercase tracking-[0.3em] pl-1">Flow</span>
-                      <select 
-                        value={sortDir} 
-                        onChange={(e) => setSortDir(e.target.value)}
-                        className="bg-black/60 border border-white/5 rounded-sm px-2 py-1.5 text-[10px] outline-none focus:border-cyan-500/50 transition-all appearance-none cursor-pointer text-white/60 shadow-[inset_0_0_10px_rgba(0,0,0,0.8)] min-w-[70px]"
-                      >
-                        <option value="desc" className="bg-[#111]">DESC</option>
-                        <option value="asc" className="bg-[#111]">ASC</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <button 
-                      onClick={() => performSearch()}
-                      className="px-5 py-2.5 rounded-sm bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 font-magic font-black text-[10px] hover:bg-cyan-500/20 hover:border-cyan-500/40 transition-all uppercase tracking-widest z-10"
-                    >
-                      Apply Filters
-                    </button>
-                    
-                    <button 
-                      onClick={() => {
-                        setTypeFilter("Any");
-                        setRarityFilter("Any");
-                        setColorFilter("Any");
-                        setSortBy("released");
-                        setSortDir("desc");
-                        performSearch({ 
-                          typeOverride: "Any", 
-                          rarityOverride: "Any", 
-                          colorOverride: "Any", 
-                          orderOverride: "released", 
-                          dirOverride: "desc" 
-                        });
-                      }}
-                      className="px-4 py-2.5 rounded-sm border border-white/5 text-white/40 font-mono text-[9px] hover:text-white/80 hover:bg-white/5 transition-all uppercase tracking-widest z-10"
-                    >
-                      Clear Filters
-                    </button>
-                  </div>
-                  <button 
-                    onClick={() => setIsFiltersOpen(false)}
-                    className="p-1 px-2 bg-white/5 hover:bg-white/10 rounded-lg text-white/40 transition-all"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )}
+                <span className="text-[11px] font-magic font-black uppercase tracking-[0.3em] group-hover:tracking-[0.4em] transition-all">Selected Cardboard</span>
+                {deckbox.length > 0 && (
+                   <span className="text-[10px] font-mono opacity-60 text-orange-200">({deckbox.length})</span>
+                )}
+              </button>
             </div>
-          </div>
-        )}
-
-        {/* Content Area - Scrollable */}
-        <div 
-          ref={contentRef}
-          className="flex-1 overflow-y-auto no-scrollbar custom-scrollbar min-h-0"
-        >
-          {/* Persistent Radio View (Always mounted to keep music playing) */}
-          <div className={`${viewMode === 'radio' ? 'flex' : 'hidden'} flex-1 flex-col h-full absolute inset-0 z-20 w-full p-4 lg:p-12 items-center justify-center bg-[#050505] overflow-hidden`}>
-            {/* Rune Tech Background */}
-            <div className="absolute inset-0 pointer-events-none flex items-center justify-center opacity-60">
-              <div className="absolute w-[200vw] sm:w-[150vw] md:w-[100vw] aspect-square rounded-full border border-purple-500/30 animate-[spin_100s_linear_infinite]" />
-              <div className="absolute w-[180vw] sm:w-[130vw] md:w-[80vw] aspect-square rounded-full border-2 border-dashed border-purple-500/40 animate-[spin_80s_linear_infinite_reverse]" />
-              <div className="absolute w-[150vw] sm:w-[100vw] md:w-[60vw] aspect-square rounded-full border-[8px] border-dotted border-purple-500/20 animate-[spin_60s_linear_infinite]" />
-              <div className="absolute w-[100vw] sm:w-[50vw] md:w-[40vw] aspect-square rounded-full border-[4px] border-purple-500/10 animate-[spin_40s_linear_infinite_reverse]" />
-              <div className="absolute font-magic text-[100vw] md:text-[50vw] text-purple-500 opacity-10 select-none">♫</div>
-              <div className="absolute font-magic text-[80vw] md:text-[40vw] text-purple-400 opacity-10 -translate-x-1/4 -translate-y-1/4 rotate-45 select-none drop-shadow-[0_0_50px_rgba(168,85,247,0.5)]">✦</div>
-            </div>
-
-            <motion.div 
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="rune-panel p-8 rounded-[3rem] w-full max-w-2xl relative z-10 border-purple-500/20 shadow-[0_0_50px_rgba(168,85,247,0.1)] bg-black/80 backdrop-blur-3xl"
-            >
-              <div className="flex items-center gap-6 mb-8 border-b border-purple-500/10 pb-6">
-                <div className="w-16 h-16 rounded-2xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20 shadow-[0_0_20px_rgba(168,85,247,0.2)]">
-                  <Radio className="w-8 h-8 text-purple-400" />
-                </div>
-                <div>
-                  <h2 className="text-3xl font-magic font-black uppercase text-purple-400 tracking-[0.2em]">MOB Radio</h2>
-                  <p className="text-[10px] font-mono text-purple-500/40 uppercase tracking-[0.5em]">Vault Resonance Channel 7iB.83</p>
-                </div>
-              </div>
-              
-              <div className="rounded-3xl overflow-hidden border border-white/5 bg-black/40">
-                <iframe 
-                  data-testid="embed-iframe" 
-                  style={{ borderRadius: '12px' }} 
-                  src="https://open.spotify.com/embed/playlist/7iBoB3zGaDwDFQTylu49RH?utm_source=generator&theme=0" 
-                  width="100%" 
-                  height="352" 
-                  frameBorder="0" 
-                  allowFullScreen={true} 
-                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" 
-                  loading="lazy"
-                />
-              </div>
-              
-              <div className="mt-8 flex items-center justify-between text-[10px] font-mono uppercase tracking-[0.3em] text-purple-500/30">
-                <span className="flex items-center gap-2 italic"><div className="w-1 h-1 rounded-full bg-purple-500 animate-pulse" /> Live Transmission</span>
-                <span className="flex items-center gap-2">Magic Over Bitches</span>
-              </div>
-            </motion.div>
-          </div>
-
           {viewMode === 'cards' && (
             <div 
               className={`grid gap-3 sm:gap-6 p-2 pb-4`}
@@ -2580,48 +2733,86 @@ Return ONLY JSON. No markdown backticks.`;
                     <>
                       <div className="fixed inset-0 z-0 pointer-events-none overflow-hidden bg-[#050505]">
                         {/* High Visibility Intense Arcane Background */}
-                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(249,115,22,0.2)_0%,transparent_70%)] opacity-80" />
-                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,rgba(6,182,212,0.2)_0%,transparent_60%)]" />
-                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.1)_0%,transparent_50%)]" />
+                        <div 
+                          className="absolute inset-0 opacity-[0.08] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat bg-fixed"
+                          style={{ backgroundImage: `url(${runesBackground})` }}
+                        />
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(249,115,22,0.15)_0%,transparent_70%)] opacity-80" />
+                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom,rgba(6,182,212,0.15)_0%,transparent_60%)]" />
 
                         {/* Dramatic Animated Rings - Integrated Orange and Cyan */}
                         <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="w-[90vw] h-[90vw] border-[10px] border-orange-500/30 rounded-full animate-[spin_120s_linear_infinite] shadow-[0_0_80px_rgba(249,115,22,0.15)]" />
-                          <div className="absolute w-[85vw] h-[85vw] border-[2px] border-dashed border-cyan-500/40 rounded-full animate-[spin_80s_linear_infinite_reverse] shadow-[0_0_60px_rgba(6,182,212,0.1)]" />
-                          <div className="absolute w-[75vw] h-[75vw] border-[12px] border-double border-orange-500/20 rounded-full animate-[spin_180s_linear_infinite]" />
-                          <div className="absolute w-[100vw] h-[100vw] border-[1px] border-white/5 rounded-full animate-[spin_240s_linear_infinite]" />
+                          <div className="w-[90vw] h-[90vw] border-[10px] border-orange-500/20 rounded-full animate-[spin_120s_linear_infinite] shadow-[0_0_80px_rgba(249,115,22,0.1)]" />
+                          <div className="absolute w-[85vw] h-[85vw] border-[2px] border-dashed border-cyan-500/30 rounded-full animate-[spin_80s_linear_infinite_reverse] shadow-[0_0_60px_rgba(6,182,212,0.05)]" />
+                          <div className="absolute w-[75vw] h-[75vw] border-[12px] border-double border-orange-500/10 rounded-full animate-[spin_180s_linear_infinite]" />
                         </div>
 
-                        {/* Vivid Arcane Runes - Rebuilt for slow atmospheric drift */}
-                        <div className="absolute top-[12%] left-[12%] text-[24vw] opacity-[0.1] text-orange-500 font-magic select-none animate-[pulse_8s_ease-in-out_infinite] drop-shadow-[0_0_50px_rgba(249,115,22,0.6)]">ᛉ</div>
-                        <div className="absolute bottom-[10%] right-[10%] text-[28vw] opacity-[0.1] text-cyan-400 font-magic select-none animate-[pulse_10s_ease-in-out_infinite] delay-1000 drop-shadow-[0_0_60px_rgba(34,211,238,0.7)]">ᛗ</div>
-                        <div className="absolute top-[28%] right-[18%] text-[16vw] opacity-[0.06] text-red-500 font-magic select-none animate-[pulse_12s_ease-in-out_infinite] delay-2000">ᚦ</div>
-                        <div className="absolute bottom-[22%] left-[8%] text-[20vw] opacity-[0.05] text-green-400 font-magic select-none animate-[pulse_15s_ease-in-out_infinite] delay-3000">ᛟ</div>
-                        
-                        {/* Atmospheric Fog/Gradients */}
-                        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-transparent to-[#0A0A0A]" />
-                        <div className="absolute inset-0 bg-gradient-to-r from-[#0A0A0A] via-transparent to-[#0A0A0A]" />
-                      </div>
+                        {/* Alternating Glowing Mana Symbols and Runes aligned for background interaction */}
+                        <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+                           {[
+                             { s: 'w', t: 'mana' }, { s: 'u', t: 'mana' }, { s: 'b', t: 'mana' }, { s: 'r', t: 'mana' }, { s: 'g', t: 'mana' },
+                             { s: 'ᛉ', t: 'rune' }, { s: 'ᛗ', t: 'rune' }, { s: 'ᚦ', t: 'rune' }, { s: 'ᛟ', t: 'rune' }, { s: 'ᚱ', t: 'rune' }
+                           ].map((item, i) => {
+                             const isActive = i === glowIndex;
+                             const isMana = item.t === 'mana';
+                             // Circular distribution: Mana symbols inner (r=30), Runes outer (r=42)
+                             // Offset runes by 36% degrees so they don't overlap mana pins
+                             const angle = (i % 5 * 2 * Math.PI) / 5 - Math.PI / 2 + (isMana ? 0 : Math.PI / 5);
+                             const r = isMana ? 30 : 42; 
+                             
+                             return (
+                               <motion.div
+                                 key={i}
+                                 animate={{ 
+                                   scale: isActive ? 1.4 : 1,
+                                   opacity: isActive ? 0.3 : 0.02,
+                                   filter: isActive ? 'drop-shadow(0 0 40px white)' : 'none'
+                                 }}
+                                 transition={{ duration: 4, ease: "easeInOut" }}
+                                 className="absolute w-[18vh] h-[18vh] flex items-center justify-center"
+                                 style={{
+                                   top: `${50 + r * Math.sin(angle)}%`,
+                                   left: `${50 + r * Math.cos(angle)}%`,
+                                   transform: 'translate(-50%, -50%)'
+                                 }}
+                               >
+                                 {isMana ? (
+                                   <img src={MANA_SYMBOL_URIS[`{${item.s.toUpperCase()}}`]} alt={item.s} className="w-full h-full object-contain" />
+                                 ) : (
+                                   <span className={`text-[12vh] font-magic ${i % 2 === 0 ? 'text-cyan-400' : 'text-orange-500'}`}>{item.s}</span>
+                                 )}
+                               </motion.div>
+                             );
+                           })}
+                        </div>
                        
-                       <div className="mt-10 sm:mt-20 relative z-10 flex flex-col items-center">
-                         <h2 className="text-5xl md:text-7xl font-magic font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white via-white to-cyan-500 uppercase tracking-tighter mb-6 shadow-black text-center drop-shadow-[0_0_60px_rgba(6,182,212,0.7)]">The Runes Await</h2>
-                         <div className="text-sm text-orange-100/90 max-w-xl mx-auto leading-relaxed mb-6 px-10 font-mono tracking-widest text-center bg-black/90 p-10 rounded-[3rem] backdrop-blur-3xl border border-orange-500/20 shadow-[0_0_50px_rgba(0,0,0,0.8)] scale-105 flex flex-col items-center gap-4">
-                           <span className="text-orange-500 font-black text-lg block tracking-[0.2em]">FORGE YOUR SYNERGIES</span>
-                           <div className="space-y-1">
-                             <p className="opacity-80 text-[13px] font-sans uppercase font-medium">
-                               Discover Recent and Future Releases <br/>
-                               & Summon the Perfect Additions To Your Decks.
-                             </p>
-                           </div>
-                           <span className="w-full text-[10px] opacity-40 mt-2 block border-t border-white/10 pt-6 font-magic font-bold uppercase transition-all duration-1000">SYNERGY SCRIBED • SLOPSIE APPROVED</span>
-                         </div>
+                       {/* Centered Go Home View */}
+                       <div className="absolute inset-0 z-10 flex flex-col items-center justify-center p-4">
+                          <motion.div 
+                            initial={{ opacity: 0, scale: 0.9 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            className="relative z-10 flex flex-col items-center"
+                          >
+                             <h2 className="text-5xl md:text-8xl font-magic font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white via-white to-cyan-500 uppercase tracking-tighter mb-8 shadow-black text-center drop-shadow-[0_0_60px_rgba(6,182,212,0.7)]">The Runes Await</h2>
+                             <div className="text-sm text-orange-100/90 max-w-xl mx-auto leading-relaxed mb-6 px-12 font-mono tracking-widest text-center bg-black/90 p-12 rounded-[4rem] backdrop-blur-3xl border border-orange-500/20 shadow-[0_0_80px_rgba(0,0,0,0.9)] scale-105 flex flex-col items-center gap-6">
+                              <span className="text-orange-500 font-black text-xl block tracking-[0.3em]">FORGE YOUR SYNERGIES</span>
+                              <div className="space-y-2">
+                                <p className="opacity-80 text-[14px] font-sans uppercase font-medium">
+                                  Discover Recent and Future Releases <br/>
+                                  & Summon the Perfect Additions To Your Decks.
+                                </p>
+                              </div>
+                              <span className="w-full text-[10px] opacity-20 mt-4 block border-t border-white/5 pt-6 font-magic font-bold uppercase">SYNERGY SCRIBED • SLOPSIE APPROVED</span>
+                            </div>
 
-                         <div className="flex justify-center gap-4 mt-8 relative z-10">
-                           <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,1)] animate-pulse" />
-                           <div className="w-2 h-2 rounded-full bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,1)] animate-pulse delay-150" />
-                           <div className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,1)] animate-pulse delay-300" />
-                         </div>
+                            <div className="flex justify-center gap-6 mt-12">
+                              <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,1)] animate-pulse" />
+                              <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 shadow-[0_0_15px_rgba(6,182,212,1)] animate-pulse delay-150" />
+                              <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,1)] animate-pulse delay-300" />
+                            </div>
+                          </motion.div>
                        </div>
+                      </div>
                     </>
                   )}
                 </div>
@@ -2726,13 +2917,13 @@ Return ONLY JSON. No markdown backticks.`;
                       
                       <div className="absolute inset-x-6 top-6 flex justify-between items-start">
                          <div className="relative group/manas">
-                            <div className="bg-white/[0.03] backdrop-blur-md p-1 rounded-lg border border-white/5 shadow-2xl relative z-10 flex items-center justify-center min-w-[32px]">
-                               {renderManaSymbols(deck.ci, 'w-3 h-3')}
+                            <div className="flex items-center bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-white/10 shadow-xl group-hover:border-white/20 transition-all min-h-[30px]">
+                               {renderManaSymbols(deck.ci, 'w-3.5 h-3.5')}
                             </div>
                          </div>
                          {deck.totalCost ? (
                             <div className="flex flex-col items-end gap-1">
-                              <div className="flex items-center bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-[#00aeef]/20 shadow-xl group-hover:border-[#00aeef]/40 transition-all">
+                              <div className="flex items-center bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-[#00aeef]/20 shadow-xl group-hover:border-[#00aeef]/40 transition-all min-h-[30px]">
                                 <span className="text-[8px] text-[#00aeef]/70 font-magic font-extrabold uppercase mr-2 tracking-widest leading-none">Price</span>
                                 <span className="text-[12px] text-white/90 font-mono font-black">€{deck.totalCost.toFixed(2)}</span>
                               </div>
@@ -2747,10 +2938,7 @@ Return ONLY JSON. No markdown backticks.`;
                     </div>
 
                     <div className="p-6 flex-1 flex flex-col gap-6">
-                      <div className="flex items-center justify-between gap-4 bg-white/[0.02] border border-white/[0.04] p-2 pr-4 rounded-full">
-                        <div className="flex flex-col pl-4">
-                          <span className="text-[8px] text-white/20 uppercase font-black tracking-widest">Deck Strategy</span>
-                        </div>
+                      <div className="flex flex-col gap-3 bg-white/[0.02] border border-white/[0.04] p-5 rounded-2xl">
                         <button 
                           onClick={() => autoAddCommanderTags(deck.id, deck.commanders)}
                           className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all text-[10px] font-black uppercase tracking-[0.2em] ${
@@ -2838,7 +3026,7 @@ Return ONLY JSON. No markdown backticks.`;
                           <span className="text-[9px] font-magic tracking-widest uppercase font-black">View Deck</span>
                         </button>
                         <button 
-                          onClick={() => deleteSavedDeck(deck.id)}
+                          onClick={() => setDeckToDelete(deck.id)}
                           className="px-4 py-2 bg-red-500/5 hover:bg-red-500/20 rounded-xl text-red-500/50 hover:text-red-400 border border-red-500/10 hover:border-red-500/30 transition-all active:scale-95 flex items-center justify-center group shadow-[0_0_15px_rgba(239,68,68,0.05)]"
                           title="delete this deck from rune deck"
                         >
@@ -2865,10 +3053,19 @@ Return ONLY JSON. No markdown backticks.`;
             </div>
           )}
 
-          {viewMode === 'stats' && viewingDeckCards && (
-            <div className="p-4 lg:p-8">
-              <DeckAnalysis cards={viewingDeckCards} />
-            </div>
+          {viewMode === 'radio' && (
+            <RuneRadioPage 
+              activeVibe={activeVibe} 
+              setActiveVibe={handleVibeChange}
+              isMusicPlaying={isMusicPlaying}
+              setIsMusicPlaying={setIsMusicPlaying}
+              isConnecting={isConnecting}
+              setIsConnecting={setIsConnecting}
+              toggleGlobalMusic={toggleGlobalMusic}
+              musicVolume={musicVolume}
+              setMusicVolume={setMusicVolume}
+              MUSIC_VIBES={MUSIC_VIBES}
+            />
           )}
         </div>
       </div>
@@ -2922,29 +3119,26 @@ Return ONLY JSON. No markdown backticks.`;
                      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/5 rounded-full blur-[120px] pointer-events-none" />
                      
                      {/* LEFT COLUMN: TACTICAL LIST */}
-                     <div className="w-full lg:w-[45%] xl:w-[40%] overflow-y-auto no-scrollbar p-6 lg:px-10 lg:py-8 pb-32 relative z-10 border-r border-white/5">
-                       <div className="space-y-14">
-
+                     <div className="w-full lg:w-[320px] xl:w-[380px] overflow-y-auto no-scrollbar p-4 relative z-10 border-r border-white/5 bg-black/40">
+                       <div className="space-y-6">
                          {Object.entries(groupedDeckCards)
                            .filter(([_, cards]) => (cards as any[]).length > 0)
                            .map(([category, cards]) => (
-                             <div key={category} className="space-y-4">
-                               <div className="flex items-center gap-4 group">
-                                 <div className="w-1.5 h-1.5 bg-cyan-500 rotate-45 group-hover:scale-150 transition-transform" />
-                                 <h3 className="text-[11px] font-magic font-black text-white/50 uppercase tracking-[0.5em] group-hover:text-cyan-400 transition-colors">{category}</h3>
-                                 <div className="h-[1px] bg-gradient-to-r from-white/10 to-transparent flex-1" />
-                                 <span className="text-[10px] font-mono text-cyan-400 font-bold px-3 py-1 bg-white/5 rounded-full border border-white/5">{(cards as any[]).length}</span>
+                             <div key={category} className="space-y-1">
+                               <div className="flex items-center gap-2 group mb-2 mt-4 first:mt-0">
+                                 <div className="w-1 h-1 bg-cyan-500 rotate-45" />
+                                 <h3 className="text-[8px] font-magic font-black text-white/30 uppercase tracking-[0.3em]">{category}</h3>
+                                 <span className="text-[8px] font-mono text-cyan-400/40 ml-auto">{(cards as any[]).length}</span>
                                </div>
                                
-                               <div className="grid grid-cols-1 xl:grid-cols-2 gap-x-6 gap-y-1.5">
+                               <div className="flex flex-col">
                                  {(cards as any[]).map((dc, i) => {
                                    const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                   const edition = dc.card?.edition;
                                    const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
                                    const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                   const manaCost = oracle?.mana_cost || scryfall?.mana_cost || edition?.mana_cost || '';
+                                   const edition = dc.card?.edition;
                                    const cardName = c?.name || dc.card?.name || 'Unknown Card';
-                                   const typeLine = oracle?.type_line || scryfall?.type_line || edition?.type_line || '';
+                                   const manaCost = oracle?.mana_cost || scryfall?.mana_cost || edition?.mana_cost || '';
                                    
                                    let img = scryfall?.image_uris?.large || scryfall?.image_uris?.png || edition?.image_uris?.large || edition?.image_uris?.png || edition?.imageUrl || edition?.image_url || scryfall?.image_uris?.normal || oracle?.image_uris?.large || oracle?.image_uris?.normal;
                                    const scryfallId = dc.card?.scryfall_id || dc.card?.scryfallId || dc.card?.uids?.scryfall || scryfall?.id || dc.uids?.scryfall;
@@ -2952,69 +3146,97 @@ Return ONLY JSON. No markdown backticks.`;
                                       img = `https://cards.scryfall.io/large/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
                                    }
 
+                                   const isSelected = selectedDeckCard === img || hoveredPreviewCard === img;
+
                                    return (
-                                     <motion.div 
+                                     <button 
                                        key={`${category}-${i}`}
-                                       initial={{ opacity: 0, x: -10 }}
-                                       animate={{ opacity: 1, x: 0 }}
-                                       transition={{ delay: i * 0.01 }}
-                                       onMouseEnter={() => setHoveredPreviewCard(img || null)}
-                                       onClick={() => setHoveredPreviewCard(img || null)}
-                                       className="group relative flex items-center justify-between p-3 rounded-xl border border-white/5 bg-white/[0.02] hover:border-cyan-500/40 hover:bg-cyan-500/[0.04] transition-all cursor-pointer"
+                                       onClick={() => {
+                                          setSelectedDeckCard(img);
+                                          setHoveredPreviewCard(img);
+                                       }}
+                                       onMouseEnter={() => setHoveredPreviewCard(img)}
+                                       className={`group flex items-center justify-between py-1.5 px-3 rounded-lg transition-all border ${
+                                         isSelected ? 'bg-cyan-500/10 border-cyan-500/20' : 'border-transparent hover:bg-white/[0.04]'
+                                       }`}
                                      >
-                                       <div className="flex items-center gap-4 min-w-0">
-                                         <div className="w-1.5 h-1.5 rounded-full bg-white/10 group-hover:bg-cyan-500 group-hover:shadow-[0_0_8px_rgba(6,182,212,0.6)] transition-all" />
-                                         <div className="flex flex-col min-w-0">
-                                           <span className="text-sm sm:text-base font-magic font-black text-white group-hover:text-cyan-400 transition-colors uppercase tracking-tight truncate">{cardName}</span>
-                                           <span className="text-xs font-mono text-white/50 truncate group-hover:text-white/70 transition-colors">{typeLine}</span>
-                                         </div>
+                                       <div className="flex items-center gap-2 min-w-0">
+                                         <span className="text-[9px] font-mono text-white/20 w-3">{dc.quantity || 1}</span>
+                                         <span className={`text-[11px] font-magic font-bold uppercase tracking-wide truncate transition-colors ${
+                                           isSelected ? 'text-cyan-400' : 'text-white/50 group-hover:text-white'
+                                         }`}>
+                                           {cardName}
+                                         </span>
                                        </div>
-                                       
-                                       <div className="flex items-center gap-4 shrink-0">
-                                         <div className="text-xs font-mono text-white/60 group-hover:text-white transition-colors flex items-center gap-2">
-                                           <span className="font-bold">MV: {oracle?.cmc || scryfall?.cmc || edition?.cmc || dc.card?.cmc || 0}</span>
-                                           {renderManaSymbols(manaCost)}
-                                         </div>
-                                         <div className="w-8 h-8 md:w-10 md:h-10 rounded-lg bg-black/40 border border-white/20 flex items-center justify-center text-sm font-mono font-bold text-white/80 group-hover:border-cyan-500/60 group-hover:text-cyan-400 transition-all">
-                                           {dc.quantity || 1}
-                                         </div>
+                                       <div className="flex items-center gap-1 shrink-0 ml-2">
+                                         {renderManaSymbols(manaCost, 'w-3 h-3')}
                                        </div>
-                                     </motion.div>
+                                     </button>
                                    );
                                  })}
                                </div>
                              </div>
                            ))}
                        </div>
-                    </div>
-                                {/* MIDDLE COLUMN: CARD FOCUS */}
-                                <div className="hidden lg:flex flex-[1.2] xl:flex-[1.4] bg-[#020404] items-center justify-center p-8 relative z-20 overflow-hidden relative">
-                                    <div className="absolute inset-0 opacity-[0.02] pointer-events-none flex items-center justify-center mix-blend-screen bg-center bg-cover bg-no-repeat" style={{ backgroundImage: `url(${runesBackground})` }} />
-                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.05)_0%,transparent_70%)] animate-pulse" />
+                     </div>
+
+                     {/* IMAGE DISPLAY COLUMN */}
+                     <div className="hidden lg:flex flex-1 bg-[#020404] items-center justify-center p-8 relative z-20 overflow-hidden border-r border-white/5">
+                                    <div className="absolute inset-0 opacity-[0.05] pointer-events-none flex items-center justify-center mix-blend-screen bg-center bg-cover bg-no-repeat" style={{ backgroundImage: `url(${runesBackground})` }} />
+                                    
+                                    {/* Animated Scrying Rings */}
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                       <div className="w-[40vh] h-[40vh] border border-cyan-500/20 rounded-full animate-[spin_60s_linear_infinite] p-4">
+                                          <div className="w-full h-full border border-cyan-500/10 rounded-full animate-[spin_30s_linear_infinite_reverse]" />
+                                       </div>
+                                       <div className="absolute w-[45vh] h-[45vh] border-2 border-dashed border-cyan-500/5 rounded-full animate-[spin_120s_linear_infinite]" />
+                                    </div>
+
+                                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1)_0%,transparent_70%)]" />
                                     <AnimatePresence mode="wait">
                                         {hoveredPreviewCard ? (
-                                        <motion.div 
+                                         <motion.div 
                                             key={hoveredPreviewCard}
-                                            initial={{ opacity: 0, scale: 0.9, y: 30 }}
-                                            animate={{ opacity: 1, scale: 1, y: 0 }}
-                                            exit={{ opacity: 0, scale: 0.9, y: -30 }}
-                                            transition={{ type: "spring", damping: 25, stiffness: 120 }}
-                                            className="relative z-20 flex items-center justify-center pointer-events-none"
+                                            initial={{ opacity: 0, scale: 0.8, rotateY: 45 }}
+                                            animate={{ opacity: 1, scale: 1, rotateY: 0 }}
+                                            exit={{ opacity: 0, scale: 0.8, rotateY: -45 }}
+                                            transition={{ type: "spring", damping: 20, stiffness: 100 }}
+                                            className="relative z-20 flex items-center justify-center pointer-events-none perspective-1000"
                                         >
-                                            <img 
-                                            src={hoveredPreviewCard} 
-                                            alt="Optic Focus" 
-                                            className="w-48 xl:w-56 max-w-full h-auto object-contain rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_30px_rgba(6,182,212,0.2)] border border-cyan-500/30"
-                                            referrerPolicy="no-referrer"
-                                            />
+                                            <div className="absolute inset-0 bg-cyan-400/20 blur-[80px] rounded-full animate-pulse" />
+                                            {/* Rune-Tech Tech Accents */}
+                                            <div className="absolute inset-0 -m-8 border border-cyan-500/20 rounded-[2rem] animate-[spin_20s_linear_infinite]" />
+                                            <div className="absolute inset-0 -m-12 border border-cyan-500/10 rounded-[3rem] animate-[spin_40s_linear_infinite_reverse]" />
+                                            
+                                            <div className="relative group">
+                                              <img 
+                                                src={hoveredPreviewCard} 
+                                                alt="Optic Focus" 
+                                                className="w-[32vh] xl:w-[38vh] max-w-full h-auto object-contain rounded-[1.8rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
+                                                referrerPolicy="no-referrer"
+                                              />
+                                              
+                                              {/* Corner Tech Brackets */}
+                                              <div className="absolute -top-4 -left-4 w-12 h-12 border-t-2 border-l-2 border-cyan-400 rounded-tl-2xl z-20 opacity-60" />
+                                              <div className="absolute -top-4 -right-4 w-12 h-12 border-t-2 border-r-2 border-cyan-400 rounded-tr-2xl z-20 opacity-60" />
+                                              <div className="absolute -bottom-4 -left-4 w-12 h-12 border-b-2 border-l-2 border-cyan-400 rounded-bl-2xl z-20 opacity-60" />
+                                              <div className="absolute -bottom-4 -right-4 w-12 h-12 border-b-2 border-r-2 border-cyan-400 rounded-br-2xl z-20 opacity-60" />
+                                            </div>
+
+                                            {/* Rune Accents */}
+                                            <div className="absolute -top-16 -left-16 text-cyan-400/60 font-magic text-6xl animate-pulse">ᛉ</div>
+                                            <div className="absolute -bottom-16 -right-16 text-cyan-400/60 font-magic text-6xl animate-pulse">ᚦ</div>
+                                            <div className="absolute top-1/2 -left-24 -translate-y-1/2 text-cyan-500/20 font-magic text-4xl rotate-90">ᚱᚢᚾᛖ</div>
+                                            <div className="absolute top-1/2 -right-24 -translate-y-1/2 text-cyan-500/20 font-magic text-4xl -rotate-90">ᛏᛖᚳᚺ</div>
                                         </motion.div>
                                         ) : (
                                         <motion.div 
                                             initial={{ opacity: 0 }}
                                             animate={{ opacity: 1 }}
-                                            className="flex flex-col items-center gap-10 text-cyan-400/10"
+                                            className="flex flex-col items-center gap-10 text-cyan-400/20"
                                         >
-                                            <p className="text-xs uppercase tracking-widest font-magic">Awaiting Selection</p>
+                                            <div className="w-24 h-24 border-4 border-cyan-500/10 border-t-cyan-500/40 rounded-full animate-spin" />
+                                            <p className="text-xs uppercase tracking-[1em] font-magic animate-pulse">Awaiting Signal</p>
                                         </motion.div>
                                         )}
                                     </AnimatePresence>
@@ -3038,7 +3260,7 @@ Return ONLY JSON. No markdown backticks.`;
                                                <div className="w-1 h-1 bg-cyan-500/20 rounded-full" />
                                             </div>
                                          </div>
-                                         <p className="text-[11px] font-mono text-white/20 uppercase tracking-widest truncate">{viewingDeckName || 'No Manifest Selected'}</p>
+                                         <p className="text-[11px] font-mono text-white/20 uppercase tracking-widest truncate">{viewingDeckName || 'No Deck Selected'}</p>
                                       </div>
                                     </div>
                                     {/* LOWER DATA: TELEMETRY & SYNERGY */}
@@ -3092,47 +3314,48 @@ Return ONLY JSON. No markdown backticks.`;
                                             <div className="flex items-center gap-10">
                                                <div className="w-28 h-28">
                                                   <ResponsiveContainer width="100%" height="100%">
-                                                     <PieChart>
-                                                        <Pie
-                                                           data={(() => {
-                                                              const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
-                                                              viewingDeckCards.forEach(dc => {
-                                                                 const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                                                 const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
-                                                                 const tl = (card?.type_line || scryfall?.type_line || '').toLowerCase();
-                                                                 if (tl.includes('land')) return;
-                                                                 const colors = card?.colors || scryfall?.colors || card?.color_identity || scryfall?.color_identity || [];
-                                                                 const qty = dc.quantity || 1;
-                                                                 if (colors.length > 0) colors.forEach((c: string) => { if(counts[c] !== undefined) counts[c] += qty; });
-                                                                 else counts.C += qty;
-                                                              });
-                                                              return Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value }));
-                                                           })()}
-                                                           cx="50%"
-                                                           cy="50%"
-                                                           innerRadius={24}
-                                                           outerRadius={36}
-                                                           paddingAngle={4}
-                                                           dataKey="value"
-                                                        >
-                                                           {(() => {
-                                                              const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0, C: 0 };
-                                                              viewingDeckCards.forEach(dc => {
-                                                                 const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
-                                                                 const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
-                                                                 const tl = (card?.type_line || scryfall?.type_line || '').toLowerCase();
-                                                                 if (tl.includes('land')) return;
-                                                                 const colors = card?.colors || scryfall?.colors || card?.color_identity || scryfall?.color_identity || [];
-                                                                 const qty = dc.quantity || 1;
-                                                                 if (colors.length > 0) colors.forEach((c: string) => { if(counts[c] !== undefined) counts[c] += qty; });
-                                                                 else counts.C += qty;
-                                                              });
-                                                              const data = Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value }));
-                                                              const COLORS = { W: '#f0e6d2', U: '#00aeef', B: '#333333', R: '#ef5350', G: '#4caf50', C: '#9e9e9e' };
-                                                              return data.map(entry => <Cell key={entry.name} fill={COLORS[entry.name as keyof typeof COLORS]} />);
-                                                           })()}
-                                                        </Pie>
-                                                     </PieChart>
+                                           <PieChart>
+                                            <Pie
+                                               data={(() => {
+                                                  const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+                                                  viewingDeckCards.forEach(dc => {
+                                                     const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                                     const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                                     const manaCost = oracle?.mana_cost || scryfall?.mana_cost || '';
+                                                     
+                                                     // Extract colored symbols from mana cost
+                                                     const matches = manaCost.match(/\{[WUBRG]\}/g);
+                                                     if (matches) {
+                                                        matches.forEach(m => {
+                                                           const color = m.substring(1, 2);
+                                                           if (counts[color] !== undefined) counts[color]++;
+                                                        });
+                                                     }
+                                                  });
+                                                  return Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value }));
+                                               })()}
+                                               cx="50%"
+                                               cy="50%"
+                                               innerRadius={24}
+                                               outerRadius={36}
+                                               paddingAngle={4}
+                                               dataKey="value"
+                                            >
+                                               {(() => {
+                                                  const COLORS = { W: '#f0e6d2', U: '#00aeef', B: '#333333', R: '#ef5350', G: '#4caf50' };
+                                                  const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+                                                  viewingDeckCards.forEach(dc => {
+                                                     const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                                     const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                                     const manaCost = oracle?.mana_cost || scryfall?.mana_cost || '';
+                                                     const matches = manaCost.match(/\{[WUBRG]\}/g);
+                                                     if (matches) { matches.forEach(m => { const color = m.substring(1, 2); if (counts[color] !== undefined) counts[color]++; }); }
+                                                  });
+                                                  const data = Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value }));
+                                                  return data.map(entry => <Cell key={entry.name} fill={COLORS[entry.name as keyof typeof COLORS]} />);
+                                               })()}
+                                            </Pie>
+                                         </PieChart>
                                                   </ResponsiveContainer>
                                                </div>
                                                <div className="flex-1 grid grid-cols-2 gap-y-2 gap-x-4">
@@ -3195,7 +3418,6 @@ Return ONLY JSON. No markdown backticks.`;
                                                onClick={() => { setViewMode('stats'); setIsViewingDeck(false); }}
                                                className="text-[9px] font-magic font-bold uppercase tracking-widest text-cyan-400/60 hover:text-cyan-400 transition-colors py-1 px-3 border border-cyan-500/20 rounded-full"
                                             >
-                                               Full Analysis
                                             </button>
                                          </div>
                                       </div>
@@ -3224,9 +3446,57 @@ Return ONLY JSON. No markdown backticks.`;
         )}
       </AnimatePresence>
 
-      {/* Onboarding Tutorial Modal */}
-      <AnimatePresence>
-        {showOnboarding && (
+        {/* Delete Confirmation Modal */}
+        <AnimatePresence>
+          {deckToDelete && (
+            <div className="fixed inset-0 z-[1100] flex items-center justify-center p-4">
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setDeckToDelete(null)}
+                className="absolute inset-0 bg-black/80 backdrop-blur-sm" 
+              />
+              <motion.div 
+                initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                animate={{ scale: 1, opacity: 1, y: 0 }}
+                exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                className="relative bg-[#0d0d0d] border border-white/10 p-8 rounded-3xl max-w-md w-full shadow-2xl overflow-hidden"
+              >
+                <div className="absolute inset-0 opacity-[0.05] pointer-events-none mix-blend-screen bg-center bg-cover" style={{ backgroundImage: `url(${runesBackground})` }} />
+                
+                <div className="relative z-10 text-center">
+                  <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center text-red-500 mx-auto mb-6 border border-red-500/20">
+                    <Trash2 className="w-8 h-8" />
+                  </div>
+                  <h3 className="text-2xl font-magic font-extrabold text-white uppercase tracking-tight mb-2">Purge Deck?</h3>
+                  <p className="text-sm text-white/40 leading-relaxed mb-8">
+                    {userName || user?.displayName || "User"}, are you sure you want to remove this deck from your library? This action is irreversible.
+                  </p>
+                  
+                  <div className="flex gap-4">
+                    <button 
+                      onClick={() => setDeckToDelete(null)}
+                      className="flex-1 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] text-white/60 hover:text-white transition-all"
+                    >
+                      Cancel
+                    </button>
+                    <button 
+                      onClick={() => deleteSavedDeck(deckToDelete)}
+                      className="flex-1 py-4 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 rounded-2xl text-[10px] font-black uppercase tracking-[0.2em] text-red-400 hover:text-red-300 transition-all"
+                    >
+                      Confirm Purge
+                    </button>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </AnimatePresence>
+
+        {/* Onboarding Tutorial Modal */}
+        <AnimatePresence>
+          {showOnboarding && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -3328,37 +3598,65 @@ Return ONLY JSON. No markdown backticks.`;
 
             <div className="flex-1 overflow-y-auto no-scrollbar space-y-3 pr-2 relative z-10">
                {deckbox.map(item => (
-                 <div key={item.name} className="flex gap-3 rune-panel bg-black/40 p-3 rounded-sm hover:border-cyan-500/30 transition-all z-10">
-                    <img src={item.thumb} className="w-12 h-16 rounded-sm object-cover shadow-[0_0_15px_rgba(0,0,0,0.8)] border border-cyan-500/20" alt={item.name} />
-                    <div className="flex-1 flex flex-col justify-between">
+                 <div 
+                   key={item.name} 
+                   className="flex gap-3 rune-panel bg-black/40 p-3 rounded-sm hover:border-cyan-500/30 transition-all z-10 group relative"
+                   onMouseEnter={() => setHoveredPreviewCard(item.highRes || item.thumb)}
+                   onMouseLeave={() => setHoveredPreviewCard(null)}
+                 >
+                    <div className="w-14 h-18 rounded overflow-hidden border border-white/10 shrink-0 group-hover:border-cyan-500/50 transition-colors">
+                       <img src={item.thumb} alt={item.name} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                    </div>
+                    <div className="flex-1 min-w-0 flex flex-col justify-between py-0.5">
                        <div className="space-y-0.5">
-                          <h4 className="text-[11px] font-bold text-white line-clamp-1">{item.name}</h4>
-                          <p className="text-[9px] text-orange-500 font-black tracking-widest">{item.from_deck}</p>
+                          <h4 className="text-[11px] font-black uppercase text-white/80 group-hover:text-cyan-400 transition-colors truncate">{item.name}</h4>
+                          <p className="text-[8px] font-mono text-orange-500/60 uppercase tracking-widest leading-none">{item.from_deck}</p>
                        </div>
-                       <div className="flex items-center gap-2">
-                          <button onClick={() => updateCardQty(item.name, -1)} className="w-6 h-6 rounded bg-white/5 flex items-center justify-center hover:bg-red-500/20 hover:text-red-500 transition-all">
-                            <span className="text-sm">-</span>
-                          </button>
-                          <span className="text-xs font-black min-w-[20px] text-center">{item.qty}</span>
-                          <button onClick={() => updateCardQty(item.name, 1)} className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center text-black hover:bg-orange-600 transition-all font-black">
-                             <Plus className="w-3 h-3" />
-                          </button>
-                          <div className="flex-1" />
-                          <button onClick={() => updateCardQty(item.name, -999)} className="text-red-500 opacity-30 hover:opacity-100 transition-opacity">
-                            <Trash2 className="w-3.5 h-3.5" />
+                       <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                             <button onClick={(e) => { e.stopPropagation(); updateCardQty(item.name, -1); }} className="w-6 h-6 rounded bg-white/5 flex items-center justify-center hover:bg-red-500/20 hover:text-red-500 transition-all">
+                               <Minus className="w-3 h-3" />
+                             </button>
+                             <span className="text-[10px] font-mono font-black text-white w-4 text-center">{item.qty}</span>
+                             <button onClick={(e) => { e.stopPropagation(); updateCardQty(item.name, 1); }} className="w-6 h-6 rounded bg-orange-500 flex items-center justify-center text-black hover:bg-orange-600 transition-all font-black">
+                               <Plus className="w-3 h-3" />
+                             </button>
+                          </div>
+                          <button onClick={(e) => { e.stopPropagation(); updateCardQty(item.name, -999); }} className="text-red-500 opacity-20 group-hover:opacity-100 transition-opacity p-1">
+                             <Trash2 className="w-3 h-3" />
                           </button>
                        </div>
                     </div>
                  </div>
                ))}
 
-               {deckbox.length === 0 && (
-                 <div className="h-full flex flex-col items-center justify-center text-white/10 gap-3">
-                   <Package className="w-12 h-12" />
-                   <p className="text-xs font-bold">Your selection is empty</p>
-                 </div>
-               )}
+               {/* Floating Preview for Deckbox Hover */}
+               <AnimatePresence>
+                 {hoveredPreviewCard && isDeckboxOpen && (
+                   <motion.div 
+                     initial={{ opacity: 0, x: 20, scale: 0.9 }}
+                     animate={{ opacity: 1, x: 0, scale: 1 }}
+                     exit={{ opacity: 0, x: 20, scale: 0.9 }}
+                     className="fixed right-[420px] top-1/2 -translate-y-1/2 w-[280px] z-[200] pointer-events-none hidden lg:block"
+                   >
+                     <div className="rune-panel p-2 bg-black/95 shadow-[0_0_80px_rgba(0,0,0,1)] border-cyan-500/40 transform -rotate-1">
+                       <img src={hoveredPreviewCard} className="w-full h-auto rounded-lg shadow-2xl" alt="Preview" />
+                       <div className="absolute inset-0 bg-gradient-to-t from-cyan-500/20 to-transparent pointer-events-none" />
+                       <div className="mt-2 text-center">
+                         <span className="text-[8px] font-magic font-black text-cyan-400 uppercase tracking-[0.3em] animate-pulse">Tactical Preview Active</span>
+                       </div>
+                     </div>
+                   </motion.div>
+                 )}
+               </AnimatePresence>
             </div>
+
+            {deckbox.length === 0 && (
+              <div className="h-full flex flex-col items-center justify-center text-white/10 gap-3">
+                <Package className="w-12 h-12" />
+                <p className="text-xs font-bold">Your selection is empty</p>
+              </div>
+            )}
 
             <div className="space-y-3 pt-6 border-t border-white/10">
                <button 
@@ -3450,6 +3748,7 @@ Return ONLY JSON. No markdown backticks.`;
               setViewingDeckName={setViewingDeckName}
               fetchArchidektDeck={fetchArchidektDeck}
               setIsViewingDeck={setIsViewingDeck}
+              showMessage={showMessage}
             />
           </motion.div>
         )}
@@ -3529,6 +3828,53 @@ Return ONLY JSON. No markdown backticks.`;
         )}
       </AnimatePresence>
 
+      {/* Commander Full Preview Modal */}
+      <AnimatePresence>
+        {commanderPreview && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[1200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-2xl"
+          >
+            <div className="absolute inset-0" onClick={() => setCommanderPreview(null)} />
+            <motion.div
+              initial={{ scale: 0.8, y: 40 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.8, y: 40 }}
+              className="flex flex-col sm:flex-row gap-8 items-center justify-center relative z-10"
+            >
+              {commanderPreview.map((cmd, i) => {
+                const sc = cmd.scryfallData || cmd;
+                const imgSrc = sc.image_uris?.large || sc.card_faces?.[0]?.image_uris?.large || sc.image_uris?.normal || sc.card_faces?.[0]?.image_uris?.normal || sc.image_uris?.png || cmd.art_crop;
+                
+                return (
+                  <div key={i} className="relative group">
+                    <div className="absolute -inset-4 bg-orange-500/20 blur-3xl opacity-0 group-hover:opacity-100 transition-opacity" />
+                    <img 
+                      src={imgSrc} 
+                      alt={cmd.name}
+                      className="w-[300px] sm:w-[400px] h-auto rounded-[1.5rem] shadow-[0_25px_80px_rgba(0,0,0,0.8),0_0_40px_rgba(249,115,22,0.3)] border-2 border-white/10 group-hover:border-orange-500/50 transition-all duration-500"
+                      referrerPolicy="no-referrer"
+                    />
+                    <div className="mt-6 text-center">
+                      <h3 className="text-xl font-magic font-black text-white uppercase tracking-widest">{cmd.name}</h3>
+                      <p className="text-xs text-orange-500 font-magic font-bold uppercase tracking-[0.2em] mt-1">Prime Commander</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </motion.div>
+            <button 
+              onClick={() => setCommanderPreview(null)}
+              className="fixed top-8 right-8 p-4 bg-white/10 hover:bg-white/20 rounded-full text-white transition-all z-20"
+            >
+              <X className="w-8 h-8" />
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Commander Selection Modal */}
       <AnimatePresence>
         {commanderSelection && (
@@ -3587,30 +3933,39 @@ Return ONLY JSON. No markdown backticks.`;
 function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => void }) {
   const manualSections = [
     {
-      group: "VAULT ACCESS",
+      group: "VAULT & COLLECTION",
       nodes: [
-        { term: "LIBRARY BRIDGE", flow: "Import Deck", desc: "Input your Archidekt ID into the scryer to synchronize your magical manifests with the Library." },
-        { term: "RUNE SEARCH", flow: "Filter Engine", desc: "Execute deep searches across the multiverse using keywords and color identity alignments." },
-        { term: "SET CHRONICLE", flow: "Temporal Sweep", desc: "Browse expansion collections in their original temporal order, from ancient relics to new spells." }
+        { term: "LIBRARY", flow: "Repository", desc: "Opens your saved collection. Here you can search through your own decks, view their strategy, and manage your collection." },
+        { term: "ADD DECK", flow: "Synchronization", desc: "Paste an Archidekt/TappedOut URL or ID into the input. Click 'Add' to bridge external data into your Rune Library." },
+        { term: "DELETE", flow: "Purge", desc: "Removes a deck from your collection. Requires user confirmation via 'Purge Deck' to prevent accidental data loss." }
       ]
     }, {
-      group: "LIBRARY CONTROL",
+      group: "DISCOVERY & SEARCH",
       nodes: [
-        { term: "MANIFEST DEPOT", flow: "Manage Decks", desc: "The repository of your saved manifests. Toggle between 'CARDS' for raw data and 'STATS' for analysis." },
-        { term: "RITUAL HUD", flow: "Deck Briefing", desc: "Immediate oversight of your manifest metadata, including costs and tactical tag distribution." },
-        { term: "MOB RHYTHM", flow: "Audio Stream", desc: "Sync your building focus with multiversal frequency bands via the integrated Spotify node." }
+        { term: "SEARCH", flow: "Scryfall Node", desc: "The primary scryer for finding new cards. Supports complex Scryfall syntax for keyword, color, and mechanic searches across the multiverse." },
+        { term: "SYNERGY", flow: "Resonance", desc: "Analyzes your active deck's tags and executes a multiversal search for cards that perfectly align with your deck's established tactics." },
+        { term: "VEGGIES", flow: "Essential Filter", desc: "Quick-access nodes for 'Ramp', 'Draw', and 'Wipes'. Tailored specifically to your deck's color identity to ensure consistent resource flow." }
       ]
     }, {
-      group: "TACTICAL SIGHT",
+      group: "ARCANE UTILITIES",
       nodes: [
-        { term: "OPTIC LENS", flow: "Inspect Card", desc: "Engage high-fidelity magnification by hovering over manifest labels for deep visual extraction." },
-        { term: "HIGH JUDGE", flow: "Rules Terminal", desc: "Magic interaction node. Consult the elder terminal to verify complex ritual mechanics." }
+        { term: "SHERIFF", flow: "Game Variant", desc: "Opens the Sheriff System. Explains the rules of this 5+ player Commander variant involving hidden roles: Sheriff, Deputies, Outlaws, and a Renegade." },
+        { term: "JUDGE RUXA", flow: "AI Oracle", desc: "Consult the AI Bear Judge Ruxa. Provides immediate, high-fidelity answers to complex Magic rules questions." },
+        { term: "RADIO", flow: "Focus Engine", desc: "A dedicated Lo-Fi radio module. Loops high-concentration arcane frequencies to keep your mind sharp during long brewing sessions." }
       ]
     }, {
-      group: "REVISION HISTORY",
+      group: "DECK OPERATIONS",
       nodes: [
-        { term: "V2.6.5 UPDATES", flow: "Status: Live", desc: "Hardened Mana Symbol protocols. Removed terminology redundancy. Perfectly centered Optic Relay optics." },
-        { term: "OPTIC UPGRADE", flow: "Optic v2", desc: "Maximized card preview focus. Refined padding for uniform inspection across all resolutions." }
+        { term: "LIST", flow: "Inventory", desc: "Displays your deck as a categorized table. Perfect for raw data inspection and spotting gaps in your card types." },
+        { term: "CARDS", flow: "Visual Grid", desc: "The standard visual mode. Renders high-resolution card art in a responsive grid for intuitive deck building and browsing." },
+        { term: "CARDBOARD", flow: "Shopping List", desc: "Flags cards for acquisition. Displays price estimates and allows for raw text export for ordering physical decklists." }
+      ]
+    }, {
+      group: "LOGISTICS & HISTORY",
+      nodes: [
+        { term: "STATS", flow: "Analytics", desc: "Visualizes mana curve, color distribution, and card types. Essential for balancing your deck's land count and resource requirements." },
+        { term: "SETS", flow: "Chronicle", desc: "A complete temporal map of MTG history. Browse every set release from Alpha to the latest future expansions in chronological order." },
+        { term: "ROADMAP", flow: "Handbook", desc: "The functional design overview you are currently reading. A complete deck of all system capabilities and button interactions." }
       ]
     }
   ];
@@ -3709,7 +4064,7 @@ function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
                   <div className="flex items-center gap-10 relative z-10">
                     <Zap className="w-12 h-12 text-green-500 animate-pulse shadow-[0_0_30px_rgba(34,197,94,0.2)]" />
                     <div>
-                      <h4 className="text-xs font-magic font-black text-green-400 uppercase tracking-[0.4em] mb-3">Manifest Integrity Protocol</h4>
+                      <h4 className="text-xs font-magic font-black text-green-400 uppercase tracking-[0.4em] mb-3">Deck Integrity Check</h4>
                       <div className="flex items-center gap-6 text-[10px] font-mono text-white/20 uppercase tracking-[0.5em]">
                          <span>Discovery</span>
                          <div className="w-8 h-px bg-white/5" />
@@ -3730,7 +4085,7 @@ function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
             {/* Footer Bottom Bar */}
             <div className="px-10 py-6 border-t border-white/5 bg-black/80 flex items-center justify-between">
                <div className="flex items-center gap-8">
-                  <span className="text-[10px] font-mono text-white/10 uppercase tracking-[0.8em]">MOB Library Command Centre</span>
+                  <span className="text-[10px] font-mono text-white/10 uppercase tracking-[0.8em]">Rune Library Command Centre</span>
                </div>
                <div className="flex items-center gap-6">
                   <div className="flex items-center gap-2">
@@ -3774,15 +4129,19 @@ function DeckAnalysis({ cards }: { cards: any[] }) {
       const typeLine = (card.type_line || '').toLowerCase();
       if (typeLine.includes('land')) return; 
 
-      // Try colors first, then color_identity
-      const colors = card.colors || card.color_identity || [];
+      // Extract colors from card cost or identity
+      // Normalize colors to single letters WUBRG
+      const colors = (card.colors || card.color_identity || [])
+        .map((c: string) => c.replace(/\{|\}/g, '').toUpperCase())
+        .filter((c: string) => "WUBRGC".includes(c));
       
+      const qty = dc.quantity || 1;
       if (colors.length > 0) {
         colors.forEach((c: string) => {
-          if (counts[c] !== undefined) counts[c]++;
+          if (counts[c] !== undefined) counts[c] += qty;
         });
       } else {
-        counts.C++; 
+        counts.C += qty; 
       }
     });
 
@@ -3884,7 +4243,7 @@ function DeckAnalysis({ cards }: { cards: any[] }) {
          </h4>
          <div className="space-y-3">
             <p className="text-[11px] text-white/70 leading-relaxed">
-               Manifest consists of <span className="text-white font-bold">{stats.total} entries</span>. 
+               Deck consists of <span className="text-white font-bold">{stats.total} entries</span>. 
                The energy core maintains an average of <span className="text-green-400 font-bold">{stats.avgCmc.toFixed(2)} CMC</span>.
             </p>
             <p className="text-[11px] text-white/50 leading-relaxed">
@@ -3979,7 +4338,8 @@ function AdminChamber({
   initializeDeckState,
   setViewingDeckName,
   fetchArchidektDeck,
-  setIsViewingDeck
+  setIsViewingDeck,
+  showMessage
 }: { 
   isOpen: boolean, 
   onClose: () => void,
@@ -3992,12 +4352,14 @@ function AdminChamber({
   initializeDeckState: any,
   setViewingDeckName: (name: string) => void,
   fetchArchidektDeck: (id: string, autoSelect?: boolean) => void,
-  setIsViewingDeck: (val: boolean) => void
+  setIsViewingDeck: (val: boolean) => void,
+  showMessage: (text: string, type?: 'info' | 'error' | 'success') => void
 }) {
   const [users, setUsers] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [userDecks, setUserDecks] = useState<any[]>([]);
   const [userDeckbox, setUserDeckbox] = useState<any[]>([]);
+  const [userData, setUserData] = useState<any>(null);
   const [localLoading, setLocalLoading] = useState(false);
 
   useEffect(() => {
@@ -4018,6 +4380,10 @@ function AdminChamber({
     setSelectedUser(u);
     setLocalLoading(true);
     try {
+      // Get detailed profile
+      const userSnap = await getDoc(doc(db, 'users', u.id));
+      setUserData(userSnap.data());
+
       const decksSnap = await getDocs(collection(db, 'users', u.id, 'decks'));
       const deckboxSnap = await getDocs(collection(db, 'users', u.id, 'deckbox'));
       setUserDecks(decksSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -4035,242 +4401,232 @@ function AdminChamber({
        setUserDecks(prev => prev.filter(d => d.id !== deckId));
      } catch (e) {
        console.error("Purge failed:", e);
-       alert("Manifest extraction failed. Check security permissions.");
+       alert("Deck extraction failed. Check security permissions.");
      }
-     setLocalLoading(false);
-  };
-
-  const clearUserDeckbox = async () => {
-     if (!selectedUser) return;
-     if (!window.confirm("Purge the entire Deckbox essence of this Seeker?")) return;
-     setLocalLoading(true);
-     try {
-       const q = query(collection(db, 'users', selectedUser.id, 'deckbox'));
-       const snap = await getDocs(q);
-       const batch = writeBatch(db);
-       snap.docs.forEach(doc => batch.delete(doc.ref));
-       await batch.commit();
-       setUserDeckbox([]);
-     } catch (e) { console.error(e); }
      setLocalLoading(false);
   };
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[300] bg-[#020402] flex flex-col overflow-hidden text-emerald-100 font-sans border border-emerald-500/20 m-2 rounded-3xl shadow-[0_0_50px_rgba(16,185,129,0.15)]">
-      {/* Header */}
-      <div className="flex items-center justify-between p-6 border-b border-emerald-500/20 bg-emerald-950/20">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-2xl bg-emerald-500/20 flex items-center justify-center border border-emerald-500/30 shadow-[0_0_25px_rgba(16,185,129,0.2)]">
-            <Shield className="w-6 h-6 text-emerald-400" />
+    <div className="fixed inset-0 z-[300] bg-[#030606] flex flex-col overflow-hidden text-emerald-100 font-sans p-2 sm:p-6">
+      <div className="flex-1 flex flex-col bg-[#050808] border border-white/5 rounded-[40px] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden relative">
+        {/* Particle Overlay */}
+        <div className="absolute inset-0 z-0 opacity-10 pointer-events-none mix-blend-screen bg-center bg-cover" style={{ backgroundImage: `url(${runesBackground})` }} />
+        
+        {/* Header */}
+        <header className="relative z-10 flex items-center justify-between px-10 py-8 border-b border-white/5 bg-black/40 backdrop-blur-md">
+          <div className="flex items-center gap-6">
+            <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shadow-[0_0_30px_rgba(16,185,129,0.2)]">
+              <ShieldCheck className="w-8 h-8 text-emerald-400" />
+            </div>
+            <div>
+              <h2 className="text-2xl font-magic font-black uppercase tracking-[0.2em] text-white">Admin Library oversight</h2>
+              <p className="text-[10px] uppercase tracking-[0.5em] text-emerald-500/40 font-bold">Encrypted Archive Access Active</p>
+            </div>
           </div>
-          <div>
-            <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-cyan-400">Admin Library</h2>
-            <p className="text-[10px] uppercase tracking-widest opacity-40 font-bold">Seeker Oversight Active</p>
-          </div>
-        </div>
-        <button onClick={onClose} className="p-3 hover:bg-emerald-500/10 rounded-2xl transition-all border border-transparent hover:border-emerald-500/20 group">
-          <X className="w-6 h-6 text-emerald-400 transition-transform group-hover:rotate-90" />
-        </button>
-      </div>
+          <button 
+            onClick={onClose} 
+            className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/5 border border-white/10 hover:bg-red-500/10 hover:border-red-500/30 transition-all group"
+          >
+            <X className="w-6 h-6 text-white/30 group-hover:text-red-400 group-hover:rotate-90 transition-all" />
+          </button>
+        </header>
 
-      <div className="flex-1 flex overflow-hidden">
-        {/* User List Sidebar */}
-        <div className="w-72 border-r border-emerald-500/10 overflow-y-auto bg-black/60 custom-scrollbar">
-          <div className="p-6">
-             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-500/50 mb-6 flex items-center gap-2">
-               <Users className="w-4 h-4" /> Active Souls
-             </p>
-             <div className="space-y-2">
+        <div className="flex-1 flex overflow-hidden relative z-10">
+          {/* User List Sidebar */}
+          <aside className="w-80 border-r border-white/5 overflow-y-auto custom-scrollbar bg-black/20 p-8">
+             <div className="flex items-center justify-between mb-8">
+                <span className="text-[10px] font-magic font-black text-emerald-400/40 uppercase tracking-[0.3em]">Registered Souls</span>
+                <span className="text-[9px] font-mono text-white/10">{users.length}</span>
+             </div>
+             
+             <div className="space-y-3">
                 {users.map(u => (
                   <button 
                     key={u.id}
                     onClick={() => loadUserData(u)}
-                    className={`w-full flex flex-col p-4 rounded-2xl transition-all border text-left group
+                    className={`w-full group relative flex items-center gap-4 p-4 rounded-2xl border transition-all duration-500 text-left
                       ${selectedUser?.id === u.id 
-                        ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400 shadow-[0_0_20px_rgba(16,185,129,0.1)]' 
-                        : 'hover:bg-emerald-500/5 border-transparent text-emerald-100/60 hover:text-emerald-100'}`}
+                        ? 'bg-emerald-500/10 border-emerald-500/40 shadow-xl' 
+                        : 'bg-white/[0.02] border-white/5 hover:border-white/20 hover:bg-white/[0.04]'}`}
                   >
-                    <span className="text-[11px] font-bold truncate w-full group-hover:tracking-wider transition-all uppercase">{u.displayName || 'Unnamed Seeker'}</span>
-                    <span className="text-[8px] opacity-30 truncate w-full font-mono mt-1">{u.email}</span>
+                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-magic text-lg border transition-all
+                      ${selectedUser?.id === u.id ? 'bg-emerald-400 text-black border-emerald-400 scale-110' : 'bg-white/5 text-white/20 border-white/10'}`}>
+                      {u.displayName?.[0] || '?' }
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h4 className={`text-[11px] font-black uppercase tracking-wider truncate mb-0.5 transition-colors
+                        ${selectedUser?.id === u.id ? 'text-white' : 'text-white/40'}`}>
+                        {u.displayName || 'Anonymous'}
+                      </h4>
+                      <p className="text-[8px] font-mono opacity-20 truncate">{u.email}</p>
+                    </div>
+                    {selectedUser?.id === u.id && (
+                      <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(52,211,153,1)]" />
+                    )}
                   </button>
                 ))}
              </div>
-          </div>
-        </div>
+          </aside>
 
-        {/* User Content */}
-        <div className="flex-1 overflow-y-auto p-8 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.08),transparent)] custom-scrollbar">
-          {selectedUser ? (
-            <div className="max-w-5xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-4 duration-500">
-               <header className="flex flex-col md:flex-row md:items-end justify-between gap-6 border-b border-emerald-500/10 pb-8">
-                  <div>
-                    <h2 className="text-xl font-magic font-extrabold text-white mb-2 uppercase tracking-tighter">{selectedUser.displayName}</h2>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[9px] bg-emerald-500/10 text-emerald-400 px-2 py-1 rounded-md border border-emerald-500/20 font-mono tracking-widest">{selectedUser.id}</span>
-                      <span className="text-[9px] text-white/30 font-bold uppercase tracking-widest ml-2">{selectedUser.email}</span>
-                    </div>
-                  </div>
-                  <div className="flex gap-8">
-                     <div className="flex flex-col items-center md:items-end">
-                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Stored Rites</span>
-                       <span className="text-3xl font-magic font-black text-emerald-400">{userDecks.length}</span>
-                     </div>
-                     <div className="flex flex-col items-center md:items-end">
-                       <span className="text-[10px] font-black uppercase text-emerald-500/30 tracking-widest mb-1">Selection Count</span>
-                       <span className="text-3xl font-magic font-black text-emerald-400">{userDeckbox.length}</span>
-                     </div>
-                  </div>
-               </header>
-
-               {/* Decks Grid */}
-               <section>
-                 <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-sm font-magic font-black text-emerald-400 uppercase tracking-[0.3em] flex items-center gap-3">
-                      <LayoutDashboard className="w-4 h-4" /> User Deck Library
-                    </h3>
-                 </div>
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {userDecks.map(deck => (
-                      <div 
-                        key={deck.id} 
-                        onClick={() => {
-                          setActiveDeckId(deck.id);
-                          setActiveDeckName(deck.name);
-                          setExistingInDeck(new Set(deck.existingNames));
-                          setCurrentCI(deck.ci || "c");
-                          setViewMode('cards');
-                          performSearch({ ciOverride: deck.ci || "c", queryOverride: "" });
-                          const cmdNames = deck.commanderNames || deck.commanders || [];
-                          initializeDeckState(deck.id, deck.name, cmdNames, new Set(deck.existingNames), deck.totalCost || 0, true);
-                        }}
-                        className="bg-black/60 border border-white/5 rounded-2xl p-5 flex items-center justify-between group hover:border-[#00aeef]/40 hover:bg-black/40 transition-all duration-300 cursor-pointer shadow-xl relative overflow-hidden"
-                      >
-                        <div className="absolute top-0 left-0 w-2 h-2 border-t border-l border-white/10" />
-                        <div className="absolute bottom-0 right-0 w-2 h-2 border-b border-r border-white/10" />
-
-                        <div className="flex items-center gap-4">
-                           <div className="w-14 h-14 rounded-xl bg-black border border-white/10 overflow-hidden group-hover:scale-105 group-hover:border-[#00aeef]/40 transition-all">
-                              {deck.art_crops?.[0] ? 
-                                <img src={deck.art_crops[0]} className="w-full h-full object-cover grayscale opacity-30 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-500" /> : 
-                                <div className="w-full h-full flex items-center justify-center bg-white/5 text-white/10 font-magic text-xs">IMG</div>
-                              }
-                           </div>
-                             <div className="flex flex-col gap-1">
-                               <h4 className="text-[11px] font-black uppercase text-white/60 tracking-[0.1em] group-hover:text-white transition-colors">{deck.name}</h4>
-                               <div className="flex flex-wrap gap-2 items-center">
-                                 {deck.totalCost > 0 && (
-                                   <div className="relative bg-transparent border border-[#00aeef]/10 px-2 py-0.5 rounded-sm flex items-center gap-1.5 group-hover:border-[#00aeef]/30 transition-all">
-                                      <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/40" />
-                                      <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/40" />
-                                      <span className="text-[6.5px] text-[#00aeef]/50 font-magic font-extrabold uppercase">CM</span>
-                                      <span className="text-[9px] text-white/50 font-mono font-black group-hover:text-white/80">€{deck.totalCost.toFixed(2)}</span>
-                                   </div>
-                                 )}
-                                 {deck.tags?.slice(0, 2).map((t: string) => (
-                                   <span key={t} className="text-[7px] bg-white/5 text-white/30 px-1.5 py-0.5 rounded-sm border border-white/5 font-bold uppercase">{t.includes(':::') ? t.split(':::')[0] : t}</span>
-                                 ))}
-                               </div>
-                             </div>
-                        </div>
-                        <div className="flex gap-2" onClick={(e) => e.stopPropagation()}>
-                            <button 
-                              onClick={() => deleteUserDeck(deck.id)}
-                              className="p-2.5 bg-red-500/5 hover:bg-red-500/20 text-red-500/40 hover:text-red-500 rounded-lg border border-red-500/10 transition-all"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                            <button 
-                              onClick={() => {
-                                 setViewingDeckName(deck.name);
-                                 fetchArchidektDeck(deck.id, false);
-                                 setIsViewingDeck(true);
-                              }}
-                              className="p-2.5 bg-cyan-500/5 hover:bg-cyan-500/20 text-cyan-400 rounded-lg border border-cyan-500/10 transition-all"
-                            >
-                              <Eye className="w-3.5 h-3.5" />
-                            </button>
-                        </div>
-                      </div>
-                    ))}
-                    {userDecks.length === 0 && (
-                      <div className="col-span-full py-16 flex flex-col items-center justify-center border-2 border-dashed border-emerald-500/10 rounded-[3rem] bg-emerald-500/[0.01]">
-                        <Database className="w-10 h-10 text-emerald-500/20 mb-4" />
-                        <p className="text-[11px] uppercase font-black text-emerald-500/40 tracking-[0.3em]">No decks discovered in this Seeker's path</p>
-                      </div>
-                    )}
-                 </div>
-               </section>
-
-               {/* Selected Cardboard Content */}
-               <section>
-                 <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-sm font-magic font-black text-emerald-400 uppercase tracking-[0.3em] flex items-center gap-3">
-                      <Layers className="w-4 h-4" /> Current Selection (Cardboard)
-                    </h3>
-                    <button 
-                      onClick={clearUserDeckbox}
-                      className="text-[9px] font-black uppercase text-red-500/50 hover:text-red-500 flex items-center gap-2 border border-red-500/10 hover:border-red-500/30 px-3 py-1.5 rounded-xl transition-all"
-                    >
-                      <Trash2 className="w-3 h-3" /> Purge Selection
-                    </button>
-                 </div>
-                 <div className="bg-emerald-500/[0.02] border border-emerald-500/5 rounded-[2.5rem] p-8">
-                     <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-4">
-                        {userDeckbox.map((card, idx) => (
-                          <div key={card.id || `${card.name}-${idx}`} className="relative aspect-[0.71] rounded-xl overflow-hidden border border-white/5 group shadow-lg hover:border-[#00aeef]/30 transition-all bg-black">
-                             <img src={card.thumb} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110 grayscale opacity-40 group-hover:opacity-100 group-hover:grayscale-0" />
-                             
-                             {/* Pricing Badge (Subtle Rune Tech) */}
-                             {card.costEur > 0 && (
-                               <div className="absolute top-2 right-2 bg-black/20 backdrop-blur-sm border border-[#00aeef]/10 rounded-sm px-1.5 py-0.5 flex items-center gap-1 z-10 transition-opacity opacity-0 group-hover:opacity-100">
-                                  <div className="absolute top-0 left-0 w-1 h-1 border-t border-l border-[#00aeef]/40" />
-                                  <div className="absolute bottom-0 right-0 w-1 h-1 border-b border-r border-[#00aeef]/40" />
-                                  <span className="text-[6px] text-[#00aeef]/40 font-magic font-extrabold uppercase">CM</span>
-                                  <span className="text-[8px] text-white/40 font-mono font-bold">€{card.costEur.toFixed(2)}</span>
-                               </div>
-                             )}
-
-                             <div className="absolute inset-x-0 bottom-0 p-2 bg-black/95 backdrop-blur-sm border-t border-white/5 translate-y-full group-hover:translate-y-0 transition-transform duration-300">
-                                <p className="text-[9px] font-black truncate uppercase text-white tracking-widest">{card.name}</p>
-                                <div className="flex items-center justify-between mt-1">
-                                  <span className="text-[8px] text-white/40 font-mono">Q: {card.qty}</span>
-                                  <Copy className="w-3 h-3 text-white/20 cursor-pointer hover:text-cyan-400" />
+          {/* User Detail Dashboard */}
+          <main className="flex-1 overflow-y-auto p-12 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.05),transparent)] custom-scrollbar">
+             {selectedUser ? (
+               <div className="max-w-6xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+                  {/* Performance Bento Grid Entry */}
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
+                     {/* User Profile Card */}
+                     <div className="md:col-span-8 bg-gradient-to-br from-emerald-500/10 to-transparent border border-emerald-500/20 p-12 rounded-[3.5rem] shadow-4xl relative overflow-hidden flex flex-col sm:flex-row items-center gap-10">
+                        <div className="relative">
+                          <div className="w-32 h-32 rounded-full border-4 border-emerald-400/20 p-2 shadow-[0_0_50px_rgba(52,211,153,0.15)] bg-black/40">
+                             {selectedUser.photoURL ? (
+                                <img src={selectedUser.photoURL} className="w-full h-full rounded-full object-cover" alt="Profile" />
+                             ) : (
+                                <div className="w-full h-full rounded-full bg-emerald-500/10 flex items-center justify-center">
+                                   <User className="w-12 h-12 text-emerald-400/40" />
                                 </div>
+                             )}
+                          </div>
+                          <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-emerald-400 rounded-2xl flex items-center justify-center border-4 border-[#0a0f0f] text-black">
+                             <ShieldCheck className="w-5 h-5" />
+                          </div>
+                        </div>
+                        <div className="flex-1 text-center sm:text-left">
+                           <h3 className="text-4xl font-magic font-black text-white uppercase tracking-tighter mb-2">{selectedUser.displayName || 'Soul #'+selectedUser.id.slice(0,4)}</h3>
+                           <div className="flex flex-wrap justify-center sm:justify-start gap-4 mt-4">
+                              <div className="bg-black/40 border border-white/5 rounded-xl px-4 py-2 flex flex-col">
+                                 <span className="text-[7px] font-magic font-black text-white/20 uppercase tracking-[0.2em] mb-1">User Identity</span>
+                                 <span className="text-[10px] font-mono text-emerald-400/80">{selectedUser.userName || 'Not Set'}</span>
+                              </div>
+                              <div className="bg-black/40 border border-white/5 rounded-xl px-4 py-2 flex flex-col">
+                                 <span className="text-[7px] font-magic font-black text-white/20 uppercase tracking-[0.2em] mb-1">Seeker Title</span>
+                                 <span className="text-[10px] font-mono text-cyan-400/80">{selectedUser.userTitle || 'Not Set'}</span>
+                              </div>
+                              <div className="bg-black/40 border border-white/5 rounded-xl px-4 py-2 flex flex-col">
+                                 <span className="text-[7px] font-magic font-black text-white/20 uppercase tracking-[0.2em] mb-1">Last Interaction</span>
+                                 <span className="text-[10px] font-mono text-white/30 tracking-tight">
+                                    {selectedUser.updatedAt?.toDate ? selectedUser.updatedAt.toDate().toLocaleDateString() : 'Historical'}
+                                 </span>
+                              </div>
+                           </div>
+                        </div>
+                     </div>
+
+                     {/* Quick View Stats */}
+                     <div className="md:col-span-4 grid grid-cols-2 gap-6">
+                        <div className="bg-black/40 border border-white/5 p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center group hover:border-emerald-500/20 transition-all">
+                           <Library className="w-6 h-6 text-emerald-500 mb-3 grayscale group-hover:grayscale-0 transition-all" />
+                           <span className="text-3xl font-magic font-black text-white">{userDecks.length}</span>
+                           <span className="text-[8px] font-bold text-white/20 uppercase tracking-widest mt-1">Decks</span>
+                        </div>
+                        <div className="bg-black/40 border border-white/5 p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center group hover:border-orange-500/20 transition-all">
+                           <Zap className="w-6 h-6 text-orange-500 mb-3 grayscale group-hover:grayscale-0 transition-all" />
+                           <span className="text-3xl font-magic font-black text-white">{userDeckbox.length}</span>
+                           <span className="text-[8px] font-bold text-white/20 uppercase tracking-widest mt-1">Cards</span>
+                        </div>
+                        <div className="col-span-2 bg-emerald-500/5 border border-emerald-500/20 p-6 rounded-[2.5rem] flex items-center justify-between group">
+                           <div className="flex flex-col">
+                              <span className="text-[9px] font-magic font-black text-emerald-400 uppercase tracking-widest mb-1">Seeker Level</span>
+                              <span className="text-xs font-mono text-white/40">
+                                {selectedUser.email === 'sdebeer@gmail.com' ? 'Level 1: Sovereign Overlord' : 'Level 2: Common Seeker'}
+                              </span>
+                           </div>
+                           <Shield className="w-8 h-8 text-emerald-400/20 group-hover:text-emerald-400 transition-colors" />
+                        </div>
+                     </div>
+                  </div>
+
+                  {/* Decks Grid Container */}
+                  <section className="space-y-8 pb-20">
+                     <div className="flex items-center justify-between border-b border-white/5 pb-4">
+                        <h4 className="text-sm font-magic font-black text-white uppercase tracking-[0.3em] flex items-center gap-3">
+                           <Package className="w-5 h-5 text-emerald-500/40" /> Comprehensive Catalog
+                        </h4>
+                        <span className="text-[10px] font-mono text-white/20">Showing {userDecks.length} items</span>
+                     </div>
+                     
+                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                        {userDecks.map(deck => (
+                          <div 
+                            key={deck.id}
+                            className="bg-black/40 border border-white/5 rounded-[3rem] p-8 flex flex-col gap-6 group hover:border-emerald-500/40 transition-all duration-500 shadow-2xl relative overflow-hidden"
+                          >
+                             <div className="flex gap-6 items-start">
+                                <div className="w-24 h-28 rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl shrink-0 group-hover:scale-105 transition-transform duration-700">
+                                   {deck.art_crops?.[0] ? (
+                                      <img src={deck.art_crops[0]} className="w-full h-full object-cover group-hover:scale-110 transition-all duration-1000 grayscale group-hover:grayscale-0 opacity-40 group-hover:opacity-100" />
+                                   ) : (
+                                      <div className="w-full h-full flex items-center justify-center bg-white/5 text-white/10 font-magic text-[10px]">EMPTY</div>
+                                   )}
+                                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                                </div>
+                                <div className="flex-1 min-w-0 pt-2">
+                                   <h5 className="text-[11px] font-magic font-black text-white uppercase tracking-wider truncate mb-2 group-hover:text-emerald-400 transition-colors">{deck.name}</h5>
+                                   <div className="flex flex-col gap-3">
+                                      <div className="flex items-center gap-3">
+                                         <span className="text-[8px] font-mono font-bold text-orange-400 bg-orange-400/5 px-2 py-0.5 rounded border border-orange-400/10">€{deck.totalCost?.toFixed(2) || '0.00'}</span>
+                                         <span className="text-[8px] font-mono font-bold text-cyan-400 bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/10 uppercase">{deck.ci || 'C'}</span>
+                                      </div>
+                                      <p className="text-[8px] text-white/20 font-mono italic truncate">Ref: {deck.id}</p>
+                                   </div>
+                                </div>
+                             </div>
+                             
+                             <div className="flex gap-3 pt-4 border-t border-white/5">
+                                <button 
+                                  onClick={() => {
+                                    setViewingDeckName(deck.name);
+                                    fetchArchidektDeck(deck.id, false);
+                                    setIsViewingDeck(true);
+                                  }}
+                                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-[9px] font-magic font-black uppercase tracking-widest text-white/30 hover:text-white transition-all flex items-center justify-center gap-2"
+                                >
+                                   <Maximize2 className="w-3.5 h-3.5" /> Visualize
+                                </button>
+                                <button 
+                                  onClick={() => deleteUserDeck(deck.id)}
+                                  className="w-14 h-14 bg-red-500/5 hover:bg-red-500/20 border border-red-500/10 hover:border-red-500/30 rounded-2xl text-red-500/30 hover:text-red-500 flex items-center justify-center transition-all"
+                                >
+                                   <Trash2 className="w-4.5 h-4.5" />
+                                </button>
                              </div>
                           </div>
                         ))}
-                       {userDeckbox.length === 0 && (
-                        <div className="col-span-full py-20 text-center">
-                          <p className="text-[11px] uppercase font-black text-emerald-500/20 tracking-[0.5em]">Inventory Vacant</p>
+                     </div>
+
+                     {userDecks.length === 0 && (
+                        <div className="py-32 flex flex-col items-center justify-center text-center opacity-10">
+                           <Database className="w-20 h-20 mb-6" />
+                           <p className="text-xl font-magic font-black uppercase tracking-[0.5em]">No Data Artifacts</p>
                         </div>
-                       )}
-                    </div>
-                 </div>
-               </section>
-            </div>
-          ) : (
-            <div className="h-full flex flex-col items-center justify-center">
-               <div className="relative mb-8">
-                  <div className="absolute inset-0 bg-emerald-500/10 blur-[60px] animate-pulse rounded-full" />
-                  <Database className="w-32 h-32 relative text-emerald-500/20 animate-bounce transition-all duration-1000" />
+                     )}
+                  </section>
                </div>
-               <p className="font-magic font-black uppercase tracking-[0.6em] text-2xl text-emerald-100/30">Library Repository</p>
-               <p className="text-[10px] mt-4 font-black uppercase tracking-[0.2em] text-emerald-500/40 border border-emerald-500/10 px-6 py-2 rounded-full">Select a Seeker to commence inspection</p>
-            </div>
-          )}
+             ) : (
+               <div className="h-full flex flex-col items-center justify-center text-center relative">
+                  <div className="absolute inset-0 bg-emerald-500/5 blur-[120px] rounded-full animate-pulse opacity-20" />
+                  <div className="relative z-10 opacity-30">
+                     <ShieldCheck className="w-24 h-24 mb-8 text-emerald-500 mx-auto" />
+                     <h3 className="text-3xl font-magic font-black text-white uppercase tracking-[0.5em]">Command Hub Standby</h3>
+                     <p className="text-[11px] font-mono uppercase tracking-[0.3em] mt-6 max-w-sm mx-auto text-emerald-400/60 leading-relaxed font-bold">
+                        Awaiting authorization pattern. Select a Seeker signature to decrypt their specific grimoire catalog and cardboard assets.
+                     </p>
+                  </div>
+               </div>
+             )}
+          </main>
         </div>
       </div>
-
+      
       {localLoading && (
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[400] flex items-center justify-center">
-           <div className="flex flex-col items-center gap-6">
+        <div className="absolute inset-0 z-[500] bg-black/60 backdrop-blur-sm flex items-center justify-center">
+           <div className="flex flex-col items-center gap-8">
               <div className="relative">
-                <RotateCw className="w-16 h-16 text-emerald-400 animate-spin transition-all duration-300" />
-                <Shield className="absolute inset-0 m-auto w-6 h-6 text-emerald-400/50" />
+                 <div className="absolute inset-0 bg-emerald-500/20 blur-2xl animate-pulse rounded-full" />
+                 <RotateCw className="w-16 h-16 text-emerald-400 animate-spin relative z-10" />
               </div>
-              <p className="text-[11px] font-magic font-black uppercase tracking-[0.4em] text-emerald-400 animate-pulse">Syncing with Archivists</p>
+              <p className="text-[10px] font-magic font-black uppercase tracking-[0.6em] text-emerald-400 animate-pulse">Synchronizing dataset...</p>
            </div>
         </div>
       )}
@@ -5033,7 +5389,7 @@ function ReleaseCalendar({ setViewMode, performSearch, setSearchQuery }: {
                       onClick={() => onReleaseClick(set.queryCodes)}
                       className="w-full text-center rune-panel p-2 sm:p-4 lg:p-6 bg-black/90 backdrop-blur-md hover:border-white/30 transition-all cursor-pointer group/box shadow-2xl relative"
                     >
-                      <h4 className="text-[7px] sm:text-[9px] lg:text-[11px] font-magic font-black text-white uppercase tracking-[0.05em] lg:tracking-[0.1em] mb-1 lg:mb-2 group-hover/box:text-cyan-400 transition-colors leading-tight line-clamp-2">
+                      <h4 className="text-[9px] sm:text-[11px] lg:text-[13px] font-magic font-black text-white uppercase tracking-[0.05em] lg:tracking-[0.1em] mb-1 lg:mb-2 group-hover/box:text-cyan-400 transition-all leading-tight line-clamp-2 drop-shadow-md">
                         {set.name}
                       </h4>
                       <p className={`text-[5px] sm:text-[6px] lg:text-[8px] font-mono uppercase tracking-[0.1em] lg:tracking-[0.2em] font-black opacity-60 group-hover:opacity-100 transition-opacity whitespace-nowrap ${accentColor}`}>
@@ -5259,7 +5615,180 @@ function OutlawSheriff() {
   );
 }
 
+
+function RuneRadioPage({ 
+  activeVibe, 
+  setActiveVibe, 
+  isMusicPlaying, 
+  setIsMusicPlaying,
+  isConnecting,
+  setIsConnecting,
+  toggleGlobalMusic, 
+  musicVolume, 
+  setMusicVolume,
+  MUSIC_VIBES
+}: { 
+  activeVibe: number, 
+  setActiveVibe: (i: number) => void, 
+  isMusicPlaying: boolean, 
+  setIsMusicPlaying: (p: boolean) => void,
+  isConnecting: boolean,
+  setIsConnecting: (c: boolean) => void,
+  toggleGlobalMusic: () => void, 
+  musicVolume: number, 
+  setMusicVolume: (v: number) => void,
+  MUSIC_VIBES: any[]
+}) {
+  const vibes = MUSIC_VIBES;
+
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center min-h-[85vh] p-4 lg:p-12 relative overflow-hidden bg-[#020303]">
+      {/* Rune-Tech Background Elements */}
+      <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-screen bg-center bg-cover" style={{ backgroundImage: `url(${runesBackground})` }} />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[100vh] h-[100vh] border-[1px] border-white/5 rounded-full animate-[spin_240s_linear_infinite]" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vh] h-[80vh] border-[1px] border-dashed border-white/10 rounded-full animate-[spin_180s_linear_infinite_reverse]" />
+
+      <motion.div 
+        initial={{ opacity: 0, y: 30 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="relative z-10 w-full max-w-5xl flex flex-col gap-8 md:gap-16 items-center"
+      >
+        <header className="text-center space-y-6 relative">
+          <div className="inline-flex items-center gap-3 px-6 py-2 bg-cyan-500/10 border border-cyan-500/20 rounded-full text-cyan-400 backdrop-blur-md">
+            <Music className={`w-5 h-5 ${isMusicPlaying ? 'animate-bounce text-cyan-500' : ''}`} />
+            <span className="text-[10px] font-magic font-black uppercase tracking-[0.4em]">{isConnecting ? 'Aligning Resonance...' : 'Native Resonance Grimoire'}</span>
+          </div>
+          
+          <div className="space-y-4">
+            <h2 className="text-5xl md:text-8xl font-magic font-black text-white uppercase tracking-widest drop-shadow-[0_0_40px_rgba(34,211,238,0.4)]">
+              Rune <span className="text-orange-500">Radio</span>
+            </h2>
+            <div className="flex items-center justify-center gap-4">
+               <div className="h-[1px] w-12 bg-gradient-to-r from-transparent to-white/20" />
+               <p className="text-[10px] text-white/40 font-mono uppercase tracking-[0.5em]">Open-Source Arcane Player v3.5</p>
+               <div className="h-[1px] w-12 bg-gradient-to-l from-transparent to-white/20" />
+            </div>
+          </div>
+        </header>
+
+        <div className="flex flex-col lg:flex-row gap-8 w-full items-stretch">
+          {/* Vibe Selection - Left */}
+          <div className="lg:w-1/3 flex flex-col gap-3">
+             {vibes.map((vibe, i) => (
+                <button
+                  key={vibe.id}
+                  onClick={() => setActiveVibe(i)}
+                  className={`
+                    relative group flex items-center gap-5 p-5 rounded-2xl border transition-all duration-500 text-left overflow-hidden
+                    ${activeVibe === i 
+                      ? 'bg-white/[0.04] border-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.15)] translate-x-3' 
+                      : 'bg-transparent border-white/5 hover:border-white/10 hover:bg-white/[0.01] hover:translate-x-1'}
+                  `}
+                >
+                  <div className={`
+                    w-12 h-12 rounded-xl flex items-center justify-center text-xl font-magic transition-all duration-500
+                    ${activeVibe === i ? 'bg-cyan-500 text-black shadow-[0_0_20px_rgba(6,182,212,0.5)]' : 'bg-white/5 text-white/20 group-hover:text-white/40'}
+                  `}>
+                    {vibe.rune}
+                  </div>
+                  
+                  <div className="flex flex-col gap-0.5 min-w-0">
+                    <span className={`text-[11px] font-magic font-black uppercase tracking-widest truncate ${activeVibe === i ? 'text-white' : 'text-white/40'}`}>
+                      {vibe.name}
+                    </span>
+                    <span className="text-[8px] font-mono text-white/20 uppercase tracking-tight truncate group-hover:text-white/30 transition-colors">
+                      {vibe.desc}
+                    </span>
+                  </div>
+
+                  {activeVibe === i && isMusicPlaying && (
+                    <div className="ml-auto flex items-center gap-1">
+                       {[0, 1, 2].map(x => (
+                         <motion.div 
+                           key={x}
+                           animate={{ height: [4, 12, 4] }}
+                           transition={{ duration: 1, repeat: Infinity, delay: x * 0.2 }}
+                           className="w-1 bg-cyan-400 rounded-full"
+                         />
+                       ))}
+                    </div>
+                  )}
+                </button>
+             ))}
+          </div>
+
+          {/* Native Player - Right */}
+          <div className="flex-1 bg-black/40 backdrop-blur-2xl p-6 md:p-12 rounded-[3.5rem] border border-white/10 shadow-[0_40px_100px_rgba(0,0,0,0.8)] relative group overflow-hidden flex items-center justify-center">
+             <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/[0.05] to-transparent pointer-events-none" />
+             
+             <div className="relative z-10 w-full h-full flex flex-col items-center justify-center gap-10 text-center">
+                <div className="relative">
+                   <div className={`w-32 h-32 md:w-40 md:h-40 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center transition-all duration-700
+                    ${isMusicPlaying ? 'rotate-180 border-cyan-500/40' : ''} ${isConnecting ? 'animate-pulse scale-95 border-orange-500/30' : ''}`}>
+                      <div className={`absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-500/20 via-transparent to-orange-500/20 animate-spin-slow ${!isMusicPlaying ? 'opacity-0' : 'opacity-100'}`} />
+                      
+                      <div className={`w-24 h-24 md:w-32 md:h-32 rounded-full bg-gradient-to-tr from-cyan-500 to-orange-500 p-1 transition-all duration-1000 ${isMusicPlaying ? 'scale-110 blur-xl opacity-20' : 'scale-100 opacity-5'}`} />
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <div className={`w-20 h-20 md:w-28 md:h-28 rounded-full bg-[#050505] border border-white/10 flex items-center justify-center shadow-2xl transition-all duration-700 ${isMusicPlaying ? 'scale-105 border-cyan-500/30' : ''}`}>
+                          <AnimatePresence mode="wait">
+                            <motion.span 
+                              key={activeVibe + (isConnecting ? '_loading' : '')}
+                              initial={{ opacity: 0, scale: 0.8 }}
+                              animate={{ opacity: 1, scale: 1 }}
+                              exit={{ opacity: 0, scale: 1.2 }}
+                              className={`text-4xl md:text-6xl font-magic transition-colors duration-700 ${isMusicPlaying ? 'text-cyan-400 drop-shadow-[0_0_30px_rgba(34,211,238,0.5)]' : 'text-white/10'} ${isConnecting ? 'text-orange-500 animate-pulse' : ''}`}
+                            >
+                              {isConnecting ? 'ᛝ' : vibes[activeVibe].rune}
+                            </motion.span>
+                          </AnimatePresence>
+                        </div>
+                      </div>
+                   </div>
+                </div>
+
+                {/* Spotify Embed Player */}
+                <div className="w-full max-w-sm transition-all duration-1000 transform hover:scale-[1.02]">
+                   <div className="relative group/player">
+                      <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/20 to-orange-500/20 rounded-[1.5rem] blur opacity-75 group-hover/player:opacity-100 transition duration-1000 group-hover/player:duration-200" />
+                      <div className="relative bg-[#050505] rounded-[1.5rem] overflow-hidden border border-white/5 shadow-2xl">
+                         <iframe 
+                            key={vibes[activeVibe].id}
+                            style={{ borderRadius: '12px' }} 
+                            src={`https://open.spotify.com/embed/playlist/${MUSIC_VIBES[activeVibe].spotifyId}?utm_source=generator&theme=0`} 
+                            width="100%" 
+                            height="152" 
+                            frameBorder="0" 
+                            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" 
+                            loading="lazy"
+                            onLoad={() => {
+                               setIsConnecting(false);
+                               setIsMusicPlaying(true);
+                            }}
+                         ></iframe>
+                      </div>
+                   </div>
+                </div>
+
+                <div className="space-y-2">
+                   <p className="text-[10px] md:text-xs font-mono text-cyan-400/60 uppercase tracking-[0.4em] max-w-xs text-center mx-auto">
+                      {isConnecting ? 'Resonance alignment in progress' : `Ritual: ${vibes[activeVibe].desc}`}
+                   </p>
+                </div>
+             </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // Helper to get images from card
-function get_card_images(card: Card) {
-  return card.image_uris || card.card_faces?.[0]?.image_uris || { normal: '', small: '', art_crop: '' };
+function getCardImages(card: any): { small: string; normal: string; border_crop: string; art_crop: string } {
+  const images = card.image_uris || card.card_faces?.[0]?.image_uris || {};
+  return {
+    small: images.small || '',
+    normal: images.normal || '',
+    border_crop: images.border_crop || '',
+    art_crop: images.art_crop || ''
+  };
 }

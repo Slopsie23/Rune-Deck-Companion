@@ -8,5 +8,6 @@ coverage/
 !.env.example
 public/runebear.png
 public/ruxa.png
+public/runebg.png
 public/ruxa_judge.png
 firebase-applet-config.json
