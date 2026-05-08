@@ -43,10 +43,14 @@ export interface SavedDeck {
   name: string;
   tags: string[];
   commanders: string[];
+  commanderNames?: string[]; // Added to match usage
+  existingNames?: string[];  // Added to persist card names in deck
   art_crops: string[];
   ci: string;
   totalCost?: number;
   ranking?: string;
+  createdAt?: any;
+  updatedAt?: any;
 }
 
 export interface ScryfallSet {

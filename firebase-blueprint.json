@@ -7,7 +7,8 @@
       "properties": {
         "userId": { "type": "string", "description": "The unique identifier for the user (UID from Firebase Auth)" },
         "email": { "type": "string", "format": "email", "description": "The user's email address" },
-        "displayName": { "type": "string", "description": "The user's display name" }
+        "displayName": { "type": "string", "description": "The user's display name" },
+        "isPublic": { "type": "boolean", "description": "Whether the user's decks are visible to others" }
       },
       "required": ["userId", "email"]
     },
@@ -52,6 +53,32 @@
         "qty": { "type": "integer" }
       },
       "required": ["userId", "name", "thumb", "from_deck", "qty"]
+    },
+    "SharedSelection": {
+      "title": "Shared Selection",
+      "description": "A set of cards shared from one user to another.",
+      "type": "object",
+      "properties": {
+        "fromUserId": { "type": "string" },
+        "fromUserEmail": { "type": "string" },
+        "toUserEmail": { "type": "string" },
+        "cards": { "type": "array", "items": { "type": "object" } },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "Suggestion": {
+      "title": "Card Suggestion",
+      "description": "A card suggestion for a specific deck.",
+      "type": "object",
+      "properties": {
+        "fromUserId": { "type": "string" },
+        "fromUserEmail": { "type": "string" },
+        "toUserId": { "type": "string" },
+        "deckId": { "type": "string" },
+        "card": { "type": "object" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
     }
   },
   "firestore": {
@@ -66,6 +93,14 @@
     "/users/{userId}/deckbox/{cardId}": {
       "schema": "SelectedCard",
       "description": "User's active selection panel items"
+    },
+    "/sharedSelections/{selectionId}": {
+      "schema": "SharedSelection",
+      "description": "Cards shared between users"
+    },
+    "/suggestions/{suggestionId}": {
+      "schema": "Suggestion",
+      "description": "Card suggestions for decks"
     }
   }
 }

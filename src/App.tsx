@@ -66,7 +66,13 @@ import {
   Settings2,
   Brain,
   PieChart as PieChartIcon,
-  Maximize2
+  Maximize2,
+  Mail,
+  Send,
+  Share2,
+  ArrowRight,
+  Check,
+  Globe
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import axios from 'axios';
@@ -150,6 +156,8 @@ try {
 const BearIcon = PawPrint;
 
 export default function App() {
+  const [viewMode, setViewMode] = useState<'cards' | 'manage_decks' | 'sets' | 'calendar' | 'sheriff' | 'judge' | 'socials'>('cards');
+  const [loading, setLoading] = useState(false);
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminChamber, setShowAdminChamber] = useState(false);
@@ -181,7 +189,7 @@ export default function App() {
     checkConnection();
   }, []);
 
-  const saveUserSettings = async (updates: { userTitle?: string, cardsPerRow?: number, userName?: string }) => {
+  const saveUserSettings = async (updates: { userTitle?: string, cardsPerRow?: number, userName?: string, isPublic?: boolean }) => {
     if (!user) return;
     try {
       await setDoc(doc(db, 'users', user.uid), {
@@ -191,6 +199,7 @@ export default function App() {
       if (updates.userTitle !== undefined) setUserTitle(updates.userTitle);
       if (updates.cardsPerRow !== undefined) setCardsPerRow(updates.cardsPerRow);
       if (updates.userName !== undefined) setUserName(updates.userName);
+      if (updates.isPublic !== undefined) setIsPublic(updates.isPublic);
       showMessage("Settings updated", "success");
     } catch (err) {
       console.error("Failed to save settings", err);
@@ -213,6 +222,19 @@ export default function App() {
       symbols = costString.match(/\{[^}]+\}/g) || [];
     }
 
+    // WUBRG Sorting Logic
+    const WUBRG_ORDER = ['W', 'U', 'B', 'R', 'G', 'C'];
+    symbols.sort((a, b) => {
+      const charA = a.replace(/\{|\}/g, '').charAt(0);
+      const charB = b.replace(/\{|\}/g, '').charAt(0);
+      const idxA = WUBRG_ORDER.indexOf(charA);
+      const idxB = WUBRG_ORDER.indexOf(charB);
+      if (idxA === -1 && idxB === -1) return 0;
+      if (idxA === -1) return 1;
+      if (idxB === -1) return -1;
+      return idxA - idxB;
+    });
+
     return (
       <div className="flex items-center gap-0.5 flex-wrap justify-center pointer-events-none">
         {symbols.map((sym, i) => {
@@ -234,54 +256,62 @@ export default function App() {
     );
   };
 
+  const [showShareOverlay, setShowShareOverlay] = useState(false);
+  const [shareRecipientEmail, setShareRecipientEmail] = useState("");
+  const [isSharing, setIsSharing] = useState(false);
+  const [isSocialsLoading, setIsSocialsLoading] = useState(false);
+  const [publicUsers, setPublicUsers] = useState<any[]>([]);
+  const [viewingPublicDecks, setViewingPublicDecks] = useState<any[]>([]);
+  const [viewingPublicUser, setViewingPublicUser] = useState<any>(null);
+  const [sharedWithMe, setSharedWithMe] = useState<any[]>([]);
+  const [isPublic, setIsPublic] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Music State
-  const MUSIC_VIBES = [
-    { 
-      id: 'building', 
-      name: 'Workshop Focus', 
-      spotifyId: '37i9dQZF1DWWQRwui0Ex7v', // Lofi Beats
-      desc: 'Focused lo-fi frequencies for master architects',
-      rune: 'ᚠ'
-    },
-    { 
-      id: 'drafting', 
-      name: 'Drafting Currents', 
-      spotifyId: '37i9dQZF1DX8UebIWGreaterFocus', // Chill Lofi Study
-      desc: 'High-stakes selection and ritual analysis',
-      rune: 'ᚢ'
-    },
-    { 
-      id: 'commander', 
-      name: 'Epic Commander', 
-      spotifyId: '37i9dQZF1DX2ue96bZArpT', // Ambient Fantasy
-      desc: 'Atmospheric themes for the ultimate table',
-      rune: 'ᚦ'
-    },
-    { 
-      id: 'arcane', 
-      name: 'Arcane Wisdom', 
-      spotifyId: '37i9dQZF1DX4sWsp6KmOws', // Deep Focus
-      desc: 'Deep ethereal mana resonance',
-      rune: 'ᚨ'
+  useEffect(() => {
+    if (viewMode === 'socials') {
+      const usersQuery = query(collection(db, 'users'), where('isPublic', '==', true));
+      setIsSocialsLoading(true);
+      getDocs(usersQuery).then(snap => {
+        const users: any[] = [];
+        snap.forEach(d => {
+          if (d.id !== user?.uid) {
+            users.push({ id: d.id, ...d.data() });
+          }
+        });
+        setPublicUsers(users);
+      }).finally(() => setIsSocialsLoading(false));
+
+      if (user) {
+        const sharedQuery = query(collection(db, 'sharedSelections'), where('toUserEmail', '==', user.email));
+        onSnapshot(sharedQuery, (snap) => {
+          const shared: any[] = [];
+          snap.forEach(d => shared.push({ id: d.id, ...d.data() }));
+          setSharedWithMe(shared);
+        });
+      }
     }
-  ];
+  }, [viewMode, user]);
 
-  const [activeVibe, setActiveVibe] = useState(0);
-  const [isMusicPlaying, setIsMusicPlaying] = useState(false);
-  const [musicVolume, setMusicVolume] = useState(0.5);
-  const [isConnecting, setIsConnecting] = useState(false);
-
-  const toggleGlobalMusic = () => {
-    setIsMusicPlaying(!isMusicPlaying);
-  };
-
-  const handleVibeChange = (index: number) => {
-    if (index === activeVibe) return;
-    setIsConnecting(true);
-    setActiveVibe(index);
-    setTimeout(() => setIsConnecting(false), 800);
+  const shareSelection = async () => {
+    if (!user || !shareRecipientEmail || deckbox.length === 0) return;
+    setIsSharing(true);
+    try {
+      await setDoc(doc(collection(db, 'sharedSelections')), {
+        fromUserId: user.uid,
+        fromUserEmail: user.email,
+        toUserEmail: shareRecipientEmail.toLowerCase().trim(),
+        cards: deckbox,
+        createdAt: serverTimestamp()
+      });
+      showMessage(`Sent to ${shareRecipientEmail}`, "success");
+      setShowShareOverlay(false);
+      setShareRecipientEmail("");
+    } catch (e) {
+      console.error(e);
+      showMessage("Failed to share", "error");
+    } finally {
+      setIsSharing(false);
+    }
   };
 
   const [allCards, setAllCards] = useState<Card[]>([]);
@@ -408,7 +438,7 @@ export default function App() {
             if (data.userTitle) setUserTitle(data.userTitle);
             if (data.userName) setUserName(data.userName);
             if (data.cardsPerRow !== undefined) setCardsPerRow(data.cardsPerRow);
-
+            if (data.isPublic !== undefined) setIsPublic(data.isPublic);
           }
 
           await setDoc(userRef, {
@@ -544,7 +574,12 @@ export default function App() {
   
   const [viewingDeckCards, setViewingDeckCards] = useState<any[] | null>(null);
   const [viewingDeckName, setViewingDeckName] = useState("");
+  const [viewingDeckId, setViewingDeckId] = useState("");
   const [isViewingDeck, setIsViewingDeck] = useState(false);
+  const [isAltCommandersOpen, setIsAltCommandersOpen] = useState(false);
+  const [alternativeCommanders, setAlternativeCommanders] = useState<any[]>([]);
+  const [zoomedAltCard, setZoomedAltCard] = useState<string | null>(null);
+  const [activeSymbol, setActiveSymbol] = useState(0);
   const [hoveredPreviewCard, setHoveredPreviewCard] = useState<string | null>(null);
   const [hoveredPreviewPrice, setHoveredPreviewPrice] = useState<string | null>(null);
 
@@ -611,9 +646,7 @@ export default function App() {
   const [activeDeckCards, setActiveDeckCards] = useState<any[]>([]);
   const [commanders, setCommanders] = useState<{name: string, art_crop: string, isBackground?: boolean}[]>([]);
   const [currentCI, setCurrentCI] = useState("");
-  const [loading, setLoading] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
-  const [viewMode, setViewMode] = useState<'cards' | 'manage_decks' | 'sets' | 'calendar' | 'sheriff' | 'judge' | 'radio'>('cards');
 
   useEffect(() => {
     // If we switch views away from search, clear the bear tech box
@@ -872,7 +905,9 @@ export default function App() {
         userId: user.uid,
         name: deckName,
         tags: existingData?.tags || [],
-        commanders: finalCommanderNames, // Use finalCommanderNames which includes inferred
+        commanders: finalCommanderNames,
+        commanderNames: finalCommanderNames,
+        existingNames: Array.from(existingNames), // Save card names for filtering
         art_crops: finalArtCrops,
         ci: ciStr,
         totalCost: totalCost || existingData?.totalCost || 0,
@@ -1161,6 +1196,57 @@ export default function App() {
     }, 5000); // 5 seconds per step
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setActiveSymbol(prev => (prev + 1) % 9);
+    }, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const findAlternativeCommanders = async () => {
+    if (!viewingDeckCards) return;
+    
+    // 1. Identify current CI
+    const currentCommanders = viewingDeckCards.filter(dc => 
+      dc.categories?.some((cat: string) => cat.toLowerCase().includes('commander'))
+    );
+    
+    if (currentCommanders.length === 0) {
+      showMessage("COMMANDER UNKNOWN - CI ANALYSIS RESTRICTED", "error");
+      return;
+    }
+
+    const commanderColors = new Set<string>();
+    currentCommanders.forEach(dc => {
+      const colors = (dc.card?.scryfallData?.color_identity || dc.card?.oracleCard?.color_identity || dc.card?.color_identity || []);
+      colors.forEach((col: string) => commanderColors.add(col));
+    });
+
+    const ciString = Array.from(commanderColors).join('').toLowerCase() || 'c';
+
+    // 2. Multiverse Pulse: Search Scryfall for all relevant legends in these exact colors
+    try {
+      setLoading(true);
+      // Query: Find legendary creatures with the exact same color identity OR partners that can fit
+      const query = `f:commander t:legendary t:creature (id=${ciString} or (is:partner id<${ciString}))`;
+      const response = await fetch(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=edhrec`);
+      const data = await response.json();
+      
+      if (data.data) {
+        setAlternativeCommanders(data.data.map((c: any) => ({ card: c })));
+        setIsAltCommandersOpen(true);
+        showMessage(`${data.data.length} MULTIVERSE LEADERS DISCOVERED`, "success");
+      } else {
+        showMessage("NO LEGENDS FOUND IN THESE FREQUENCIES", "info");
+      }
+    } catch (e) {
+      console.error(e);
+      showMessage("VOID SIGNAL INTERFERENCE", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const goHome = () => {
     clearDeckSelection();
@@ -1900,7 +1986,7 @@ Return ONLY JSON. No markdown backticks.`;
       <div className="min-h-screen bg-[#050505] flex items-center justify-center">
         <div className="flex flex-col items-center gap-6">
           <ManaSpinner className="w-16 h-16" />
-          <p className="text-white/20 font-magic tracking-widest text-xs animate-pulse italic">Initializing Rune Magic...</p>
+          <p className="text-white/20 font-magic tracking-widest text-xs animate-pulse italic">Loading...</p>
         </div>
       </div>
     );
@@ -1972,28 +2058,27 @@ Return ONLY JSON. No markdown backticks.`;
       <div className="absolute top-0 right-0 w-[50vh] h-[50vh] bg-cyan-500/5 blur-[150px] rounded-full pointer-events-none" />
       <div className="absolute bottom-0 left-[20%] w-[40vh] h-[40vh] bg-orange-500/5 blur-[120px] rounded-full pointer-events-none" />
       
-      {/* Audio Engine Removed - Spotify Bridge replaces this logic */}
 
       {/* Mobile Top Bar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-14 bg-[#070707]/60 backdrop-blur-2xl border-b border-white/[0.04] z-40 flex items-center justify-between px-4">
-        <div className="flex items-center gap-2 cursor-pointer" onClick={goHome}>
-          <Zap className="w-5 h-5 text-orange-500" />
-          <h1 className="text-sm font-magic font-black uppercase tracking-[0.2em] text-white">Rune Deck Companion</h1>
+      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#070707]/90 backdrop-blur-3xl border-b border-white/[0.04] z-[120] flex items-center justify-between px-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
+        <div className="flex items-center gap-3 cursor-pointer" onClick={goHome}>
+          <Zap className="w-5 h-5 text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.6)]" />
+          <h1 className="text-[10px] font-magic font-black uppercase tracking-[0.3em] text-white">Version <span className="text-orange-500">3.5</span></h1>
         </div>
         <div className="flex items-center gap-2">
           {viewMode === 'cards' && (
             <button 
               onClick={() => setIsFiltersOpen(!isFiltersOpen)}
-              className="p-2 text-white/40 hover:text-orange-500 transition-colors"
+              className={`p-2 transition-colors ${isFiltersOpen ? 'text-cyan-400' : 'text-white/40 hover:text-orange-500'}`}
             >
-              <Filter className="w-5 h-5" />
+              <Filter className="w-6 h-6" />
             </button>
           )}
           <button 
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
             className="p-2 text-white/40 hover:text-orange-500 transition-colors"
           >
-            {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+            {isMobileMenuOpen ? <X className="w-7 h-7 text-orange-500" /> : <Menu className="w-7 h-7" />}
           </button>
         </div>
       </div>
@@ -2033,33 +2118,9 @@ Return ONLY JSON. No markdown backticks.`;
         </div>
 
         <div className="flex-1 overflow-y-auto custom-scrollbar p-4 pl-10 space-y-6">
-          {/* Section 1: Decks and Search Fields */}
-          <section className="space-y-4">
-            {activeDeckId && commanders.length > 0 && (
-              <div className="flex flex-col items-center gap-4 p-4 rune-panel rounded-2xl bg-cyan-500/5 mb-2">
-                <div 
-                  className="flex justify-center items-center w-full cursor-pointer group"
-                  onClick={() => setCommanderPreview(commanders)}
-                >
-                  <div className="flex items-center -space-x-8">
-                    {[...commanders].reverse().map((cmd, i) => (
-                      <div key={i} className="relative group hover:z-[100] transition-all duration-300 hover:scale-110" style={{ zIndex: commanders.length - i }}>
-                        <div className="w-20 h-20 sm:w-24 sm:h-24 rounded-full overflow-hidden border-2 border-orange-500/40 shadow-[0_0_20px_rgba(0,0,0,0.5)] relative group-hover:border-orange-500 transition-all">
-                          <img src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} alt={cmd.name} className="w-full h-full object-cover scale-110 group-hover:scale-100 transition-transform duration-700" />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none opacity-60 group-hover:opacity-0 transition-opacity" />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex flex-col items-center gap-1">
-                   <h3 className="text-[10px] font-magic font-black text-orange-500/80 uppercase tracking-tighter text-center line-clamp-1">{activeDeckName}</h3>
-                   <div className="flex justify-center scale-75">
-                      {renderManaSymbols(currentCI, 'w-5 h-5')}
-                   </div>
-                </div>
-              </div>
-            )}
+
+            {/* Section 1: Search Fields */}
+            <section className="space-y-4">
 
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
@@ -2141,6 +2202,39 @@ Return ONLY JSON. No markdown backticks.`;
                 )}
                 <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
               </div>
+
+              {activeDeckId && commanders.length > 0 && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  onClick={() => setCommanderPreview(commanders)}
+                  className="relative h-28 rounded-xl overflow-hidden border border-white/5 bg-black/40 cursor-pointer group hover:border-orange-500/30 transition-all mt-2"
+                >
+                  <div className="flex w-full h-full">
+                    {commanders.map((cmd, i) => (
+                      <div key={i} className="flex-1 relative overflow-hidden group">
+                        <img 
+                          src={cmd.art_crop || 'https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg'} 
+                          alt={cmd.name} 
+                          className="w-full h-full object-cover scale-110 group-hover:scale-125 transition-transform duration-1000" 
+                        />
+                        <div className="absolute inset-0 bg-gradient-to-t from-[#0A0A0A] via-transparent to-transparent opacity-80" />
+                        <div className="absolute bottom-2 left-2 right-2 flex flex-col">
+                           <span className="text-[7px] font-magic font-extrabold text-white/40 uppercase tracking-tighter truncate">{cmd.name}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="absolute top-2 right-2 flex items-center gap-2">
+                    <div className="flex items-center gap-0.5 bg-black/60 px-2 py-1 rounded-full border border-white/10 backdrop-blur-md">
+                       {renderManaSymbols(currentCI, 'w-3 h-3')}
+                    </div>
+                    <div className="w-6 h-6 rounded-full bg-black/60 border border-white/10 flex items-center justify-center backdrop-blur-md">
+                       <Zap className="w-3.5 h-3.5 text-orange-500 animate-pulse" />
+                    </div>
+                  </div>
+                </motion.div>
+              )}
             </div>
 
 
@@ -2337,6 +2431,25 @@ Return ONLY JSON. No markdown backticks.`;
                   )}
                 </div>
               )}
+
+              {/* Mobile-Only Selection Button relocated under Live Filters */}
+              <div className="md:hidden mb-4 mt-2">
+                <button 
+                  onClick={() => {
+                    setIsDeckboxOpen(true);
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full flex items-center justify-between px-5 py-4 bg-orange-500/10 border border-orange-500/20 rounded-2xl group active:scale-95 transition-all"
+                >
+                  <div className="flex items-center gap-3">
+                    <Layers className="w-5 h-5 text-orange-500" />
+                    <span className="text-[11px] font-magic font-black text-white uppercase tracking-widest">Selections</span>
+                  </div>
+                  {deckbox.length > 0 && (
+                    <span className="text-xs font-mono font-black text-orange-500 bg-orange-500/10 px-2 py-0.5 rounded-full">{deckbox.length}</span>
+                  )}
+                </button>
+              </div>
             </section>
           </section>
 
@@ -2395,11 +2508,11 @@ Return ONLY JSON. No markdown backticks.`;
                 <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Bears</span>
               </button>
               <button 
-                onClick={() => setViewMode('radio')}
-                className="flex flex-col items-center justify-center py-2 rune-panel text-purple-400/60 hover:text-purple-400 font-magic hover:border-purple-500/50 transition-all group z-10 gap-1 rounded-sm shadow-[0_0_15px_rgba(168,85,247,0.1)] hover:shadow-purple-500/20"
+                onClick={() => setViewMode('socials')}
+                className="flex flex-col items-center justify-center py-2 rune-panel text-cyan-400/60 hover:text-cyan-400 font-magic hover:border-cyan-500/50 transition-all group z-10 gap-1 rounded-sm shadow-[0_0_15px_rgba(6,182,212,0.1)] hover:shadow-cyan-500/20"
               >
-                <Radio className="w-4 h-4 group-hover:animate-pulse transition-transform text-purple-500/60 group-hover:text-purple-400" />
-                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Radio</span>
+                <Users className="w-4 h-4 group-hover:scale-110 transition-transform text-cyan-500/60 group-hover:text-cyan-400" />
+                <span className="text-[7px] font-magic font-bold uppercase tracking-widest leading-none">Socials</span>
               </button>
             </div>
           </section>
@@ -2408,24 +2521,26 @@ Return ONLY JSON. No markdown backticks.`;
         {/* Section 6: User & Settings */}
         <div className="p-5 bg-transparent border-t border-white/5 relative">
           <div className="flex items-center gap-4">
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="group relative flex items-center justify-center shrink-0 w-12 h-12 transition-all duration-300"
-            >
-              {/* Gear Shape SVG Background */}
-              <div className="absolute inset-0 text-cyan-500/10 group-hover:text-cyan-500/30 group-hover:rotate-90 transition-all duration-1000">
-                <svg viewBox="0 0 100 100" className="w-full h-full fill-current">
-                   <path d="M50 0 L60 10 L75 5 L80 20 L95 25 L90 40 L100 50 L90 60 L95 75 L80 80 L75 95 L60 90 L50 100 L40 90 L25 95 L20 80 L5 75 L10 60 L0 50 L10 40 L5 25 L20 20 L25 5 L40 10 Z" />
-                </svg>
-              </div>
-              <div className="w-9 h-9 rounded-full bg-black border border-cyan-500/20 flex items-center justify-center overflow-hidden shrink-0 group-hover:border-cyan-400 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all relative z-10">
-                {user?.photoURL ? (
-                  <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover" />
-                ) : (
-                  <User className="w-4 h-4 text-cyan-400/80" />
-                )}
-              </div>
-            </button>
+            <div className="relative shrink-0 w-12 h-12 flex items-center justify-center">
+              <button 
+                onClick={() => setIsSettingsOpen(true)}
+                className="absolute inset-0 group flex items-center justify-center transition-all duration-300"
+              >
+                {/* Subtle Arcane Gear Architecture */}
+                <div className="absolute inset-0 bg-gradient-to-t from-cyan-500/20 to-transparent rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                <div className="absolute inset-0 text-cyan-400 group-hover:text-cyan-300 transition-all duration-700 opacity-40 group-hover:opacity-100">
+                  <Settings className="w-full h-full p-2.5 animate-[spin_8s_linear_infinite]" />
+                </div>
+                
+                <div className="w-9 h-9 rounded-full bg-[#050505] border border-cyan-500/30 flex items-center justify-center overflow-hidden shrink-0 group-hover:border-cyan-400 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all relative z-10">
+                  {user?.photoURL ? (
+                    <img src={user.photoURL} alt="Profile" className="w-full h-full object-cover group-hover:scale-110 transition-transform" />
+                  ) : (
+                    <User className="w-4 h-4 text-cyan-400/60" />
+                  )}
+                </div>
+              </button>
+            </div>
 
             <div className="flex-1 flex flex-col items-start min-w-0">
                <span className="text-[10px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">{userName || user?.displayName || 'User'}</span>
@@ -2462,110 +2577,130 @@ Return ONLY JSON. No markdown backticks.`;
                initial={{ opacity: 0 }}
                animate={{ opacity: 1 }}
                exit={{ opacity: 0 }}
-               className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md"
+               className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl"
             >
                <motion.div 
-                 initial={{ scale: 0.9, y: 20 }}
+                 initial={{ scale: 0.95, y: 10 }}
                  animate={{ scale: 1, y: 0 }}
-                 exit={{ scale: 0.9, y: 20 }}
-                 className="w-full max-w-lg bg-gradient-to-br from-[#121212]/95 to-[#050505]/95 backdrop-blur-2xl border border-white/[0.05] shadow-[0_0_50px_rgba(0,0,0,0.8),inset_0_1px_1px_rgba(255,255,255,0.05)] rounded-[2rem] overflow-hidden"
+                 exit={{ scale: 0.95, y: 10 }}
+                 className="w-full max-w-md bg-[#050505] border border-white/10 shadow-[0_0_100px_rgba(0,0,0,1)] rounded-[2.5rem] overflow-hidden relative"
                >
-                  <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/[0.02]">
+                  {/* Decorative Elements */}
+                  <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent" />
+                  <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-orange-500/50 to-transparent" />
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.05),transparent_50%)]" />
+
+                  <div className="p-6 border-b border-white/5 flex items-center justify-between relative z-10">
                      <div className="flex items-center gap-3">
-                        <Settings className="w-4 h-4 text-orange-500" />
-                        <h2 className="font-magic font-black text-sm uppercase tracking-widest">User Settings</h2>
+                        <div className="w-8 h-8 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
+                           <Settings className="w-4 h-4 text-orange-400" />
+                        </div>
+                        <div>
+                           <h2 className="font-magic font-black text-xs uppercase tracking-[0.2em] text-white">System Config</h2>
+                           <p className="text-[8px] font-mono text-white/20 uppercase tracking-widest">Interface v3.5</p>
+                        </div>
                      </div>
                      <button onClick={() => setIsSettingsOpen(false)} className="p-2 hover:bg-white/5 rounded-full text-white/20 hover:text-white transition-all">
                         <X className="w-4 h-4" />
                      </button>
                   </div>
 
-                  <div className="p-8 space-y-8">
-                     <div className="space-y-3">
-                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">User Identity</label>
-                        <p className="text-[8px] text-white/20 uppercase tracking-tighter -mt-2">This name appears as the author of your decks.</p>
-                        <div className="flex gap-2">
+                  <div className="p-6 space-y-6 relative z-10 custom-scrollbar max-h-[70vh] overflow-y-auto">
+                     {/* Identification Segment */}
+                     <div className="flex items-center gap-4 bg-white/[0.02] border border-white/5 p-4 rounded-2xl">
+                        <div className="w-16 h-16 rounded-full border-2 border-orange-500/30 p-1 shrink-0">
+                           {user?.photoURL ? (
+                             <img src={user.photoURL} alt="Avatar" className="w-full h-full rounded-full object-cover" />
+                           ) : (
+                             <div className="w-full h-full rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 font-magic text-xl">
+                                ᛝ
+                             </div>
+                           )}
+                        </div>
+                        <div className="flex-1 min-w-0">
                            <input 
                               type="text"
                               value={userName}
                               onChange={(e) => setUserName(e.target.value)}
                               onBlur={() => saveUserSettings({ userName })}
-                              onKeyDown={(e) => e.key === 'Enter' && saveUserSettings({ userName })}
-                              placeholder="Enter your name"
-                              className="w-full bg-black/40 backdrop-blur-xl shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] border border-white/[0.05] rounded-[1.5rem] px-5 py-3.5 text-xs focus:border-orange-500 outline-none text-white/80 transition-all font-sans"
+                              className="w-full bg-transparent border-b border-white/5 focus:border-cyan-500/50 text-sm font-magic font-black text-white hover:text-cyan-400 transition-all outline-none uppercase tracking-widest"
+                              placeholder="Enter Identity..."
                            />
-                           <button 
-                             onClick={() => saveUserSettings({ userName })}
-                             className="px-5 py-3.5 bg-white/[0.04] shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] border border-white/[0.05] rounded-[1.5rem] text-white/60 hover:text-white hover:bg-white/10 transition-all font-black text-xs uppercase tracking-widest font-magic"
-                           >
-                             Update
-                           </button>
-                        </div>
-                     </div>
-
-                     <div className="space-y-3">
-                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">User Title</label>
-                        <p className="text-[8px] text-white/20 uppercase tracking-tighter -mt-2">This title appears beneath your name.</p>
-                        <div className="flex gap-2">
                            <input 
                               type="text"
                               value={userTitle}
                               onChange={(e) => setUserTitle(e.target.value)}
                               onBlur={() => saveUserSettings({ userTitle })}
-                              onKeyDown={(e) => e.key === 'Enter' && saveUserSettings({ userTitle })}
-                              placeholder="e.g. Master Brewer"
-                              className="w-full bg-black/40 backdrop-blur-xl shadow-[inset_0_2px_10px_rgba(0,0,0,0.5)] border border-white/[0.05] rounded-[1.5rem] px-5 py-3.5 text-xs focus:border-orange-500 outline-none text-white/80 transition-all font-sans"
+                              className="w-full bg-transparent text-[9px] font-mono text-white/30 uppercase tracking-widest mt-1 outline-none focus:text-orange-400 transition-all"
+                              placeholder="Set Title..."
                            />
-                           <button 
-                             onClick={() => saveUserSettings({ userTitle })}
-                             className="px-5 py-3.5 bg-white/[0.04] shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] border border-white/[0.05] rounded-[1.5rem] text-white/60 hover:text-white hover:bg-white/10 transition-all font-black text-xs uppercase tracking-widest font-magic"
-                           >
-                             Update
-                           </button>
                         </div>
                      </div>
 
+                     {/* Tactical Switches */}
+                     <div className="grid grid-cols-1 gap-3">
+                        <div 
+                           onClick={() => saveUserSettings({ isPublic: !isPublic })}
+                           className={`flex items-center justify-between p-4 rounded-2xl cursor-pointer border transition-all ${isPublic ? 'bg-cyan-500/5 border-cyan-500/30' : 'bg-white/[0.02] border-white/5 hover:border-white/10'}`}
+                        >
+                           <div className="flex items-center gap-3">
+                              <Eye className={`w-4 h-4 ${isPublic ? 'text-cyan-400' : 'text-white/20'}`} />
+                              <div className="flex flex-col">
+                                 <span className={`text-[10px] font-magic font-black uppercase tracking-widest ${isPublic ? 'text-white' : 'text-white/40'}`}>Broadcasting</span>
+                                 <span className="text-[7px] font-mono text-white/20 uppercase">Global Visibility Active</span>
+                              </div>
+                           </div>
+                           <div className={`w-8 h-4 rounded-full relative transition-all ${isPublic ? 'bg-cyan-500' : 'bg-white/10'}`}>
+                              <div className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isPublic ? 'left-4.5' : 'left-0.5'}`} />
+                           </div>
+                        </div>
+                     </div>
+
+                     {/* Interface Density */}
                      <div className="space-y-3">
-                        <label className="text-[10px] font-magic font-black text-white/30 uppercase tracking-widest">Grid Density (Cards per Row)</label>
-                        <div className="grid grid-cols-5 gap-2">
+                        <div className="flex items-center justify-between px-1">
+                           <span className="text-[8px] font-magic font-black text-white/30 uppercase tracking-widest">Interface Density</span>
+                           <span className="text-[8px] font-mono text-orange-500/60 uppercase">{cardsPerRow === 0 ? 'Optimal' : `${cardsPerRow} Wide`}</span>
+                        </div>
+                        <div className="flex gap-2">
                            <button
                              onClick={() => saveUserSettings({ cardsPerRow: 0 })}
-                             className={`py-3 rounded-2xl text-[9px] font-black uppercase transition-all shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] border ${cardsPerRow === 0 ? 'bg-orange-500/80 border-orange-500 text-black shadow-[0_0_15px_rgba(249,115,22,0.3)]' : 'bg-white/[0.02] border-white/[0.04] text-white/40 hover:bg-white/10'}`}
+                             className={`flex-1 py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === 0 ? 'bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20' : 'bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10'}`}
                            >
-                             Auto
+                              Auto
                            </button>
-                           {[2, 3, 4, 5, 8, 11].map((n) => (
-                             <button
-                                key={n}
-                                onClick={() => saveUserSettings({ cardsPerRow: n })}
-                                className={`py-3 rounded-2xl text-[10px] font-black transition-all shadow-[inset_0_1px_1px_rgba(255,255,255,0.05)] border ${cardsPerRow === n ? 'bg-orange-500/80 border-orange-500 text-black shadow-[0_0_15px_rgba(249,115,22,0.3)]' : 'bg-white/[0.02] border-white/[0.04] text-white/40 hover:bg-white/10'}`}
-                             >
-                               {n}
-                             </button>
+                           {[3, 5, 8].map(n => (
+                              <button
+                                 key={n}
+                                 onClick={() => saveUserSettings({ cardsPerRow: n })}
+                                 className={`flex-1 py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === n ? 'bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20' : 'bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10'}`}
+                              >
+                                 {n}
+                              </button>
                            ))}
                         </div>
-                        <p className="text-[8px] text-white/20 uppercase tracking-tighter">Auto keeps cards at roughly actual scale (220px).</p>
                      </div>
 
-                     <div className="pt-4 border-t border-white/5">
+                     {/* Action Controls */}
+                     <div className="pt-4 flex flex-col gap-2">
                         {isAdmin && (
-                          <button 
-                            onClick={() => {
-                              setShowAdminChamber(true);
-                              setIsSettingsOpen(false);
-                            }}
-                            className="w-full flex items-center justify-center gap-2 py-4 mb-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest border border-emerald-500/20 transition-all shadow-[0_0_15px_rgba(16,185,129,0.1)]"
-                          >
-                            <Shield className="w-3.5 h-3.5" />
-                            Admin Chamber
-                          </button>
+                           <button 
+                             onClick={() => {
+                               setShowAdminChamber(true);
+                               setIsSettingsOpen(false);
+                             }}
+                             className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-xl text-[9px] font-magic font-black uppercase tracking-widest border border-emerald-500/20 transition-all shadow-sm"
+                           >
+                             <Shield className="w-3 h-3" />
+                             Admin Log
+                           </button>
                         )}
                         <button 
                           onClick={logout}
-                          className="w-full flex items-center justify-center gap-2 py-4 bg-red-500/10 hover:bg-red-500/20 text-red-500 rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest border border-red-500/20 transition-all"
+                          className="w-full flex items-center justify-center gap-2 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-500/60 hover:text-red-500 rounded-xl text-[9px] font-magic font-black uppercase tracking-widest border border-red-500/10 transition-all"
                         >
-                          <LogOut className="w-3.5 h-3.5" />
-                          Logout
+                          <LogOut className="w-3 h-3" />
+                          De-authorize
                         </button>
                      </div>
                   </div>
@@ -2676,7 +2811,7 @@ Return ONLY JSON. No markdown backticks.`;
                 </div>
               </motion.div>
             )}
-            <div className="fixed bottom-12 right-12 z-[100] pointer-events-auto">
+            <div className="hidden md:flex fixed bottom-12 right-12 z-[100] pointer-events-auto">
               <button 
                 onClick={() => setIsDeckboxOpen(true)}
                 className="flex items-center gap-4 px-6 py-4 bg-black/60 shadow-[0_0_30px_rgba(0,0,0,0.8),0_0_20px_rgba(249,115,22,0.1)] backdrop-blur-xl text-white/40 hover:text-orange-400 rounded-3xl border border-white/10 hover:border-orange-500/40 transition-all group scale-110"
@@ -2695,10 +2830,12 @@ Return ONLY JSON. No markdown backticks.`;
             </div>
           {viewMode === 'cards' && (
             <div 
-              className={`grid gap-3 sm:gap-6 p-2 pb-4`}
+              className={`grid transition-all duration-500 gap-3 sm:gap-6 p-2 pb-4 ${
+                cardsPerRow === 0 ? 'grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]' : ''
+              }`}
               style={{
                 gridTemplateColumns: cardsPerRow === 0 
-                  ? 'repeat(auto-fill, minmax(220px, 1fr))' 
+                  ? undefined 
                   : `repeat(${cardsPerRow}, 1fr)`
               }}
             >
@@ -2758,18 +2895,18 @@ Return ONLY JSON. No markdown backticks.`;
                              // Circular distribution: Mana symbols inner (r=30), Runes outer (r=42)
                              // Offset runes by 36% degrees so they don't overlap mana pins
                              const angle = (i % 5 * 2 * Math.PI) / 5 - Math.PI / 2 + (isMana ? 0 : Math.PI / 5);
-                             const r = isMana ? 30 : 42; 
+                             const r = isMana ? 20 : 60; 
                              
                              return (
                                <motion.div
                                  key={i}
                                  animate={{ 
-                                   scale: isActive ? 1.4 : 1,
-                                   opacity: isActive ? 0.3 : 0.02,
-                                   filter: isActive ? 'drop-shadow(0 0 40px white)' : 'none'
+                                   scale: isActive ? 1.8 : 1,
+                                   opacity: isActive ? 0.7 : 0.1,
+                                   filter: isActive ? 'drop-shadow(0 0 70px white)' : 'none'
                                  }}
                                  transition={{ duration: 4, ease: "easeInOut" }}
-                                 className="absolute w-[18vh] h-[18vh] flex items-center justify-center"
+                                 className={`absolute ${isMana ? 'w-[15vh] h-[15vh]' : 'w-[45vh] h-[45vh]'} flex items-center justify-center`}
                                  style={{
                                    top: `${50 + r * Math.sin(angle)}%`,
                                    left: `${50 + r * Math.cos(angle)}%`,
@@ -2779,7 +2916,7 @@ Return ONLY JSON. No markdown backticks.`;
                                  {isMana ? (
                                    <img src={MANA_SYMBOL_URIS[`{${item.s.toUpperCase()}}`]} alt={item.s} className="w-full h-full object-contain" />
                                  ) : (
-                                   <span className={`text-[12vh] font-magic ${i % 2 === 0 ? 'text-cyan-400' : 'text-orange-500'}`}>{item.s}</span>
+                                   <span className={`text-[32vh] font-magic leading-none ${i % 2 === 0 ? 'text-cyan-400' : 'text-orange-500'}`}>{item.s}</span>
                                  )}
                                </motion.div>
                              );
@@ -2793,17 +2930,90 @@ Return ONLY JSON. No markdown backticks.`;
                             animate={{ opacity: 1, scale: 1 }}
                             className="relative z-10 flex flex-col items-center"
                           >
-                             <h2 className="text-5xl md:text-8xl font-magic font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-white via-white to-cyan-500 uppercase tracking-tighter mb-8 shadow-black text-center drop-shadow-[0_0_60px_rgba(6,182,212,0.7)]">The Runes Await</h2>
-                             <div className="text-sm text-orange-100/90 max-w-xl mx-auto leading-relaxed mb-6 px-12 font-mono tracking-widest text-center bg-black/90 p-12 rounded-[4rem] backdrop-blur-3xl border border-orange-500/20 shadow-[0_0_80px_rgba(0,0,0,0.9)] scale-105 flex flex-col items-center gap-6">
-                              <span className="text-orange-500 font-black text-xl block tracking-[0.3em]">FORGE YOUR SYNERGIES</span>
-                              <div className="space-y-2">
-                                <p className="opacity-80 text-[14px] font-sans uppercase font-medium">
-                                  Discover Recent and Future Releases <br/>
-                                  & Summon the Perfect Additions To Your Decks.
-                                </p>
-                              </div>
-                              <span className="w-full text-[10px] opacity-20 mt-4 block border-t border-white/5 pt-6 font-magic font-bold uppercase">SYNERGY SCRIBED • SLOPSIE APPROVED</span>
-                            </div>
+                             {/* THE PULSING RUNES / SYMBOLS - RESTORED & ENHANCED */}
+                             <motion.div 
+                               animate={{ rotate: 360 }}
+                               transition={{ duration: 120, repeat: Infinity, ease: "linear" }}
+                               className="absolute inset-0 pointer-events-none flex items-center justify-center overflow-hidden"
+                             >
+                               {[
+                                 { s: 'W', r: 35, a: 0 },
+                                 { s: 'U', r: 35, a: 72 },
+                                 { s: 'B', r: 35, a: 144 },
+                                 { s: 'R', r: 35, a: 216 },
+                                 { s: 'G', r: 35, a: 288 },
+                                 { s: 'λ', r: 18, a: 30 },
+                                 { s: 'Ω', r: 18, a: 120 },
+                                 { s: 'ψ', r: 18, a: 210 },
+                                 { s: 'ζ', r: 18, a: 300 },
+                               ].map((item, i) => {
+                                 const isActive = activeSymbol === i;
+                                 const angle = (item.a * Math.PI) / 180;
+                                 const r = item.r;
+                                 const isMana = ['W', 'U', 'B', 'R', 'G'].includes(item.s);
+
+                                 return (
+                                   <motion.div
+                                     key={i}
+                                     animate={{ 
+                                       scale: isActive ? 1.8 : 1.2,
+                                       opacity: isActive ? 0.7 : 0.08,
+                                       filter: isActive ? 'drop-shadow(0 0 80px rgba(255,255,255,0.6))' : 'none'
+                                     }}
+                                     transition={{ duration: 4, ease: "easeInOut" }}
+                                     className={`absolute ${isMana ? 'w-[14vh] h-[14vh] md:w-[18vh] md:h-[18vh]' : 'w-[40vh] h-[40vh] md:w-[50vh] md:h-[50vh]'} flex items-center justify-center`}
+                                     style={{
+                                       top: `${50 + r * Math.sin(angle)}%`,
+                                       left: `${50 + r * Math.cos(angle)}%`,
+                                       // Counter-rotate the symbols so they stay upright
+                                       transform: `translate(-50%, -50%)`
+                                     }}
+                                   >
+                                     {isMana ? (
+                                       <img src={MANA_SYMBOL_URIS[`{${item.s.toUpperCase()}}`]} alt={item.s} className="w-full h-full object-contain opacity-90 drop-shadow-[0_0_20px_rgba(255,255,255,0.2)]" />
+                                     ) : (
+                                       <span className={`text-[35vh] md:text-[45vh] font-magic leading-none ${i % 2 === 0 ? 'text-cyan-400' : 'text-orange-500'} blur-[1px] md:blur-[2px]`}>{item.s}</span>
+                                     )}
+                                   </motion.div>
+                                 );
+                               })}
+                             </motion.div>
+
+                             <motion.h1 
+                               initial={{ opacity: 0, y: 30 }}
+                               animate={{ opacity: 1, y: 0 }}
+                               transition={{ duration: 0.8, ease: "easeOut" }}
+                               className="text-4xl sm:text-7xl md:text-[10rem] lg:text-[15rem] font-magic font-black text-white uppercase tracking-tighter opacity-[0.95] drop-shadow-[0_0_50px_rgba(6,182,212,0.5)] mb-4 md:mb-12 leading-[0.8] text-center italic skew-x-[-8deg] relative"
+                             >
+                               <span className="relative z-10">The Runes <br className="md:hidden" /> Await</span>
+                               <div className="absolute inset-0 text-cyan-400/10 blur-[15px] translate-x-2 translate-y-2 pointer-events-none select-none">The Runes Await</div>
+                             </motion.h1>
+
+                             <motion.div 
+                               initial={{ opacity: 0, y: 30 }}
+                               animate={{ opacity: 1, y: 0 }}
+                               className="relative z-20 flex flex-col items-center justify-center text-center max-w-5xl mx-auto mb-6 md:mb-12 px-4"
+                             >
+                                <div className="space-y-6 md:space-y-16 py-6 md:py-16">
+                                   <div className="space-y-2 md:space-y-6">
+                                      <span className="text-orange-500 font-extrabold text-[10px] md:text-[14px] block tracking-[0.8em] md:tracking-[1.5em] mb-2 md:mb-6 drop-shadow-[0_0_15px_rgba(249,115,22,0.6)] uppercase font-magic">ANCIENT DECK FORGING</span>
+                                      <h3 className="text-3xl sm:text-6xl md:text-9xl font-magic font-black text-white uppercase tracking-[0.3em] md:tracking-[0.6em] leading-[1.1] drop-shadow-[0_0_50px_rgba(255,255,255,0.15)]">Forge Your <br className="hidden sm:block" /> Synergies</h3>
+                                   </div>
+                                   <p className="text-xs sm:text-sm md:text-xl text-white/70 font-magic font-black uppercase tracking-[0.2em] md:tracking-[0.5em] leading-[1.8] md:leading-[2.5] max-w-3xl mx-auto border-y border-white/10 py-8 md:py-16 px-4 md:px-12 bg-black/5 backdrop-blur-sm">
+                                     Discover recent and future releases & summon <br className="hidden sm:block"/> the perfect additions to your legacy collections.
+                                   </p>
+                                   <div className="pt-2 md:pt-6 flex flex-col items-center gap-4 md:gap-8">
+                                      <span className="text-[8px] md:text-[12px] font-magic font-black text-white/30 uppercase tracking-[0.4em] md:tracking-[0.8em] block">Synergy Scribed • Slopsie Approved</span>
+                                      <div className="flex gap-4">
+                                        <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-orange-500 rounded-full animate-pulse shadow-[0_0_15px_rgba(249,115,22,1)]" />
+                                        <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-cyan-500 rounded-full animate-pulse delay-75 shadow-[0_0_15px_rgba(6,182,212,1)]" />
+                                        <div className="w-1.5 h-1.5 md:w-2 md:h-2 bg-orange-500 rounded-full animate-pulse delay-150 shadow-[0_0_15px_rgba(249,115,22,1)]" />
+                                      </div>
+                                   </div>
+                                </div>
+                             </motion.div>
+
+
 
                             <div className="flex justify-center gap-6 mt-12">
                               <div className="w-2.5 h-2.5 rounded-full bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,1)] animate-pulse" />
@@ -2883,7 +3093,7 @@ Return ONLY JSON. No markdown backticks.`;
                   <h2 className="text-xl font-magic font-extrabold text-orange-500 uppercase tracking-tight">Saved Decks</h2>
                   <p className="text-[10px] text-cyan-500/60 font-bold font-mono tracking-widest">MY COLLECTION</p>
                 </div>
-                <div className="flex-1 max-w-sm z-10">
+                <div className="flex-1 max-w-sm z-10 flex flex-col gap-2">
                   <div className="flex gap-2">
                     <input 
                       type="text" 
@@ -2901,6 +3111,37 @@ Return ONLY JSON. No markdown backticks.`;
                       Add Deck
                     </button>
                   </div>
+                  
+                  {publicUsers.length > 0 && (
+                    <div className="relative group">
+                       <select 
+                        className="w-full appearance-none bg-black/40 border border-white/5 rounded-sm px-4 py-2 text-[10px] text-white/40 font-magic outline-none focus:border-cyan-500/40"
+                        onChange={async (e) => {
+                          const uid = e.target.value;
+                          if (!uid) return;
+                          setLoading(true);
+                          try {
+                            const snap = await getDocs(collection(db, 'users', uid, 'decks'));
+                            const decks: any[] = [];
+                            snap.forEach(d => decks.push({ id: d.id, ...d.data() }));
+                            setViewingPublicDecks(decks);
+                            const u = publicUsers.find(pu => pu.id === uid);
+                            setViewingPublicUser(u);
+                            setIsViewingDeck(true);
+                            setViewMode('socials'); // Switch to socials to see their decks
+                          } finally {
+                            setLoading(false);
+                          }
+                        }}
+                      >
+                         <option value="">Import from User...</option>
+                         {publicUsers.map(u => (
+                           <option key={u.id} value={u.id}>{u.displayName || u.userName || 'Unknown User'}</option>
+                         ))}
+                       </select>
+                       <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-white/20 pointer-events-none" />
+                    </div>
+                  )}
                 </div>
                 <div className="ml-auto bg-orange-500 text-black px-4 py-1 rounded-sm text-xs font-black z-10 relative">
                   {savedDecks.length} Decks
@@ -2938,18 +3179,18 @@ Return ONLY JSON. No markdown backticks.`;
                     </div>
 
                     <div className="p-6 flex-1 flex flex-col gap-6">
-                      <div className="flex flex-col gap-3 bg-white/[0.02] border border-white/[0.04] p-5 rounded-2xl">
+                      <div className="flex items-center gap-2 bg-white/[0.02] border border-white/[0.04] p-3 rounded-2xl">
                         <button 
                           onClick={() => autoAddCommanderTags(deck.id, deck.commanders)}
-                          className={`flex items-center gap-2 px-4 py-2 rounded-full transition-all text-[10px] font-black uppercase tracking-[0.2em] ${
+                          className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl transition-all text-[9px] font-magic font-black uppercase tracking-widest ${
                             suggestedDecks.has(deck.id) 
                               ? 'bg-transparent text-white/30 border border-white/5' 
                               : 'bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-black border border-orange-500/20 shadow-[0_0_15px_rgba(249,115,22,0.1)] hover:shadow-orange-500/50'
                           }`}
                           title="Generate Synergy Tags"
                         >
-                          <Wand2 className="w-3.5 h-3.5" />
-                          {suggestedDecks.has(deck.id) ? 'Regenerate Tags' : 'Generate Tags'}
+                          <Wand2 className="w-3 h-3" />
+                          {suggestedDecks.has(deck.id) ? 'Regen' : 'Generate Tags'}
                         </button>
                       </div>
 
@@ -3017,21 +3258,39 @@ Return ONLY JSON. No markdown backticks.`;
                         </div>
                       </div>
 
-                      <div className="flex justify-between items-center pt-4 mt-auto border-t border-white/5 gap-2">
+                      <div className="flex items-center pt-5 mt-auto border-t border-white/5 gap-3">
                         <button 
                           onClick={() => viewDeckDetails(deck.id)}
-                          className="flex-1 px-4 py-2 bg-cyan-500/5 hover:bg-cyan-500/10 border border-cyan-500/10 hover:border-cyan-500/30 rounded-xl text-cyan-500/70 hover:text-cyan-400 transition-all active:scale-95 flex items-center justify-center gap-2 group shadow-[0_0_15px_rgba(6,182,212,0.05)]"
+                          className="flex-[2] px-4 py-4 bg-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.4)] rounded-2xl text-black font-magic font-black text-[12px] uppercase tracking-[0.3em] hover:bg-cyan-400 hover:scale-[1.03] transition-all active:scale-95 flex items-center justify-center gap-3 group relative overflow-hidden"
                         >
-                          <Eye className="w-3.5 h-3.5 pointer-events-none group-hover:scale-110 transition-transform" />
-                          <span className="text-[9px] font-magic tracking-widest uppercase font-black">View Deck</span>
+                          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
+                          <Eye className="w-5 h-5 pointer-events-none group-hover:animate-pulse" />
+                          <span>View Deck</span>
+                        </button>
+                        <button 
+                          onClick={async () => {
+                             if (!auth.currentUser) {
+                                showMessage("AUTHENTICATION REQUIRED", "error");
+                                return;
+                             }
+                             const shareTarget = prompt("Enter User Email to share with:");
+                             if (shareTarget) {
+                                setLoading(true);
+                                await shareDeck(deck.id, shareTarget);
+                                setLoading(false);
+                             }
+                          }}
+                          className="w-12 h-12 flex items-center justify-center bg-white/5 hover:bg-indigo-500/20 border border-white/5 hover:border-indigo-500/30 rounded-2xl text-white/40 hover:text-indigo-400 transition-all active:scale-90 group"
+                          title="Share Deck"
+                        >
+                          <Send className="w-4 h-4 group-hover:rotate-12 transition-transform" />
                         </button>
                         <button 
                           onClick={() => setDeckToDelete(deck.id)}
-                          className="px-4 py-2 bg-red-500/5 hover:bg-red-500/20 rounded-xl text-red-500/50 hover:text-red-400 border border-red-500/10 hover:border-red-500/30 transition-all active:scale-95 flex items-center justify-center group shadow-[0_0_15px_rgba(239,68,68,0.05)]"
-                          title="delete this deck from rune deck"
+                          className="w-12 h-12 flex items-center justify-center bg-white/5 hover:bg-red-500/20 border border-white/5 hover:border-red-500/30 rounded-2xl text-white/40 hover:text-red-400 transition-all active:scale-90 group"
+                          title="Delete Deck"
                         >
-                          <Trash2 className="w-3.5 h-3.5 pointer-events-none group-hover:scale-110 transition-transform" />
-                          <span className="text-[9px] font-magic tracking-widest uppercase font-black">Delete</span>
+                          <Trash2 className="w-4 h-4 group-hover:scale-110 transition-transform" />
                         </button>
                       </div>
                     </div>
@@ -3053,18 +3312,14 @@ Return ONLY JSON. No markdown backticks.`;
             </div>
           )}
 
-          {viewMode === 'radio' && (
-            <RuneRadioPage 
-              activeVibe={activeVibe} 
-              setActiveVibe={handleVibeChange}
-              isMusicPlaying={isMusicPlaying}
-              setIsMusicPlaying={setIsMusicPlaying}
-              isConnecting={isConnecting}
-              setIsConnecting={setIsConnecting}
-              toggleGlobalMusic={toggleGlobalMusic}
-              musicVolume={musicVolume}
-              setMusicVolume={setMusicVolume}
-              MUSIC_VIBES={MUSIC_VIBES}
+          {viewMode === 'socials' && (
+            <SocialsPage 
+              setViewMode={setViewMode}
+              user={user}
+              setViewingPublicDecks={setViewingPublicDecks}
+              setViewingPublicUser={setViewingPublicUser}
+              setIsViewingDeck={setIsViewingDeck}
+              setIsSettingsOpen={setIsSettingsOpen}
             />
           )}
         </div>
@@ -3174,10 +3429,15 @@ Return ONLY JSON. No markdown backticks.`;
                                      </button>
                                    );
                                  })}
+                                  <div className="mt-8 pt-4 border-t border-cyan-500/10">
+
+                                  </div>
                                </div>
                              </div>
                            ))}
                        </div>
+
+
                      </div>
 
                      {/* IMAGE DISPLAY COLUMN */}
@@ -3252,7 +3512,7 @@ Return ONLY JSON. No markdown backticks.`;
                                   <div className="flex flex-col min-h-max relative z-10 font-sans h-full">
                                     {/* MODULE HEADER */}
                                     <div className="px-6 py-6 border-b border-white/5 bg-black/40 backdrop-blur-sm sticky top-0 z-20">
-                                      <div className="flex flex-col gap-1">
+                                      <div className="flex flex-col gap-4">
                                          <div className="flex items-center justify-between">
                                             <h3 className="text-[10px] font-magic font-black text-cyan-400 uppercase tracking-[0.4em]">Deckinfo</h3>
                                             <div className="flex gap-1">
@@ -3261,6 +3521,60 @@ Return ONLY JSON. No markdown backticks.`;
                                             </div>
                                          </div>
                                          <p className="text-[11px] font-mono text-white/20 uppercase tracking-widest truncate">{viewingDeckName || 'No Deck Selected'}</p>
+                                         
+                                         {viewingPublicUser && user && viewingPublicUser.id !== user.uid && (
+                                           <div className="pt-4 grid grid-cols-2 gap-2 border-t border-white/5">
+                                              <button 
+                                                onClick={async () => {
+                                                  try {
+                                                    const batch = writeBatch(db);
+                                                    const newDeckRef = doc(collection(db, 'users', user.uid, 'decks'));
+                                                    batch.set(newDeckRef, {
+                                                       name: `Imported: ${viewingDeckName}`,
+                                                       createdAt: serverTimestamp(),
+                                                       colors: 'C', // fallback
+                                                       cardCount: viewingDeckCards.length
+                                                    });
+                                                    
+                                                    viewingDeckCards.forEach(dc => {
+                                                       const cRef = doc(collection(db, 'users', user.uid, 'decks', newDeckRef.id, 'cards'));
+                                                       batch.set(cRef, dc);
+                                                    });
+
+                                                    await batch.commit();
+                                                    showMessage("DECK REPLICATED SUCCESSFULLY", "success");
+                                                  } catch (e) {
+                                                    handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}/decks`);
+                                                  }
+                                                }}
+                                                className="bg-orange-500 hover:bg-orange-600 px-3 py-2 rounded-lg text-black font-magic font-black text-[9px] uppercase tracking-widest transition-all"
+                                              >
+                                                 Clone Deck
+                                              </button>
+                                              <button 
+                                                onClick={() => {
+                                                   // Open a small suggestion form or just suggest current deckbox selections
+                                                   if (deckbox.length === 0) {
+                                                      showMessage("LOAD DECKBOX WITH SUGGESTIONS FIRST", "error");
+                                                      return;
+                                                   }
+                                                   const cards = deckbox.map(c => ({ name: c.name, thumb: c.thumb }));
+                                                   const suggestionRef = doc(collection(db, 'suggestions'));
+                                                   setDoc(suggestionRef, {
+                                                      fromUserId: user.uid,
+                                                      fromUserEmail: user.email,
+                                                      toUserId: viewingPublicUser.id,
+                                                      deckName: viewingDeckName,
+                                                      cards: cards,
+                                                      createdAt: serverTimestamp()
+                                                   }).then(() => showMessage("TACTICAL SUGGESTIONS BROADCASTED", "success"));
+                                                }}
+                                                className="bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 px-3 py-2 rounded-lg text-cyan-400 font-magic font-black text-[9px] uppercase tracking-widest transition-all"
+                                              >
+                                                 Suggest Cards
+                                              </button>
+                                           </div>
+                                         )}
                                       </div>
                                     </div>
                                     {/* LOWER DATA: TELEMETRY & SYNERGY */}
@@ -3412,13 +3726,21 @@ Return ONLY JSON. No markdown backticks.`;
                                          </section>
 
                                          {/* QUICK ACTIONS FOOTER */}
-                                         <div className="pt-6 border-t border-white/5 flex justify-between items-center opacity-40 hover:opacity-100 transition-opacity">
-                                            <span className="text-[8px] font-mono uppercase tracking-[0.4em] text-white/30">Sync Status: Optimised</span>
+                                         <div className="pt-6 border-t border-white/5 flex flex-col gap-4">
                                             <button 
-                                               onClick={() => { setViewMode('stats'); setIsViewingDeck(false); }}
-                                               className="text-[9px] font-magic font-bold uppercase tracking-widest text-cyan-400/60 hover:text-cyan-400 transition-colors py-1 px-3 border border-cyan-500/20 rounded-full"
+                                              onClick={findAlternativeCommanders}
+                                              className="w-full py-5 bg-cyan-500/10 hover:bg-cyan-500 text-cyan-400 hover:text-black border border-cyan-500/20 hover:border-cyan-400 rounded-[2rem] text-[10px] font-magic font-black uppercase tracking-[0.3em] transition-all shadow-[0_0_40px_rgba(6,182,212,0.1)] hover:shadow-[0_0_40px_rgba(6,182,212,0.4)] flex items-center justify-center gap-4 group/alt-btn relative overflow-hidden"
                                             >
+                                              <Users className="w-4 h-4 group-hover/alt-btn:scale-110 transition-transform" />
+                                              Search Alternative Commanders
                                             </button>
+                                            <div className="flex justify-between items-center opacity-40 hover:opacity-100 transition-opacity px-2">
+                                              <span className="text-[8px] font-mono uppercase tracking-[0.4em] text-white/30">Sync Status: Optimised</span>
+                                              <div className="flex gap-1">
+                                                <div className="w-1 h-1 bg-cyan-500 animate-pulse" />
+                                                <div className="w-1 h-1 bg-cyan-500/20" />
+                                              </div>
+                                            </div>
                                          </div>
                                       </div>
                                    </div>
@@ -3442,6 +3764,128 @@ Return ONLY JSON. No markdown backticks.`;
             <div className="relative w-full">
               <img src={hoveredPreviewCard} className="w-full h-auto rounded-xl" alt="Preview" />
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Alternative Commanders Overlay */}
+      <AnimatePresence>
+        {isAltCommandersOpen && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setIsAltCommandersOpen(false)}
+            className="fixed inset-0 z-[1200] flex items-center justify-center p-4 bg-black/95 backdrop-blur-3xl cursor-pointer"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="w-full max-w-5xl bg-[#081011] border border-cyan-500/20 rounded-[3rem] p-4 md:p-10 shadow-2xl flex flex-col gap-8 relative overflow-hidden cursor-default"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-screen bg-center bg-cover" style={{ backgroundImage: `url(${runesBackground})` }} />
+              
+              <div className="flex items-center justify-between relative z-10 px-4">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center">
+                    <Users className="w-6 h-6 text-cyan-400" />
+                  </div>
+                  <div>
+                    <h2 className="text-2xl font-magic font-black text-cyan-400 uppercase tracking-widest leading-none">Command Candidates</h2>
+                    <p className="text-[9px] font-mono text-white/30 uppercase tracking-[0.4em] mt-2">Analyzed based on color alignment</p>
+                  </div>
+                </div>
+                <button 
+                  onClick={() => setIsAltCommandersOpen(false)}
+                  className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl text-white/20 hover:text-white transition-all active:scale-95"
+                >
+                  <X className="w-6 h-6" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto max-h-[75vh] relative z-10 no-scrollbar p-2 md:p-4">
+                {alternativeCommanders.length === 0 ? (
+                  <div className="py-40 text-center">
+                    <div className="text-[12px] font-magic font-black text-white/10 uppercase tracking-[0.6em] mb-4">NO LEGENDARY ENTITIES DETECTED</div>
+                    <div className="w-24 h-[1px] bg-white/5 mx-auto" />
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-8 relative z-10">
+                    {alternativeCommanders.map((c, i) => {
+                      const name = c?.name || "Unknown Entity";
+                      const imgs = c?.image_uris || c?.card_faces?.[0]?.image_uris || {};
+                      const img = imgs.normal || imgs.large || c?.image_uris?.png;
+                      
+                      return (
+                        <motion.div
+                          initial={{ opacity: 0, scale: 0.8 }}
+                          animate={{ opacity: 1, scale: 1 }}
+                          transition={{ delay: i * 0.03, duration: 0.5, ease: "easeOut" }}
+                          key={i}
+                          className="relative group cursor-pointer"
+                          onClick={() => {
+                            const imgs = c?.image_uris || c?.card_faces?.[0]?.image_uris || {};
+                            const imgUrl = imgs.normal || imgs.large || c?.image_uris?.png;
+                            setZoomedAltCard(imgUrl);
+                            showMessage(`PREVIEWING: ${name.toUpperCase()}`, "info");
+                          }}
+                        >
+                           <div className="aspect-[0.71] rounded-2xl md:rounded-[2rem] overflow-hidden border border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_50px_rgba(6,182,212,0.5)] transition-all duration-700 transform group-hover:-translate-y-4 relative bg-black/40">
+                             <img src={img} className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" alt={name} />
+                             <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-end p-6">
+                               <span className="text-[10px] font-magic font-black text-cyan-400 uppercase tracking-[0.4em] text-center drop-shadow-[0_0_10px_rgba(6,182,212,0.8)]">{name}</span>
+                               <div className="w-8 h-1 bg-cyan-500 rounded-full mt-4 translate-y-4 group-hover:translate-y-0 transition-transform duration-500" />
+                             </div>
+                           </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* ZOOM OVERLAY FOR ALTERNATIVES */}
+              <AnimatePresence>
+                {zoomedAltCard && (
+                  <motion.div 
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setZoomedAltCard(null);
+                    }}
+                    className="fixed inset-0 z-[1300] bg-black/95 flex items-center justify-center p-8 backdrop-blur-3xl cursor-zoom-out"
+                  >
+                    <motion.div
+                      initial={{ scale: 0.5, opacity: 0, rotateY: 90 }}
+                      animate={{ scale: 1, opacity: 1, rotateY: 0 }}
+                      exit={{ scale: 0.5, opacity: 0, rotateY: -90 }}
+                      transition={{ type: "spring", damping: 20, stiffness: 100 }}
+                      className="relative max-w-full max-h-full"
+                    >
+                      <img 
+                        src={zoomedAltCard} 
+                        className="rounded-[2.5rem] shadow-[0_0_120px_rgba(6,182,212,0.6)] max-w-full max-h-[85vh] object-contain border-4 border-white/5" 
+                        alt="Zoomed Card" 
+                      />
+                      <div className="absolute -bottom-16 left-0 right-0 text-center">
+                        <span className="text-[12px] font-magic font-black text-white/40 uppercase tracking-[0.6em] animate-pulse">Touch to return to candidates</span>
+                      </div>
+                    </motion.div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="pt-6 border-t border-white/5 flex items-center justify-between relative z-10">
+                <p className="text-[9px] font-mono text-white/20 uppercase tracking-widest leading-none">Scanning sub-ranks for potential leadership</p>
+                <div className="flex gap-1">
+                  <div className="w-1 h-1 bg-cyan-500 rounded-full animate-pulse" />
+                  <div className="w-1 h-1 bg-cyan-500/40 rounded-full animate-delay-100 animate-pulse" />
+                </div>
+              </div>
+            </motion.div>
           </motion.div>
         )}
       </AnimatePresence>
@@ -3511,7 +3955,7 @@ Return ONLY JSON. No markdown backticks.`;
               <div className="h-32 bg-gradient-to-br from-cyan-500/20 to-transparent p-8 flex items-end">
                 <div>
                   <h3 className="text-2xl font-magic font-black text-white hover:text-cyan-400 transition-colors uppercase tracking-tighter drop-shadow-[0_0_15px_rgba(6,182,212,0.4)]">Welcome to Rune Deck Companion</h3>
-                  <p className="text-[10px] font-mono text-cyan-400/60 uppercase tracking-[0.3em] font-bold mt-1">RUNE-TECH INTERFACE</p>
+                  <p className="text-[10px] font-mono text-cyan-400/60 uppercase tracking-[0.3em] font-bold mt-1">USER INTERFACE</p>
                 </div>
               </div>
               
@@ -3659,14 +4103,24 @@ Return ONLY JSON. No markdown backticks.`;
             )}
 
             <div className="space-y-3 pt-6 border-t border-white/10">
-               <button 
-                onClick={copyDecklist}
-                disabled={deckbox.length === 0}
-                className={`w-full py-4 rounded-2xl text-black font-black text-xs shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none font-magic uppercase tracking-widest ${copied ? 'bg-green-500' : 'bg-gradient-to-br from-orange-400 to-orange-600 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4),0_8px_20px_rgba(249,115,22,0.25)] hover:brightness-110'}`}
-               >
-                 {copied ? <RotateCw className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
-                 {copied ? 'COPIED TO CLIPBOARD!' : 'COPY DECKLIST'}
-               </button>
+               <div className="grid grid-cols-2 gap-2">
+                 <button 
+                  onClick={copyDecklist}
+                  disabled={deckbox.length === 0}
+                  className={`py-4 rounded-xl text-black font-black text-[10px] shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:pointer-events-none font-magic uppercase tracking-widest ${copied ? 'bg-green-500' : 'bg-gradient-to-br from-orange-400 to-orange-600 shadow-[inset_0_1px_1px_rgba(255,255,255,0.4),0_8px_20px_rgba(249,115,22,0.25)] hover:brightness-110'}`}
+                 >
+                   {copied ? <RotateCw className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+                   {copied ? 'COPIED!' : 'COPY'}
+                 </button>
+                 <button 
+                  onClick={() => setShowShareOverlay(true)}
+                  disabled={deckbox.length === 0}
+                  className="py-4 bg-cyan-600/20 border border-cyan-500/30 rounded-xl text-cyan-400 font-magic font-black text-[10px] hover:bg-cyan-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-20 uppercase tracking-widest"
+                 >
+                   <Users className="w-4 h-4" />
+                   SHARE
+                 </button>
+               </div>
                <button 
                 onClick={async () => {
                   if (!user) return;
@@ -3679,7 +4133,7 @@ Return ONLY JSON. No markdown backticks.`;
                   await batch.commit().catch(err => handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/deckbox`));
                 }}
                 disabled={deckbox.length === 0}
-                className="w-full py-3 bg-red-500/10 border border-red-500/20 rounded-2xl text-xs font-bold text-red-500 hover:bg-red-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-20 shadow-[inset_0_1px_1px_rgba(255,255,255,0.02)]"
+                className="w-full py-3 bg-red-500/10 border border-red-500/20 rounded-xl text-[10px] font-magic font-black text-red-500/60 hover:text-red-500 hover:bg-red-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-20 tracking-wider uppercase"
                >
                  <Trash2 className="w-3 h-3" />
                  Clear Selection
@@ -3720,8 +4174,8 @@ Return ONLY JSON. No markdown backticks.`;
             <div className="flex flex-col items-center gap-8">
               <ManaSpinner className="w-24 h-24" />
               <div className="flex flex-col items-center">
-                <p className="text-orange-500 font-magic font-extrabold uppercase tracking-[0.3em] text-sm animate-pulse">Consulting the Runes</p>
-                <p className="text-white/20 text-[10px] font-bold mt-2 uppercase tracking-widest">Searching the Multiverse...</p>
+                <p className="text-orange-500 font-magic font-extrabold uppercase tracking-[0.3em] text-sm animate-pulse">Searching...</p>
+                <p className="text-white/20 text-[10px] font-bold mt-2 uppercase tracking-widest">Searching cards...</p>
               </div>
             </div>
         </div>
@@ -3763,6 +4217,15 @@ Return ONLY JSON. No markdown backticks.`;
           />
         )}
       </AnimatePresence>
+
+      <ShareSelectionOverlay 
+        show={showShareOverlay}
+        onClose={() => setShowShareOverlay(false)}
+        onShare={shareSelection}
+        email={shareRecipientEmail}
+        setEmail={setShareRecipientEmail}
+        loading={isSharing}
+      />
 
       <AnimatePresence>
         {tagToVerify && (
@@ -3935,37 +4398,37 @@ function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
     {
       group: "VAULT & COLLECTION",
       nodes: [
-        { term: "LIBRARY", flow: "Repository", desc: "Opens your saved collection. Here you can search through your own decks, view their strategy, and manage your collection." },
-        { term: "ADD DECK", flow: "Synchronization", desc: "Paste an Archidekt/TappedOut URL or ID into the input. Click 'Add' to bridge external data into your Rune Library." },
-        { term: "DELETE", flow: "Purge", desc: "Removes a deck from your collection. Requires user confirmation via 'Purge Deck' to prevent accidental data loss." }
+        { term: "LIBRARY", flow: "Collection", desc: "Opens your saved decks. Here you can search through your collection, view your decks, and manage your files." },
+        { term: "ADD DECK", flow: "Import", desc: "Paste an Archidekt/TappedOut URL or ID. Click 'Add' to import external data into your collection." },
+        { term: "DELETE", flow: "Remove", desc: "Removes a deck from your collection. Requires confirmation to prevent accidental data loss." }
       ]
     }, {
       group: "DISCOVERY & SEARCH",
       nodes: [
-        { term: "SEARCH", flow: "Scryfall Node", desc: "The primary scryer for finding new cards. Supports complex Scryfall syntax for keyword, color, and mechanic searches across the multiverse." },
-        { term: "SYNERGY", flow: "Resonance", desc: "Analyzes your active deck's tags and executes a multiversal search for cards that perfectly align with your deck's established tactics." },
-        { term: "VEGGIES", flow: "Essential Filter", desc: "Quick-access nodes for 'Ramp', 'Draw', and 'Wipes'. Tailored specifically to your deck's color identity to ensure consistent resource flow." }
+        { term: "SEARCH", flow: "Scryfall Search", desc: "Search for cards using Scryfall. Supports keyword, color, and mechanic searches across the card database." },
+        { term: "SYNERGY", flow: "Suggestions", desc: "Analyzes your deck's tags and suggests cards that align with your current deck's theme and cards." },
+        { term: "VEGGIES", flow: "Quick Filter", desc: "Quick filters for 'Ramp', 'Draw', and 'Board Wipes'. Automatically matched to your deck's colors." }
       ]
     }, {
       group: "ARCANE UTILITIES",
       nodes: [
-        { term: "SHERIFF", flow: "Game Variant", desc: "Opens the Sheriff System. Explains the rules of this 5+ player Commander variant involving hidden roles: Sheriff, Deputies, Outlaws, and a Renegade." },
-        { term: "JUDGE RUXA", flow: "AI Oracle", desc: "Consult the AI Bear Judge Ruxa. Provides immediate, high-fidelity answers to complex Magic rules questions." },
-        { term: "RADIO", flow: "Focus Engine", desc: "A dedicated Lo-Fi radio module. Loops high-concentration arcane frequencies to keep your mind sharp during long brewing sessions." }
+        { term: "SHERIFF", flow: "Game Variant", desc: "Explains the rules of this 5+ player Commander variant involving hidden roles: Sheriff, Deputies, Outlaws, and a Renegade." },
+        { term: "JUDGE RUXA", flow: "AI Judge", desc: "Ask the AI rules judge for help with complex Magic rules questions." },
+        { term: "SOCIALS", flow: "Community", desc: "Connect with public users, view shared card selections, and browse popular content creators." }
       ]
     }, {
       group: "DECK OPERATIONS",
       nodes: [
-        { term: "LIST", flow: "Inventory", desc: "Displays your deck as a categorized table. Perfect for raw data inspection and spotting gaps in your card types." },
-        { term: "CARDS", flow: "Visual Grid", desc: "The standard visual mode. Renders high-resolution card art in a responsive grid for intuitive deck building and browsing." },
-        { term: "CARDBOARD", flow: "Shopping List", desc: "Flags cards for acquisition. Displays price estimates and allows for raw text export for ordering physical decklists." }
+        { term: "LIST", flow: "Table View", desc: "Displays your deck as a categorized table. Useful for raw data inspection and spotting gaps in your card types." },
+        { term: "CARDS", flow: "Grid View", desc: "The standard visual mode. Displays card art in a responsive grid for browsing and building." },
+        { term: "CARDBOARD", flow: "Shopping List", desc: "Mark cards you need. Displays price estimates and allows for text export for ordering physical cards." }
       ]
     }, {
       group: "LOGISTICS & HISTORY",
       nodes: [
-        { term: "STATS", flow: "Analytics", desc: "Visualizes mana curve, color distribution, and card types. Essential for balancing your deck's land count and resource requirements." },
-        { term: "SETS", flow: "Chronicle", desc: "A complete temporal map of MTG history. Browse every set release from Alpha to the latest future expansions in chronological order." },
-        { term: "ROADMAP", flow: "Handbook", desc: "The functional design overview you are currently reading. A complete deck of all system capabilities and button interactions." }
+        { term: "STATS", flow: "Analytics", desc: "Visualizes mana curve, color distribution, and card types. Use this to balance your deck's land count and resources." },
+        { term: "SETS", flow: "Expansions", desc: "Browse every MTG set release from Alpha to the latest expansions in chronological order." },
+        { term: "ROADMAP", flow: "Manual", desc: "The functional guide you are currently reading. Explains all system capabilities and interactions." }
       ]
     }
   ];
@@ -4003,10 +4466,10 @@ function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
                      <Compass className="w-8 h-8 text-green-500" />
                   </div>
                   <div>
-                     <h2 className="text-2xl font-magic font-black text-green-400 uppercase tracking-[0.5em] leading-none mb-3">Rune Deck Manual // v2.6.5</h2>
+                     <h2 className="text-2xl font-magic font-black text-green-400 uppercase tracking-[0.5em] leading-none mb-3">Deck Companion Manual // v2.6.16</h2>
                      <div className="flex items-center gap-4">
                         <div className="w-2 h-2 bg-amber-500 shadow-[0_0_10px_orange]" />
-                        <p className="text-[10px] font-mono text-cyan-500/40 uppercase tracking-[0.8em]">Library_Active // Rune-Tech_Active</p>
+                        <p className="text-[10px] font-mono text-cyan-500/40 uppercase tracking-[0.8em]">Library_Active // Companion_Active</p>
                      </div>
                   </div>
                </div>
@@ -4085,7 +4548,7 @@ function RoadmapModal({ isOpen, onClose }: { isOpen: boolean, onClose: () => voi
             {/* Footer Bottom Bar */}
             <div className="px-10 py-6 border-t border-white/5 bg-black/80 flex items-center justify-between">
                <div className="flex items-center gap-8">
-                  <span className="text-[10px] font-mono text-white/10 uppercase tracking-[0.8em]">Rune Library Command Centre</span>
+                  <span className="text-[10px] font-mono text-white/10 uppercase tracking-[0.8em]">My Decks Command Centre</span>
                </div>
                <div className="flex items-center gap-6">
                   <div className="flex items-center gap-2">
@@ -4329,6 +4792,7 @@ function DeckAnalysis({ cards }: { cards: any[] }) {
 function AdminChamber({ 
   isOpen, 
   onClose,
+  showMessage,
   setActiveDeckId,
   setActiveDeckName,
   setExistingInDeck,
@@ -4338,11 +4802,11 @@ function AdminChamber({
   initializeDeckState,
   setViewingDeckName,
   fetchArchidektDeck,
-  setIsViewingDeck,
-  showMessage
+  setIsViewingDeck
 }: { 
   isOpen: boolean, 
   onClose: () => void,
+  showMessage: (text: string, type?: 'info' | 'error' | 'success') => void,
   setActiveDeckId: (id: string | null) => void,
   setActiveDeckName: (name: string) => void,
   setExistingInDeck: (names: Set<string>) => void,
@@ -4353,23 +4817,27 @@ function AdminChamber({
   setViewingDeckName: (name: string) => void,
   fetchArchidektDeck: (id: string, autoSelect?: boolean) => void,
   setIsViewingDeck: (val: boolean) => void,
-  showMessage: (text: string, type?: 'info' | 'error' | 'success') => void
 }) {
   const [users, setUsers] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [userDecks, setUserDecks] = useState<any[]>([]);
   const [userDeckbox, setUserDeckbox] = useState<any[]>([]);
-  const [userData, setUserData] = useState<any>(null);
   const [localLoading, setLocalLoading] = useState(false);
-
+  const [searchQuery, setSearchQuery] = useState("");
   useEffect(() => {
     if (isOpen) {
       const fetchUsers = async () => {
         setLocalLoading(true);
         try {
           const snap = await getDocs(query(collection(db, 'users')));
-          setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-        } catch (e) { console.error(e); }
+          const uList = snap.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
+          uList.sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
+          setUsers(uList);
+          if (uList.length > 0) loadUserData(uList[0]);
+        } catch (e) { 
+          console.error(e);
+          showMessage("Neural Registry Connection Failure", "error");
+        }
         setLocalLoading(false);
       };
       fetchUsers();
@@ -4380,10 +4848,6 @@ function AdminChamber({
     setSelectedUser(u);
     setLocalLoading(true);
     try {
-      // Get detailed profile
-      const userSnap = await getDoc(doc(db, 'users', u.id));
-      setUserData(userSnap.data());
-
       const decksSnap = await getDocs(collection(db, 'users', u.id, 'decks'));
       const deckboxSnap = await getDocs(collection(db, 'users', u.id, 'deckbox'));
       setUserDecks(decksSnap.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -4394,214 +4858,289 @@ function AdminChamber({
 
   const deleteUserDeck = async (deckId: string) => {
      if (!selectedUser) return;
-     if (!window.confirm("Are you sure you want to purge this record from The Library?")) return;
-     setLocalLoading(true);
-     try {
-       await deleteDoc(doc(db, 'users', selectedUser.id, 'decks', deckId));
-       setUserDecks(prev => prev.filter(d => d.id !== deckId));
-     } catch (e) {
-       console.error("Purge failed:", e);
-       alert("Deck extraction failed. Check security permissions.");
+     if (confirm("PERMANENTLY VOID VOLUME?")) {
+        try {
+           await deleteDoc(doc(db, 'users', selectedUser.id, 'decks', deckId));
+           setUserDecks(prev => prev.filter(d => d.id !== deckId));
+           showMessage("Volume Voided", "success");
+        } catch (e) {
+           console.error(e);
+           showMessage("Deletion Shield Active", "error");
+        }
      }
-     setLocalLoading(false);
   };
+
+  const filteredUsers = users.filter(u => 
+    u.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    u.userName?.toLowerCase().includes(searchQuery.toLowerCase())
+  );
 
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-[300] bg-[#030606] flex flex-col overflow-hidden text-emerald-100 font-sans p-2 sm:p-6">
-      <div className="flex-1 flex flex-col bg-[#050808] border border-white/5 rounded-[40px] shadow-[0_0_100px_rgba(0,0,0,0.8)] overflow-hidden relative">
-        {/* Particle Overlay */}
-        <div className="absolute inset-0 z-0 opacity-10 pointer-events-none mix-blend-screen bg-center bg-cover" style={{ backgroundImage: `url(${runesBackground})` }} />
-        
-        {/* Header */}
-        <header className="relative z-10 flex items-center justify-between px-10 py-8 border-b border-white/5 bg-black/40 backdrop-blur-md">
-          <div className="flex items-center gap-6">
-            <div className="w-16 h-16 rounded-3xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center shadow-[0_0_30px_rgba(16,185,129,0.2)]">
-              <ShieldCheck className="w-8 h-8 text-emerald-400" />
-            </div>
-            <div>
-              <h2 className="text-2xl font-magic font-black uppercase tracking-[0.2em] text-white">Admin Library oversight</h2>
-              <p className="text-[10px] uppercase tracking-[0.5em] text-emerald-500/40 font-bold">Encrypted Archive Access Active</p>
-            </div>
-          </div>
-          <button 
-            onClick={onClose} 
-            className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/5 border border-white/10 hover:bg-red-500/10 hover:border-red-500/30 transition-all group"
-          >
-            <X className="w-6 h-6 text-white/30 group-hover:text-red-400 group-hover:rotate-90 transition-all" />
-          </button>
+    <div className="fixed inset-0 z-[500] bg-[#020303]/98 backdrop-blur-3xl flex items-center justify-center p-4 sm:p-12 font-sans overflow-hidden">
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.98, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        className="w-full h-full max-w-[1700px] max-h-[950px] bg-[#050707] border border-white/10 rounded-[3rem] shadow-[0_0_150px_rgba(0,0,0,1)] overflow-hidden flex flex-col relative"
+      >
+        <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-overlay" style={{ backgroundImage: `url(${runesBackground})`, backgroundSize: '200px' }} />
+
+        {/* Command Header */}
+        <header className="relative z-20 flex items-center justify-between px-10 py-6 border-b border-white/5 bg-black/60 backdrop-blur-3xl">
+           <div className="flex items-center gap-8">
+              <div className="relative group">
+                 <div className="absolute inset-0 bg-emerald-500/20 blur-xl group-hover:bg-emerald-500/30 transition-all duration-700" />
+                 <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center relative z-10 transition-transform group-hover:rotate-12">
+                    <ShieldCheck className="w-8 h-8 text-emerald-400" />
+                 </div>
+              </div>
+              <div className="space-y-1">
+                 <h2 className="text-2xl font-magic font-black uppercase tracking-[0.3em] text-white">Central Oversight</h2>
+                 <div className="flex items-center gap-3">
+                    <span className="text-[10px] uppercase tracking-[0.5em] text-cyan-400 font-bold opacity-80">Neural Intelligence Active</span>
+                    <div className="w-1 h-1 rounded-full bg-cyan-400 animate-ping" />
+                 </div>
+              </div>
+           </div>
+           
+           <div className="flex items-center gap-6">
+              <div className="hidden lg:flex flex-col items-end pr-6 border-r border-white/5">
+                 <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest leading-none mb-1.5">System Load: 4%</span>
+                 <span className="text-[8px] font-mono text-emerald-400/40 uppercase tracking-widest leading-none">Connection: Encrypted</span>
+              </div>
+              <button 
+                onClick={onClose}
+                className="w-12 h-12 flex items-center justify-center rounded-2xl bg-white/5 border border-white/10 hover:bg-red-500/20 hover:border-red-400/40 hover:text-red-400 transition-all duration-300 active:scale-90 shadow-lg group"
+              >
+                <X className="w-6 h-6 group-hover:rotate-90 transition-transform" />
+              </button>
+           </div>
         </header>
 
         <div className="flex-1 flex overflow-hidden relative z-10">
-          {/* User List Sidebar */}
-          <aside className="w-80 border-r border-white/5 overflow-y-auto custom-scrollbar bg-black/20 p-8">
-             <div className="flex items-center justify-between mb-8">
-                <span className="text-[10px] font-magic font-black text-emerald-400/40 uppercase tracking-[0.3em]">Registered Souls</span>
-                <span className="text-[9px] font-mono text-white/10">{users.length}</span>
+          {/* User Feed - High Density */}
+          <aside className="w-80 border-r border-white/5 bg-black/40 flex flex-col p-6 space-y-6">
+             <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20" />
+                <input 
+                  type="text"
+                  placeholder="Filter Souls..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-[10px] text-white focus:border-emerald-500/40 transition-all outline-none font-magic tracking-widest uppercase"
+                />
              </div>
              
-             <div className="space-y-3">
-                {users.map(u => (
+             <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-2 relative z-20">
+                {filteredUsers.map(u => (
                   <button 
                     key={u.id}
                     onClick={() => loadUserData(u)}
-                    className={`w-full group relative flex items-center gap-4 p-4 rounded-2xl border transition-all duration-500 text-left
+                    className={`w-full group flex items-center gap-4 p-3 rounded-2xl border transition-all duration-300
                       ${selectedUser?.id === u.id 
-                        ? 'bg-emerald-500/10 border-emerald-500/40 shadow-xl' 
-                        : 'bg-white/[0.02] border-white/5 hover:border-white/20 hover:bg-white/[0.04]'}`}
+                        ? 'bg-emerald-500/10 border-emerald-500/30' 
+                        : 'bg-transparent border-transparent hover:bg-white/5'}`}
                   >
-                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-magic text-lg border transition-all
-                      ${selectedUser?.id === u.id ? 'bg-emerald-400 text-black border-emerald-400 scale-110' : 'bg-white/5 text-white/20 border-white/10'}`}>
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center font-magic text-sm border transition-all
+                      ${selectedUser?.id === u.id ? 'bg-emerald-400 text-black border-emerald-400' : 'bg-white/5 text-white/10 border-white/10'}`}>
                       {u.displayName?.[0] || '?' }
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <h4 className={`text-[11px] font-black uppercase tracking-wider truncate mb-0.5 transition-colors
-                        ${selectedUser?.id === u.id ? 'text-white' : 'text-white/40'}`}>
-                        {u.displayName || 'Anonymous'}
-                      </h4>
-                      <p className="text-[8px] font-mono opacity-20 truncate">{u.email}</p>
+                    <div className="flex-1 text-left min-w-0">
+                       <h4 className={`text-[11px] font-black uppercase tracking-wider truncate mb-0.5
+                         ${selectedUser?.id === u.id ? 'text-white' : 'text-white/40 group-hover:text-white/60'}`}>
+                         {u.displayName || 'Soul'}
+                       </h4>
+                       <p className="text-[8px] font-mono text-emerald-500/20 truncate">{u.email}</p>
                     </div>
-                    {selectedUser?.id === u.id && (
-                      <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(52,211,153,1)]" />
-                    )}
                   </button>
                 ))}
              </div>
           </aside>
 
-          {/* User Detail Dashboard */}
-          <main className="flex-1 overflow-y-auto p-12 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.05),transparent)] custom-scrollbar">
+          {/* Intelligence Workspace */}
+          <main className="flex-1 overflow-y-auto custom-scrollbar p-10 bg-[#060909] relative">
+             <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(16,185,129,0.03),transparent)] pointer-events-none" />
+             
              {selectedUser ? (
-               <div className="max-w-6xl mx-auto space-y-12 animate-in fade-in slide-in-from-bottom-8 duration-700">
+               <div className="max-w-6xl mx-auto space-y-12 transition-all duration-1000 animate-in fade-in slide-in-from-bottom-8 relative z-30">
                   {/* Performance Bento Grid Entry */}
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-stretch">
-                     {/* User Profile Card */}
-                     <div className="md:col-span-8 bg-gradient-to-br from-emerald-500/10 to-transparent border border-emerald-500/20 p-12 rounded-[3.5rem] shadow-4xl relative overflow-hidden flex flex-col sm:flex-row items-center gap-10">
-                        <div className="relative">
-                          <div className="w-32 h-32 rounded-full border-4 border-emerald-400/20 p-2 shadow-[0_0_50px_rgba(52,211,153,0.15)] bg-black/40">
-                             {selectedUser.photoURL ? (
-                                <img src={selectedUser.photoURL} className="w-full h-full rounded-full object-cover" alt="Profile" />
-                             ) : (
-                                <div className="w-full h-full rounded-full bg-emerald-500/10 flex items-center justify-center">
-                                   <User className="w-12 h-12 text-emerald-400/40" />
+                  <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-stretch">
+                     {/* Dense Profile Banner */}
+                     <div className="xl:col-span-12 flex gap-10 bg-white/[0.02] border border-white/5 p-12 rounded-[4rem] items-center relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 bottom-0 w-[40%] bg-[linear-gradient(90deg,transparent,rgba(16,185,129,0.02))] pointer-events-none" />
+                        <div className="relative group/avatar">
+                           <div className="w-32 h-32 rounded-full p-1.5 border border-white/10 bg-black shadow-2xl relative z-10 transition-transform duration-700 group-hover/avatar:scale-105">
+                              {selectedUser.photoURL ? (
+                                <img src={selectedUser.photoURL} alt="Identity" className="w-full h-full rounded-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full rounded-full bg-white/5 flex items-center justify-center">
+                                   <User className="w-12 h-12 text-white/10" />
                                 </div>
-                             )}
-                          </div>
-                          <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-emerald-400 rounded-2xl flex items-center justify-center border-4 border-[#0a0f0f] text-black">
-                             <ShieldCheck className="w-5 h-5" />
-                          </div>
-                        </div>
-                        <div className="flex-1 text-center sm:text-left">
-                           <h3 className="text-4xl font-magic font-black text-white uppercase tracking-tighter mb-2">{selectedUser.displayName || 'Soul #'+selectedUser.id.slice(0,4)}</h3>
-                           <div className="flex flex-wrap justify-center sm:justify-start gap-4 mt-4">
-                              <div className="bg-black/40 border border-white/5 rounded-xl px-4 py-2 flex flex-col">
-                                 <span className="text-[7px] font-magic font-black text-white/20 uppercase tracking-[0.2em] mb-1">User Identity</span>
-                                 <span className="text-[10px] font-mono text-emerald-400/80">{selectedUser.userName || 'Not Set'}</span>
-                              </div>
-                              <div className="bg-black/40 border border-white/5 rounded-xl px-4 py-2 flex flex-col">
-                                 <span className="text-[7px] font-magic font-black text-white/20 uppercase tracking-[0.2em] mb-1">Seeker Title</span>
-                                 <span className="text-[10px] font-mono text-cyan-400/80">{selectedUser.userTitle || 'Not Set'}</span>
-                              </div>
-                              <div className="bg-black/40 border border-white/5 rounded-xl px-4 py-2 flex flex-col">
-                                 <span className="text-[7px] font-magic font-black text-white/20 uppercase tracking-[0.2em] mb-1">Last Interaction</span>
-                                 <span className="text-[10px] font-mono text-white/30 tracking-tight">
-                                    {selectedUser.updatedAt?.toDate ? selectedUser.updatedAt.toDate().toLocaleDateString() : 'Historical'}
-                                 </span>
-                              </div>
+                              )}
+                           </div>
+                           <div className="absolute -bottom-2 -right-2 w-10 h-10 bg-emerald-400 rounded-2xl border-4 border-[#060909] flex items-center justify-center text-black z-20 shadow-xl">
+                              <ShieldCheck className="w-5 h-5" />
                            </div>
                         </div>
-                     </div>
-
-                     {/* Quick View Stats */}
-                     <div className="md:col-span-4 grid grid-cols-2 gap-6">
-                        <div className="bg-black/40 border border-white/5 p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center group hover:border-emerald-500/20 transition-all">
-                           <Library className="w-6 h-6 text-emerald-500 mb-3 grayscale group-hover:grayscale-0 transition-all" />
-                           <span className="text-3xl font-magic font-black text-white">{userDecks.length}</span>
-                           <span className="text-[8px] font-bold text-white/20 uppercase tracking-widest mt-1">Decks</span>
-                        </div>
-                        <div className="bg-black/40 border border-white/5 p-8 rounded-[2.5rem] flex flex-col items-center justify-center text-center group hover:border-orange-500/20 transition-all">
-                           <Zap className="w-6 h-6 text-orange-500 mb-3 grayscale group-hover:grayscale-0 transition-all" />
-                           <span className="text-3xl font-magic font-black text-white">{userDeckbox.length}</span>
-                           <span className="text-[8px] font-bold text-white/20 uppercase tracking-widest mt-1">Cards</span>
-                        </div>
-                        <div className="col-span-2 bg-emerald-500/5 border border-emerald-500/20 p-6 rounded-[2.5rem] flex items-center justify-between group">
-                           <div className="flex flex-col">
-                              <span className="text-[9px] font-magic font-black text-emerald-400 uppercase tracking-widest mb-1">Seeker Level</span>
-                              <span className="text-xs font-mono text-white/40">
-                                {selectedUser.email === 'sdebeer@gmail.com' ? 'Level 1: Sovereign Overlord' : 'Level 2: Common Seeker'}
-                              </span>
+                        
+                        <div className="flex-1 space-y-8">
+                           <div className="flex items-center justify-between">
+                              <div className="space-y-1">
+                                 <h3 className="text-4xl font-magic font-black text-white uppercase tracking-tighter leading-none">{selectedUser.displayName}</h3>
+                                 <p className="text-[10px] font-mono text-emerald-400/60 uppercase tracking-[0.4em] font-bold italic">{selectedUser.email}</p>
+                              </div>
+                              <div className="flex gap-3">
+                                 <button className="h-10 px-6 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl text-[10px] font-magic font-black text-cyan-400 uppercase tracking-widest hover:bg-cyan-500 hover:text-black transition-all">Elevate Rank</button>
+                                 <button 
+                                   onClick={async () => {
+                                      if(confirm("ABSOLUTE DATA TERMINATION?")) {
+                                         showMessage("Purging signature...", "info");
+                                      }
+                                   }}
+                                   className="h-10 px-6 bg-red-500/10 border border-red-500/20 rounded-2xl text-[10px] font-magic font-black text-red-500 uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all">Purge Soul</button>
+                              </div>
                            </div>
-                           <Shield className="w-8 h-8 text-emerald-400/20 group-hover:text-emerald-400 transition-colors" />
+                           <div className="grid grid-cols-4 gap-4">
+                              {[
+                                 { label: 'Neural Handle', value: '@' + (selectedUser.userName || 'none'), color: 'emerald', icon: <Globe className="w-3 h-3 text-emerald-400/40" /> },
+                                 { label: 'Access Level', value: selectedUser.userTitle || 'Wanderer', color: 'cyan', icon: <Sparkles className="w-3 h-3 text-cyan-400/40" /> },
+                                 { label: 'Broadcast', value: selectedUser.isPublic ? 'Active' : 'Silent', color: 'orange', icon: <Zap className="w-3 h-3 text-orange-400/40" /> },
+                                 { label: 'Neural Link', value: selectedUser.id.slice(0, 12), color: 'white', icon: <Library className="w-3 h-3 text-white/20" /> }
+                              ].map((stat, i) => (
+                                <div key={i} className="bg-black/60 border border-white/5 p-4 rounded-2xl flex flex-col gap-2 group/stat">
+                                   <div className="flex items-center gap-2">
+                                      {stat.icon}
+                                      <span className="text-[8px] font-magic font-black uppercase tracking-widest text-white/20 group-hover/stat:text-white/40 transition-colors">{stat.label}</span>
+                                   </div>
+                                   <span className={`text-[11px] font-mono font-bold text-${stat.color}-400/80 uppercase truncate`}>{stat.value}</span>
+                                </div>
+                              ))}
+                           </div>
                         </div>
                      </div>
                   </div>
 
-                  {/* Decks Grid Container */}
-                  <section className="space-y-8 pb-20">
-                     <div className="flex items-center justify-between border-b border-white/5 pb-4">
-                        <h4 className="text-sm font-magic font-black text-white uppercase tracking-[0.3em] flex items-center gap-3">
-                           <Package className="w-5 h-5 text-emerald-500/40" /> Comprehensive Catalog
-                        </h4>
-                        <span className="text-[10px] font-mono text-white/20">Showing {userDecks.length} items</span>
+                  {/* Operational Metrics Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 pb-10">
+                     <div className="lg:col-span-5 bg-white/[0.02] border border-white/5 p-10 rounded-[3rem] space-y-10">
+                        <div className="flex items-center gap-4 text-white/40">
+                           <Library className="w-6 h-6" />
+                           <h4 className="text-xs font-magic font-black uppercase tracking-[0.4em]">Volume Statistics</h4>
+                        </div>
+                        <div className="space-y-8">
+                           {[
+                              { label: 'Active Grimoires', value: userDecks.length, color: 'emerald', max: 50 },
+                              { label: 'Artifact cached', value: userDeckbox.length, color: 'orange', max: 200 }
+                           ].map((m, i) => (
+                             <div key={i} className="space-y-3">
+                                <div className="flex justify-between items-end">
+                                   <span className="text-[10px] font-magic font-black text-white/20 uppercase tracking-widest">{m.label}</span>
+                                   <span className="text-3xl font-magic font-black text-white leading-none">{m.value}</span>
+                                </div>
+                                <div className="h-1 bg-black/60 rounded-full overflow-hidden">
+                                   <div className={`h-full bg-${m.color}-500/40 shadow-[0_0_15px_rgba(52,211,153,0.2)] transition-all duration-1000`} style={{ width: `${Math.min(100, (m.value / m.max) * 100)}%` }} />
+                                </div>
+                             </div>
+                           ))}
+                        </div>
                      </div>
                      
-                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                        {userDecks.map(deck => (
-                          <div 
-                            key={deck.id}
-                            className="bg-black/40 border border-white/5 rounded-[3rem] p-8 flex flex-col gap-6 group hover:border-emerald-500/40 transition-all duration-500 shadow-2xl relative overflow-hidden"
-                          >
-                             <div className="flex gap-6 items-start">
-                                <div className="w-24 h-28 rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl shrink-0 group-hover:scale-105 transition-transform duration-700">
-                                   {deck.art_crops?.[0] ? (
-                                      <img src={deck.art_crops[0]} className="w-full h-full object-cover group-hover:scale-110 transition-all duration-1000 grayscale group-hover:grayscale-0 opacity-40 group-hover:opacity-100" />
-                                   ) : (
-                                      <div className="w-full h-full flex items-center justify-center bg-white/5 text-white/10 font-magic text-[10px]">EMPTY</div>
-                                   )}
-                                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-                                </div>
-                                <div className="flex-1 min-w-0 pt-2">
-                                   <h5 className="text-[11px] font-magic font-black text-white uppercase tracking-wider truncate mb-2 group-hover:text-emerald-400 transition-colors">{deck.name}</h5>
-                                   <div className="flex flex-col gap-3">
-                                      <div className="flex items-center gap-3">
-                                         <span className="text-[8px] font-mono font-bold text-orange-400 bg-orange-400/5 px-2 py-0.5 rounded border border-orange-400/10">€{deck.totalCost?.toFixed(2) || '0.00'}</span>
-                                         <span className="text-[8px] font-mono font-bold text-cyan-400 bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/10 uppercase">{deck.ci || 'C'}</span>
-                                      </div>
-                                      <p className="text-[8px] text-white/20 font-mono italic truncate">Ref: {deck.id}</p>
+                     <div className="lg:col-span-7 bg-white/[0.02] border border-white/5 rounded-[3rem] flex flex-col overflow-hidden">
+                        <div className="px-10 py-6 border-b border-white/5 flex items-center justify-between bg-black/20">
+                           <div className="flex items-center gap-4 text-white/40">
+                              <Package className="w-6 h-6" />
+                              <h4 className="text-xs font-magic font-black uppercase tracking-[0.4em]">Integrated Inventory</h4>
+                           </div>
+                           <span className="text-[8px] font-mono text-emerald-400 animate-pulse uppercase tracking-widest">Realtime-Feed</span>
+                        </div>
+                        
+                        <div className="p-8 grid grid-cols-1 gap-2 overflow-y-auto custom-scrollbar max-h-[350px]">
+                           {userDecks.map(deck => (
+                             <div key={deck.id} className="group bg-black/40 border border-white/5 p-4 rounded-2xl flex items-center justify-between hover:border-cyan-500/40 transition-all cursor-crosshair">
+                                <div className="min-w-0 pr-6">
+                                   <h5 className="text-[11px] font-magic font-black text-white/80 uppercase tracking-widest truncate mb-1 group-hover:text-cyan-400 transition-colors">{deck.name}</h5>
+                                   <div className="flex items-center gap-4">
+                                      <span className="text-[8px] font-mono text-white/20 uppercase">Nodes: {deck.cards?.length || 0}</span>
+                                      <span className="text-[8px] font-mono text-cyan-500/40 uppercase font-black tracking-widest leading-none pt-0.5">{deck.colorIdentity || 'C'}</span>
                                    </div>
                                 </div>
+                                <div className="flex gap-2">
+                                   <button 
+                                     onClick={async () => {
+                                        if(confirm("PURGE VOLUME?")) {
+                                           await deleteDoc(doc(db, 'users', selectedUser.id, 'decks', deck.id));
+                                           setUserDecks(prev => prev.filter(d => d.id !== deck.id));
+                                           showMessage("Volume purged", "success");
+                                        }
+                                     }}
+                                     className="p-2 rounded-xl bg-white/5 border border-white/5 text-white/20 hover:text-red-400 hover:bg-red-500/10 transition-all opacity-0 group-hover:opacity-100"><Trash2 className="w-3.5 h-3.5"/></button>
+                                </div>
                              </div>
-                             
-                             <div className="flex gap-3 pt-4 border-t border-white/5">
-                                <button 
-                                  onClick={() => {
-                                    setViewingDeckName(deck.name);
-                                    fetchArchidektDeck(deck.id, false);
-                                    setIsViewingDeck(true);
-                                  }}
-                                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-[9px] font-magic font-black uppercase tracking-widest text-white/30 hover:text-white transition-all flex items-center justify-center gap-2"
-                                >
-                                   <Maximize2 className="w-3.5 h-3.5" /> Visualize
-                                </button>
-                                <button 
-                                  onClick={() => deleteUserDeck(deck.id)}
-                                  className="w-14 h-14 bg-red-500/5 hover:bg-red-500/20 border border-red-500/10 hover:border-red-500/30 rounded-2xl text-red-500/30 hover:text-red-500 flex items-center justify-center transition-all"
-                                >
-                                   <Trash2 className="w-4.5 h-4.5" />
-                                </button>
+                           ))}
+                           {userDecks.length === 0 && (
+                             <div className="py-24 text-center opacity-10 uppercase font-magic font-black tracking-[0.5em] text-sm">Registry Entry Void</div>
+                           )}
+                        </div>
+                     </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-8">
+                     {userDecks.map(deck => (
+                       <div 
+                         key={deck.id}
+                         className="bg-black/40 border border-white/5 rounded-[3rem] p-8 flex flex-col gap-6 group hover:border-emerald-500/40 transition-all duration-500 shadow-2xl relative overflow-hidden"
+                       >
+                          <div className="flex gap-6 items-start">
+                             <div className="w-24 h-28 rounded-2xl bg-black border border-white/10 overflow-hidden relative shadow-2xl shrink-0 group-hover:scale-105 transition-transform duration-700">
+                                {deck.art_crops?.[0] ? (
+                                   <img src={deck.art_crops[0]} className="w-full h-full object-cover group-hover:scale-110 transition-all duration-1000 grayscale group-hover:grayscale-0 opacity-40 group-hover:opacity-100" />
+                                ) : (
+                                   <div className="w-full h-full flex items-center justify-center bg-white/5 text-white/10 font-magic text-[10px]">EMPTY</div>
+                                )}
+                                <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                             </div>
+                             <div className="flex-1 min-w-0 pt-2">
+                                <h5 className="text-[11px] font-magic font-black text-white uppercase tracking-wider truncate mb-2 group-hover:text-emerald-400 transition-colors">{deck.name}</h5>
+                                <div className="flex flex-col gap-3">
+                                   <div className="flex items-center gap-3">
+                                      <span className="text-[8px] font-mono font-bold text-orange-400 bg-orange-400/5 px-2 py-0.5 rounded border border-orange-400/10">€{deck.totalCost?.toFixed(2) || '0.00'}</span>
+                                      <span className="text-[8px] font-mono font-bold text-cyan-400 bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/10 uppercase">{deck.ci || 'C'}</span>
+                                   </div>
+                                   <p className="text-[8px] text-white/20 font-mono italic truncate">Ref: {deck.id}</p>
+                                </div>
                              </div>
                           </div>
-                        ))}
-                     </div>
+                          
+                          <div className="flex gap-3 pt-4 border-t border-white/5">
+                             <button 
+                               onClick={() => {
+                                 setViewingDeckName(deck.name);
+                                 fetchArchidektDeck(deck.id, false);
+                                 setIsViewingDeck(true);
+                               }}
+                               className="flex-1 py-4 bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl text-[9px] font-magic font-black uppercase tracking-widest text-white/30 hover:text-white transition-all flex items-center justify-center gap-2"
+                             >
+                                <Maximize2 className="w-3.5 h-3.5" /> Visualize
+                             </button>
+                             <button 
+                               onClick={() => deleteUserDeck(deck.id)}
+                               className="w-14 h-14 bg-red-500/5 hover:bg-red-500/20 border border-red-500/10 hover:border-red-500/30 rounded-2xl text-red-500/30 hover:text-red-500 flex items-center justify-center transition-all"
+                             >
+                                <Trash2 className="w-4.5 h-4.5" />
+                             </button>
+                          </div>
+                       </div>
+                     ))}
+                  </div>
 
-                     {userDecks.length === 0 && (
-                        <div className="py-32 flex flex-col items-center justify-center text-center opacity-10">
-                           <Database className="w-20 h-20 mb-6" />
-                           <p className="text-xl font-magic font-black uppercase tracking-[0.5em]">No Data Artifacts</p>
-                        </div>
-                     )}
-                  </section>
+                  {userDecks.length === 0 && (
+                     <div className="py-32 flex flex-col items-center justify-center text-center opacity-10">
+                        <Database className="w-20 h-20 mb-6" />
+                        <p className="text-xl font-magic font-black uppercase tracking-[0.5em]">No Data Artifacts</p>
+                     </div>
+                  )}
                </div>
              ) : (
                <div className="h-full flex flex-col items-center justify-center text-center relative">
@@ -4617,16 +5156,13 @@ function AdminChamber({
              )}
           </main>
         </div>
-      </div>
+      </motion.div>
       
       {localLoading && (
-        <div className="absolute inset-0 z-[500] bg-black/60 backdrop-blur-sm flex items-center justify-center">
-           <div className="flex flex-col items-center gap-8">
-              <div className="relative">
-                 <div className="absolute inset-0 bg-emerald-500/20 blur-2xl animate-pulse rounded-full" />
-                 <RotateCw className="w-16 h-16 text-emerald-400 animate-spin relative z-10" />
-              </div>
-              <p className="text-[10px] font-magic font-black uppercase tracking-[0.6em] text-emerald-400 animate-pulse">Synchronizing dataset...</p>
+        <div className="absolute inset-0 z-[600] bg-black/60 backdrop-blur-md flex items-center justify-center">
+           <div className="flex flex-col items-center gap-6">
+              <RotateCw className="w-12 h-12 text-emerald-400 animate-spin" />
+              <p className="text-[9px] font-magic font-black uppercase tracking-[0.6em] text-emerald-400 animate-pulse">Syncing Neural Grid...</p>
            </div>
         </div>
       )}
@@ -5150,10 +5686,7 @@ function SetExplorer({ setViewMode, performSearch, setSearchQuery }: {
 
       <div className="flex-1 overflow-y-auto no-scrollbar pb-20 relative z-10 p-4 sm:p-8">
         <div className="max-w-6xl mx-auto space-y-12">
-          <div className="text-center space-y-2 pt-4">
-            <h3 className="text-3xl font-magic font-black text-white uppercase tracking-widest">Expansion Explorer</h3>
-            <p className="text-[10px] font-mono text-white/40 uppercase tracking-[0.2em]">Witness the Legacy of Magic</p>
-          </div>
+          <div className="pt-4" />
 
           <div className="flex flex-col items-center gap-6 max-w-xl mx-auto mb-16 relative z-20">
             <div className="relative group w-full">
@@ -5616,168 +6149,17 @@ function OutlawSheriff() {
 }
 
 
-function RuneRadioPage({ 
-  activeVibe, 
-  setActiveVibe, 
-  isMusicPlaying, 
-  setIsMusicPlaying,
-  isConnecting,
-  setIsConnecting,
-  toggleGlobalMusic, 
-  musicVolume, 
-  setMusicVolume,
-  MUSIC_VIBES
-}: { 
-  activeVibe: number, 
-  setActiveVibe: (i: number) => void, 
-  isMusicPlaying: boolean, 
-  setIsMusicPlaying: (p: boolean) => void,
-  isConnecting: boolean,
-  setIsConnecting: (c: boolean) => void,
-  toggleGlobalMusic: () => void, 
-  musicVolume: number, 
-  setMusicVolume: (v: number) => void,
-  MUSIC_VIBES: any[]
-}) {
-  const vibes = MUSIC_VIBES;
 
+
+function ManaSpinner({ className = "w-12 h-12" }: { className?: string }) {
   return (
-    <div className="flex-1 flex flex-col items-center justify-center min-h-[85vh] p-4 lg:p-12 relative overflow-hidden bg-[#020303]">
-      {/* Rune-Tech Background Elements */}
-      <div className="absolute inset-0 opacity-[0.03] pointer-events-none mix-blend-screen bg-center bg-cover" style={{ backgroundImage: `url(${runesBackground})` }} />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[100vh] h-[100vh] border-[1px] border-white/5 rounded-full animate-[spin_240s_linear_infinite]" />
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[80vh] h-[80vh] border-[1px] border-dashed border-white/10 rounded-full animate-[spin_180s_linear_infinite_reverse]" />
-
-      <motion.div 
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative z-10 w-full max-w-5xl flex flex-col gap-8 md:gap-16 items-center"
-      >
-        <header className="text-center space-y-6 relative">
-          <div className="inline-flex items-center gap-3 px-6 py-2 bg-cyan-500/10 border border-cyan-500/20 rounded-full text-cyan-400 backdrop-blur-md">
-            <Music className={`w-5 h-5 ${isMusicPlaying ? 'animate-bounce text-cyan-500' : ''}`} />
-            <span className="text-[10px] font-magic font-black uppercase tracking-[0.4em]">{isConnecting ? 'Aligning Resonance...' : 'Native Resonance Grimoire'}</span>
-          </div>
-          
-          <div className="space-y-4">
-            <h2 className="text-5xl md:text-8xl font-magic font-black text-white uppercase tracking-widest drop-shadow-[0_0_40px_rgba(34,211,238,0.4)]">
-              Rune <span className="text-orange-500">Radio</span>
-            </h2>
-            <div className="flex items-center justify-center gap-4">
-               <div className="h-[1px] w-12 bg-gradient-to-r from-transparent to-white/20" />
-               <p className="text-[10px] text-white/40 font-mono uppercase tracking-[0.5em]">Open-Source Arcane Player v3.5</p>
-               <div className="h-[1px] w-12 bg-gradient-to-l from-transparent to-white/20" />
-            </div>
-          </div>
-        </header>
-
-        <div className="flex flex-col lg:flex-row gap-8 w-full items-stretch">
-          {/* Vibe Selection - Left */}
-          <div className="lg:w-1/3 flex flex-col gap-3">
-             {vibes.map((vibe, i) => (
-                <button
-                  key={vibe.id}
-                  onClick={() => setActiveVibe(i)}
-                  className={`
-                    relative group flex items-center gap-5 p-5 rounded-2xl border transition-all duration-500 text-left overflow-hidden
-                    ${activeVibe === i 
-                      ? 'bg-white/[0.04] border-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.15)] translate-x-3' 
-                      : 'bg-transparent border-white/5 hover:border-white/10 hover:bg-white/[0.01] hover:translate-x-1'}
-                  `}
-                >
-                  <div className={`
-                    w-12 h-12 rounded-xl flex items-center justify-center text-xl font-magic transition-all duration-500
-                    ${activeVibe === i ? 'bg-cyan-500 text-black shadow-[0_0_20px_rgba(6,182,212,0.5)]' : 'bg-white/5 text-white/20 group-hover:text-white/40'}
-                  `}>
-                    {vibe.rune}
-                  </div>
-                  
-                  <div className="flex flex-col gap-0.5 min-w-0">
-                    <span className={`text-[11px] font-magic font-black uppercase tracking-widest truncate ${activeVibe === i ? 'text-white' : 'text-white/40'}`}>
-                      {vibe.name}
-                    </span>
-                    <span className="text-[8px] font-mono text-white/20 uppercase tracking-tight truncate group-hover:text-white/30 transition-colors">
-                      {vibe.desc}
-                    </span>
-                  </div>
-
-                  {activeVibe === i && isMusicPlaying && (
-                    <div className="ml-auto flex items-center gap-1">
-                       {[0, 1, 2].map(x => (
-                         <motion.div 
-                           key={x}
-                           animate={{ height: [4, 12, 4] }}
-                           transition={{ duration: 1, repeat: Infinity, delay: x * 0.2 }}
-                           className="w-1 bg-cyan-400 rounded-full"
-                         />
-                       ))}
-                    </div>
-                  )}
-                </button>
-             ))}
-          </div>
-
-          {/* Native Player - Right */}
-          <div className="flex-1 bg-black/40 backdrop-blur-2xl p-6 md:p-12 rounded-[3.5rem] border border-white/10 shadow-[0_40px_100px_rgba(0,0,0,0.8)] relative group overflow-hidden flex items-center justify-center">
-             <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/[0.05] to-transparent pointer-events-none" />
-             
-             <div className="relative z-10 w-full h-full flex flex-col items-center justify-center gap-10 text-center">
-                <div className="relative">
-                   <div className={`w-32 h-32 md:w-40 md:h-40 rounded-full border-2 border-dashed border-white/10 flex items-center justify-center transition-all duration-700
-                    ${isMusicPlaying ? 'rotate-180 border-cyan-500/40' : ''} ${isConnecting ? 'animate-pulse scale-95 border-orange-500/30' : ''}`}>
-                      <div className={`absolute inset-0 rounded-full bg-gradient-to-tr from-cyan-500/20 via-transparent to-orange-500/20 animate-spin-slow ${!isMusicPlaying ? 'opacity-0' : 'opacity-100'}`} />
-                      
-                      <div className={`w-24 h-24 md:w-32 md:h-32 rounded-full bg-gradient-to-tr from-cyan-500 to-orange-500 p-1 transition-all duration-1000 ${isMusicPlaying ? 'scale-110 blur-xl opacity-20' : 'scale-100 opacity-5'}`} />
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className={`w-20 h-20 md:w-28 md:h-28 rounded-full bg-[#050505] border border-white/10 flex items-center justify-center shadow-2xl transition-all duration-700 ${isMusicPlaying ? 'scale-105 border-cyan-500/30' : ''}`}>
-                          <AnimatePresence mode="wait">
-                            <motion.span 
-                              key={activeVibe + (isConnecting ? '_loading' : '')}
-                              initial={{ opacity: 0, scale: 0.8 }}
-                              animate={{ opacity: 1, scale: 1 }}
-                              exit={{ opacity: 0, scale: 1.2 }}
-                              className={`text-4xl md:text-6xl font-magic transition-colors duration-700 ${isMusicPlaying ? 'text-cyan-400 drop-shadow-[0_0_30px_rgba(34,211,238,0.5)]' : 'text-white/10'} ${isConnecting ? 'text-orange-500 animate-pulse' : ''}`}
-                            >
-                              {isConnecting ? 'ᛝ' : vibes[activeVibe].rune}
-                            </motion.span>
-                          </AnimatePresence>
-                        </div>
-                      </div>
-                   </div>
-                </div>
-
-                {/* Spotify Embed Player */}
-                <div className="w-full max-w-sm transition-all duration-1000 transform hover:scale-[1.02]">
-                   <div className="relative group/player">
-                      <div className="absolute -inset-1 bg-gradient-to-r from-cyan-500/20 to-orange-500/20 rounded-[1.5rem] blur opacity-75 group-hover/player:opacity-100 transition duration-1000 group-hover/player:duration-200" />
-                      <div className="relative bg-[#050505] rounded-[1.5rem] overflow-hidden border border-white/5 shadow-2xl">
-                         <iframe 
-                            key={vibes[activeVibe].id}
-                            style={{ borderRadius: '12px' }} 
-                            src={`https://open.spotify.com/embed/playlist/${MUSIC_VIBES[activeVibe].spotifyId}?utm_source=generator&theme=0`} 
-                            width="100%" 
-                            height="152" 
-                            frameBorder="0" 
-                            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" 
-                            loading="lazy"
-                            onLoad={() => {
-                               setIsConnecting(false);
-                               setIsMusicPlaying(true);
-                            }}
-                         ></iframe>
-                      </div>
-                   </div>
-                </div>
-
-                <div className="space-y-2">
-                   <p className="text-[10px] md:text-xs font-mono text-cyan-400/60 uppercase tracking-[0.4em] max-w-xs text-center mx-auto">
-                      {isConnecting ? 'Resonance alignment in progress' : `Ritual: ${vibes[activeVibe].desc}`}
-                   </p>
-                </div>
-             </div>
-          </div>
-        </div>
-      </motion.div>
+    <div className={`relative ${className} flex items-center justify-center`}>
+      <div className="absolute inset-0 border-4 border-cyan-500/10 rounded-full" />
+      <div className="absolute inset-0 border-4 border-t-cyan-500 rounded-full animate-spin shadow-[0_0_15px_rgba(34,211,238,0.5)]" />
+      <div className="w-1/2 h-1/2 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.4),transparent)] rounded-full animate-pulse" />
+      <div className="absolute inset-0 flex items-center justify-center">
+         <div className="w-1 h-1 bg-white rounded-full shadow-[0_0_10px_white]" />
+      </div>
     </div>
   );
 }
@@ -5791,4 +6173,486 @@ function getCardImages(card: any): { small: string; normal: string; border_crop:
     border_crop: images.border_crop || '',
     art_crop: images.art_crop || ''
   };
+}
+
+function SocialsPage({ 
+  setViewMode, 
+  user,
+  setViewingPublicDecks,
+  setViewingPublicUser,
+  setIsViewingDeck,
+  setIsSettingsOpen
+}: { 
+  setViewMode: (m: any) => void;
+  user: any;
+  setViewingPublicDecks: (d: any[]) => void;
+  setViewingPublicUser: (u: any) => void;
+  setIsViewingDeck: (v: boolean) => void;
+  setIsSettingsOpen: (v: boolean) => void;
+}) {
+  const [activeTab, setActiveTab] = useState<'community' | 'shared' | 'creators'>('community');
+  const [publicUsers, setPublicUsers] = useState<any[]>([]);
+  const [sharedMessages, setSharedMessages] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchCommunity = async () => {
+      setLoading(true);
+      try {
+        const usersSnap = await getDocs(query(collection(db, 'users'), where('isPublic', '==', true)));
+        const users: any[] = [];
+        usersSnap.forEach(d => {
+          if (user && d.id === user.uid) return;
+          users.push({ id: d.id, ...d.data() });
+        });
+        setPublicUsers(users);
+
+        if (user?.email) {
+          const sharedSnap = await getDocs(query(collection(db, 'sharedSelections'), where('toUserEmail', '==', user.email.toLowerCase())));
+          const shared: any[] = [];
+          sharedSnap.forEach(d => shared.push({ id: d.id, ...d.data() }));
+          setSharedMessages(shared);
+        }
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchCommunity();
+  }, [user]);
+
+  const creators = [
+    { name: "The Professor", channel: "@TolarianCommunityCollege", icon: "https://yt3.googleusercontent.com/ytc/AIdro_k1S7f1C2weTXJyZZO-SykHaEoWeWblN_cu0szVe6cpPw=s160-c-k-c0x00ffffff-no-rj", url: "https://www.youtube.com/@TolarianCommunityCollege", desc: "MTG's most distinguished educator. Excellent for product reviews and gameplay." },
+    { name: "The Command Zone", channel: "@commandcast", icon: "https://yt3.googleusercontent.com/ytc/AIdro_ndVswsCvdE-r0J6NFNlhDyHIjxZnvgntVBuWLznMSFig=s160-c-k-c0x00ffffff-no-rj", url: "https://www.youtube.com/@commandcast", desc: "The definitive source for Commander strategy and high-production gameplay." },
+    { name: "MTGGoldfish", channel: "@MTGGoldfish", icon: "https://yt3.googleusercontent.com/ytc/AIdro_lPUFQn84lDHcw2D_BoZAOSi2YjEC1hJ4HaPue3JfYX0A=s160-c-k-c0x00ffffff-no-rj", url: "https://www.youtube.com/@MTGGoldfish", desc: "SaffronOlive's home for decks, news, and budget magic Brews." },
+    { name: "PleasantKenobi", channel: "@PleasantKenobi", icon: "https://yt3.googleusercontent.com/vr61wfGEBnaksZUQU42DANjkr23T-IXSjt4rqCaUZEqjFMgl9_ceO4VpfaQ150a0i_P1i7_T8g=s160-c-k-c0x00ffffff-no-rj", url: "https://www.youtube.com/@PleasantKenobi", desc: "Vince's unique blend of MTG analysis, humor, and salt." },
+    { name: "Rhystic Studies", channel: "@RhysticStudies", icon: "https://yt3.googleusercontent.com/p_ZWKYGKSGUrYWftjj-8mdO8vG4vD0vQJDv20aDVsaEoer-stgrFwITXvhH2kEXjdiUvzY9Wag=s160-c-k-c0x00ffffff-no-rj", url: "https://www.youtube.com/@RhysticStudies", desc: "Exquisite video essays exploring the art and history of Magic." },
+    { name: "Joel are Magic", channel: "@JoelareMagic", icon: "https://yt3.googleusercontent.com/GLoSrfNCIAQkEqMMSHfoPoKQvvJBt03NLEpzGnrzkruJGtdvhQf0d-aoWoqJBOIlg4oS9WEOHnE=s160-c-k-c0x00ffffff-no-rj", url: "https://www.youtube.com/@JoelareMagic", desc: "Cinematic EDH gameplay featuring special guests and big personalities." },
+  ];
+
+  const shareText = encodeURIComponent(`Master Your Multiverse! Check out Rune Deck Companion: ${window.location.href}`);
+  const whatsappUrl = `https://wa.me/?text=${shareText}`;
+  const emailUrl = `mailto:?subject=Join Move to Rune Deck&body=${shareText}`;
+
+  return (
+    <div className="flex-1 flex flex-col min-h-screen bg-[#050505] relative overflow-hidden">
+       {/* Background Aesthetics */}
+       <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.1),transparent_50%)]" />
+       <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(249,115,22,0.1),transparent_50%)]" />
+       
+       <div className="max-w-7xl mx-auto w-full px-6 py-12 relative z-10 flex flex-col gap-12">
+          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
+             <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                   <div className="p-2 bg-cyan-500/10 border border-cyan-500/20 rounded-xl">
+                      <Users className="w-6 h-6 text-cyan-400" />
+                   </div>
+                   <h1 className="text-4xl font-magic font-black text-white uppercase tracking-tighter">Socials</h1>
+                </div>
+                <p className="text-sm font-mono text-white/30 uppercase tracking-[0.3em]">Connect with the community</p>
+             </div>
+
+             <div className="flex bg-white/5 p-1 rounded-2xl border border-white/5 backdrop-blur-md">
+                {(['community', 'shared'] as const).map(tab => (
+                   <button
+                     key={tab}
+                     onClick={() => setActiveTab(tab as any)}
+                     className={`px-6 py-2.5 rounded-xl text-[10px] font-magic font-black uppercase tracking-widest transition-all ${activeTab === tab ? 'bg-orange-500 text-black shadow-lg shadow-orange-500/20' : 'text-white/40 hover:text-white/60'}`}
+                   >
+                      {tab}
+                   </button>
+                ))}
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+             <div className="lg:col-span-2">
+                <AnimatePresence mode="wait">
+                   {activeTab === 'community' && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        className="space-y-12"
+                      >
+                         {/* Active Users Section */}
+                         <div className="space-y-4">
+                            <div className="flex items-center gap-3 px-2">
+                               <Users className="w-4 h-4 text-orange-500" />
+                               <h3 className="text-xs font-magic font-black text-white/80 uppercase tracking-[0.2em]">Active Users</h3>
+                            </div>
+                            {loading ? (
+                              <div className="py-20 flex justify-center">
+                                 <ManaSpinner className="w-12 h-12" />
+                              </div>
+                            ) : publicUsers.length === 0 ? (
+                              <div className="py-20 text-center rune-panel">
+                                 <p className="text-white/20 font-magic font-black uppercase tracking-widest">No public users found.</p>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                 {publicUsers.map(u => (
+                                   <PublicUserCard 
+                                      key={u.id} 
+                                      user={u} 
+                                      onClick={async () => {
+                                         const decksSnap = await getDocs(collection(db, 'users', u.id, 'decks'));
+                                         const decks: any[] = [];
+                                         decksSnap.forEach(d => decks.push({ id: d.id, ...d.data() }));
+                                         setViewingPublicDecks(decks);
+                                         setViewingPublicUser(u);
+                                         setIsViewingDeck(true);
+                                      }}
+                                   />
+                                 ))}
+                              </div>
+                            )}
+                         </div>
+
+                         {/* Creators Section */}
+                         <div className="space-y-4">
+                            <div className="flex items-center gap-3 px-2">
+                               <Sparkles className="w-4 h-4 text-cyan-400" />
+                               <h3 className="text-xs font-magic font-black text-white/80 uppercase tracking-[0.2em]">Creators</h3>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                               {creators.map((c, i) => (
+                                 <CreatorCard key={i} {...c} />
+                               ))}
+                            </div>
+                         </div>
+                      </motion.div>
+                   )}
+
+                   {activeTab === 'shared' && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: 20 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -20 }}
+                        className="space-y-4"
+                      >
+                         {sharedMessages.length === 0 ? (
+                           <div className="py-20 text-center rune-panel bg-white/[0.02]">
+                              <Mail className="w-12 h-12 text-white/5 mx-auto mb-4" />
+                              <p className="text-white/20 font-magic font-black uppercase tracking-widest">You have no shared cards.</p>
+                           </div>
+                         ) : (
+                           <div className="space-y-4">
+                              {sharedMessages.map(msg => (
+                                <div key={msg.id} className="rune-panel p-6 bg-white/[0.03] hover:bg-white/[0.05] transition-all group">
+                                   <div className="flex items-center justify-between mb-4">
+                                      <div className="flex items-center gap-3">
+                                         <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
+                                            <Send className="w-4 h-4 text-cyan-400 rotate-12" />
+                                         </div>
+                                         <div className="flex flex-col">
+                                            <span className="text-[10px] font-magic font-black text-cyan-400/80 uppercase tracking-widest">Shared Cards</span>
+                                            <span className="text-[11px] font-sans font-black text-white/60">{msg.fromUserEmail}</span>
+                                         </div>
+                                      </div>
+                                      <span className="text-[9px] font-mono text-white/20">{msg.createdAt?.toDate().toLocaleDateString()}</span>
+                                   </div>
+                                   <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 mb-6">
+                                      {msg.cards.slice(0, 8).map((card: any, idx: number) => (
+                                        <div key={idx} className="aspect-[0.71] rounded-sm overflow-hidden border border-white/10 relative group/card">
+                                           <img src={card.thumb} className="w-full h-full object-cover group-hover/card:scale-110 transition-transform" />
+                                           {msg.cards.length > 8 && idx === 7 && (
+                                              <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
+                                                 <span className="text-[10px] font-magic font-black text-white">+{msg.cards.length - 7}</span>
+                                              </div>
+                                           )}
+                                        </div>
+                                      ))}
+                                   </div>
+                                   <div className="flex gap-3">
+                                      {/* Logic to import this selection to current deckbox or library can be added here */}
+                                      <button 
+                                        className={`flex-1 py-3 rounded-xl text-[10px] font-magic font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${copiedId === msg.id ? 'bg-green-500 text-black border-transparent' : 'bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20'}`}
+                                        onClick={() => {
+                                          const clipboard = msg.cards.map((c: any) => `${c.qty || 1} ${c.name}`).join('\n');
+                                          navigator.clipboard.writeText(clipboard);
+                                          setCopiedId(msg.id);
+                                          setTimeout(() => setCopiedId(null), 2000);
+                                        }}
+                                      >
+                                         {copiedId === msg.id ? <Check className="w-3 h-3" /> : null}
+                                         {copiedId === msg.id ? 'Copied' : 'Copy Decklist'}
+                                      </button>
+                                      <button 
+                                        className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 hover:bg-red-500/20 transition-all"
+                                        onClick={async () => {
+                                          await deleteDoc(doc(db, 'sharedSelections', msg.id));
+                                          setSharedMessages(prev => prev.filter(p => p.id !== msg.id));
+                                        }}
+                                      >
+                                         <Trash2 className="w-4 h-4" />
+                                      </button>
+                                   </div>
+                                </div>
+                              ))}
+                           </div>
+                         )}
+                      </motion.div>
+                   )}
+                </AnimatePresence>
+             </div>
+
+             <div className="space-y-8">
+                {/* User Status / Toggle */}
+                <div className="rune-panel p-8 bg-gradient-to-br from-white/[0.03] to-transparent border-white/5 relative overflow-hidden group">
+                   <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.1),transparent_70%)]" />
+                   <div className="relative z-10 space-y-6">
+                      <div className="flex items-center gap-4">
+                         <div className="w-14 h-14 rounded-full border-2 border-orange-500/30 p-1 flex items-center justify-center group-hover:border-orange-500 transition-all duration-700">
+                           <div className="w-full h-full rounded-full bg-orange-500/10 flex items-center justify-center">
+                              <User className="w-6 h-6 text-orange-500" />
+                           </div>
+                         </div>
+                         <div>
+                            <h3 className="font-magic font-black text-white uppercase tracking-widest">My Profile</h3>
+                            <div className="flex items-center gap-2 mt-1">
+                               <div className={`w-2 h-2 rounded-full animate-pulse ${user ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-red-500'}`} />
+                               <span className="text-[9px] font-mono font-black text-white/30 uppercase tracking-[0.2em]">{user ? 'Connected' : 'Offline'}</span>
+                            </div>
+                         </div>
+                      </div>
+                      
+                      <div className="p-4 rounded-2xl bg-black/40 border border-white/5 backdrop-blur-xl">
+                         <p className="text-[10px] text-white/40 leading-relaxed uppercase font-mono tracking-widest italic mb-4">
+                            Connect with other players to share card selections and browse public decks.
+                         </p>
+                         <div className="grid grid-cols-2 gap-2">
+                            <a 
+                               href={whatsappUrl}
+                               target="_blank"
+                               rel="noopener noreferrer"
+                               className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-cyan-500/30 hover:bg-cyan-500/5 transition-all group flex flex-col items-center gap-2 text-center"
+                            >
+                               <Share2 className="w-4 h-4 text-cyan-400/50 group-hover:text-cyan-400" />
+                               <span className="text-[8px] font-magic font-black text-white/40 uppercase tracking-widest group-hover:text-cyan-400">WhatsApp</span>
+                            </a>
+                            <a 
+                               href={emailUrl}
+                               className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-orange-500/30 hover:bg-orange-500/5 transition-all group flex flex-col items-center gap-2 text-center"
+                            >
+                               <Mail className="w-4 h-4 text-orange-500/50 group-hover:text-orange-500" />
+                               <span className="text-[8px] font-magic font-black text-white/40 uppercase tracking-widest group-hover:text-orange-500">Email Link</span>
+                            </a>
+                         </div>
+                      </div>
+                   </div>
+                </div>
+
+                {/* Tactical Suggestions */}
+                <div className="space-y-4">
+                   <div className="flex items-center gap-3 px-2">
+                      <Zap className="w-4 h-4 text-orange-500 animate-pulse" />
+                      <h3 className="text-xs font-magic font-black text-white/80 uppercase tracking-[0.2em]">Social Tips</h3>
+                   </div>
+                   <div className="rune-panel p-6 bg-black/40 border-white/5 space-y-4">
+                      <button 
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="w-full flex items-start text-left gap-4 group"
+                      >
+                         <div className="w-8 h-8 rounded-lg bg-orange-500/20 border border-orange-500/30 flex items-center justify-center shrink-0 group-hover:bg-orange-500 group-hover:text-black transition-all">
+                            <Settings className="w-4 h-4 text-orange-500 group-hover:text-black" />
+                         </div>
+                         <div className="flex-1">
+                            <p className="text-[10px] font-mono text-white/60 uppercase leading-snug tracking-tighter group-hover:text-white transition-colors">
+                               Customize your arcane profile and social visibility.
+                            </p>
+                            <span className="text-[8px] text-white/20 uppercase font-black tracking-widest mt-2 block">Link: Security Config</span>
+                         </div>
+                      </button>
+                   </div>
+                </div>
+             </div>
+          </div>
+       </div>
+    </div>
+  );
+}
+
+function CreatorCard({ name, channel, icon, url, desc }: any) {
+  return (
+    <a 
+      href={url} 
+      target="_blank" 
+      rel="noopener noreferrer"
+      className="rune-panel p-6 bg-[#0c0c0c] hover:bg-cyan-500/5 border-white/5 hover:border-cyan-500/30 transition-all duration-500 flex flex-col gap-4 group relative overflow-hidden h-full"
+    >
+       <div className="absolute top-0 right-0 w-32 h-32 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent_70%)] opacity-0 group-hover:opacity-100 transition-opacity" />
+       <div className="flex items-center gap-4 relative z-10">
+          <div className="w-14 h-14 rounded-2xl bg-white/[0.02] border border-white/5 overflow-hidden flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 shadow-xl group-hover:shadow-cyan-500/20">
+             <img src={icon} alt={name} className="w-full h-full object-cover" />
+          </div>
+          <div>
+             <h3 className="text-lg font-magic font-black text-white uppercase tracking-tighter group-hover:text-cyan-400 transition-colors leading-tight">{name}</h3>
+             <div className="flex items-center gap-2 mt-1">
+                <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
+                <p className="text-[9px] font-mono text-orange-500/80 uppercase tracking-widest font-black">{channel}</p>
+             </div>
+          </div>
+       </div>
+       <p className="text-[10px] font-sans text-white/40 leading-relaxed uppercase tracking-tight group-hover:text-white/60 transition-colors relative z-10 line-clamp-3">
+          {desc}
+       </p>
+       <div className="flex items-center gap-2 mt-auto pt-4 relative z-10">
+          <div className="h-[1px] flex-1 bg-white/10 group-hover:bg-cyan-500/30 transition-all" />
+          <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/5 group-hover:border-cyan-500/30 transition-all">
+             <span className="text-[8px] font-magic font-black text-white/40 group-hover:text-cyan-400 uppercase tracking-widest">Connect</span>
+             <ExternalLink className="w-2.5 h-2.5 text-white/20 group-hover:text-cyan-400" />
+          </div>
+       </div>
+    </a>
+  );
+}
+
+function PublicUserCard({ user, onClick }: any) {
+  return (
+    <div 
+      onClick={onClick}
+      className="rune-panel p-6 bg-[#0c0c0c] hover:bg-orange-500/5 border-white/5 hover:border-orange-500/30 transition-all duration-500 cursor-pointer group relative flex items-center justify-between"
+    >
+       <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-full border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden group-hover:border-orange-500/50 transition-colors shadow-lg">
+             {user.photoURL ? (
+                <img src={user.photoURL} alt={user.userName} className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700" />
+             ) : (
+                <User className="w-6 h-6 text-white/20" />
+             )}
+          </div>
+          <div>
+             <h3 className="text-sm font-magic font-black text-white uppercase tracking-widest group-hover:text-orange-400 transition-colors line-clamp-1">{user.displayName || user.userName || 'Elder User'}</h3>
+             <span className="text-[9px] font-mono text-white/30 uppercase tracking-[0.2em]">{user.userTitle || 'Wanderer'}</span>
+          </div>
+       </div>
+       <div className="flex flex-col items-end gap-1">
+          <Layers className="w-4 h-4 text-white/10 group-hover:text-orange-500 animate-pulse" />
+          <span className="text-[8px] font-magic font-black text-white/20 uppercase tracking-widest">Browse</span>
+       </div>
+    </div>
+  );
+}
+
+function ShareSelectionOverlay({ 
+  show, 
+  onClose, 
+  onShare, 
+  email, 
+  setEmail, 
+  loading 
+}: any) {
+  const [publicUsers, setPublicUsers] = useState<any[]>([]);
+  const [fetchingUsers, setFetchingUsers] = useState(false);
+
+  useEffect(() => {
+    if (show) {
+      const fetchUsers = async () => {
+        setFetchingUsers(true);
+        try {
+          const snap = await getDocs(query(collection(db, 'users'), where('isPublic', '==', true)));
+          const users: any[] = [];
+          snap.forEach(d => users.push({ id: d.id, ...d.data() }));
+          setPublicUsers(users);
+        } catch (e) {
+          console.error(e);
+        } finally {
+          setFetchingUsers(false);
+        }
+      };
+      fetchUsers();
+    }
+  }, [show]);
+
+  return (
+    <AnimatePresence>
+       {show && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300] flex items-center justify-center p-6"
+          >
+             <div className="absolute inset-0 bg-black/90 backdrop-blur-xl" onClick={onClose} />
+             <motion.div 
+               initial={{ scale: 0.9, y: 20 }}
+               animate={{ scale: 1, y: 0 }}
+               exit={{ scale: 0.9, y: 20 }}
+               className="w-full max-w-md bg-gradient-to-br from-[#121212] to-[#050505] border border-white/10 rounded-[2.5rem] shadow-[0_40px_100px_rgba(0,0,0,0.9)] overflow-hidden relative"
+             >
+                <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.1),transparent_70%)] pointer-events-none" />
+                <div className="p-8 space-y-6 relative z-10">
+                   <div className="text-center space-y-2">
+                      <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center mx-auto mb-4 shadow-[0_0_30px_rgba(6,182,212,0.2)]">
+                         <Send className="w-8 h-8 text-cyan-400" />
+                      </div>
+                      <h2 className="text-2xl font-magic font-black text-white uppercase tracking-tighter">Share Selection</h2>
+                      <p className="text-[9px] text-white/40 leading-relaxed uppercase tracking-[0.3em] font-mono">Select a recipient</p>
+                   </div>
+
+                   <div className="space-y-4">
+                      {/* Public Users Quick Select */}
+                      <div className="space-y-2">
+                         <label className="text-[8px] font-magic font-black text-white/20 uppercase tracking-widest pl-2">Public Users</label>
+                         <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
+                            {fetchingUsers ? (
+                               <div className="h-10 w-full flex items-center justify-center bg-white/5 rounded-xl border border-dashed border-white/10">
+                                  <RotateCw className="w-3 h-3 animate-spin text-white/20" />
+                                </div>
+                            ) : publicUsers.length === 0 ? (
+                               <div className="text-[8px] text-white/10 font-bold uppercase tracking-widest py-2 px-4 italic">No public users detected...</div>
+                            ) : (
+                               publicUsers.map(u => (
+                                  <button
+                                    key={u.id}
+                                    onClick={() => setEmail(u.email)}
+                                    className={`shrink-0 flex items-center gap-2 p-1.5 rounded-xl border transition-all ${email === u.email ? 'bg-cyan-500/20 border-cyan-500 text-cyan-400' : 'bg-white/5 border-white/5 text-white/40 hover:border-white/20'}`}
+                                  >
+                                     <div className="w-6 h-6 rounded-full overflow-hidden border border-white/10">
+                                        <img src={u.photoURL || `https://api.dicebear.com/7.x/bottts/svg?seed=${u.userName}`} className="w-full h-full object-cover" />
+                                     </div>
+                                     <span className="text-[9px] font-magic font-black uppercase tracking-widest pr-2">{u.displayName || u.userName}</span>
+                                  </button>
+                               ))
+                            )}
+                         </div>
+                      </div>
+
+                      <div className="relative group">
+                         <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-hover:text-cyan-400 transition-colors" />
+                         <input 
+                           type="email"
+                           value={email}
+                           onChange={(e) => setEmail(e.target.value)}
+                           placeholder="MAgic.player@multiverse.com"
+                           className="w-full bg-black/40 border border-white/5 rounded-2xl px-12 py-4 text-xs focus:border-cyan-500/50 outline-none text-white transition-all font-mono uppercase"
+                         />
+                      </div>
+                   </div>
+
+                   <div className="flex gap-3 pt-2">
+                      <button 
+                        onClick={onClose}
+                        className="flex-1 py-4 bg-white/5 hover:bg-white/10 rounded-2xl text-[10px] font-magic font-black text-white/40 uppercase tracking-widest transition-all"
+                      >
+                         Cancel
+                      </button>
+                      <button 
+                        onClick={onShare}
+                        disabled={loading || !email}
+                        className="flex-[2] py-4 bg-cyan-600 shadow-lg shadow-cyan-500/20 rounded-2xl text-[10px] font-magic font-black text-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 disabled:opacity-20"
+                      >
+                         {loading ? <RotateCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                         Send Selection
+                      </button>
+                   </div>
+                </div>
+             </motion.div>
+          </motion.div>
+       )}
+    </AnimatePresence>
+  );
 }
