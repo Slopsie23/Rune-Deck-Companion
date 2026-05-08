@@ -33,6 +33,8 @@ export interface DeckCard {
   thumb: string;
   from_deck: string;
   qty: number;
+  scryfall_id?: string;
+  highRes?: string;
   prices?: {
     eur?: string;
   };
