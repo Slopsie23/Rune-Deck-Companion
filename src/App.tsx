@@ -69,6 +69,7 @@ import {
   PieChart as PieChartIcon,
   Maximize2,
   Mail,
+  MessageCircle,
   Send,
   Share2,
   ArrowRight,
@@ -134,10 +135,12 @@ import {
   getDoc,
   updateDoc,
   deleteDoc,
+  addDoc,
   collection,
   onSnapshot,
   query,
   where,
+  limit,
   getDocs,
   getDocFromServer,
   serverTimestamp,
@@ -293,9 +296,40 @@ export default function App() {
   const [cardsPerRow, setCardsPerRow] = useState<number>(0); // 0 means 'auto' (~220px)
   const [userTitle, setUserTitle] = useState("Deckmaster");
   const [userName, setUserName] = useState("");
-  const [playgroupPlayerId, setPlaygroupPlayerId] = useState("");
-  const [playgroupGroupId, setPlaygroupGroupId] = useState("");
-  const [playgroupData, setPlaygroupData] = useState<any>(null);
+  const [isProfileVisible, setIsProfileVisible] = useState(true);
+  const [isDecksPublic, setIsDecksPublic] = useState(false);
+  const [userSearch, setUserSearch] = useState("");
+  const [foundUsers, setFoundUsers] = useState<any[]>([]);
+  const [isSearchingUsers, setIsSearchingUsers] = useState(false);
+
+  const searchUsers = async (queryStr: string) => {
+    setUserSearch(queryStr);
+    if (queryStr.length < 3) {
+      setFoundUsers([]);
+      return;
+    }
+    setIsSearchingUsers(true);
+    try {
+      const q = query(
+        collection(db, "users"),
+        where("isProfileVisible", "==", true),
+        limit(50)
+      );
+      const snapshot = await getDocs(q);
+      const allPublic = snapshot.docs.map((d) => ({
+        id: d.id,
+        ...(d.data() as any),
+      }));
+      const filtered = allPublic.filter(u => 
+        u.displayName?.toLowerCase().includes(queryStr.toLowerCase()) || 
+        u.email?.toLowerCase().includes(queryStr.toLowerCase())
+      );
+      setFoundUsers(filtered);
+    } catch (e) {
+      console.error("Search failed", e);
+    }
+    setIsSearchingUsers(false);
+  };
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [tagToVerify, setTagToVerify] = useState<{
@@ -337,9 +371,8 @@ export default function App() {
     userTitle?: string;
     cardsPerRow?: number;
     userName?: string;
-    isPublic?: boolean;
-    playgroupPlayerId?: string;
-    playgroupGroupId?: string;
+    isProfileVisible?: boolean;
+    isDecksPublic?: boolean;
   }) => {
     if (!user) return;
     try {
@@ -355,50 +388,24 @@ export default function App() {
       if (updates.cardsPerRow !== undefined)
         setCardsPerRow(updates.cardsPerRow);
       if (updates.userName !== undefined) setUserName(updates.userName);
-      if (updates.isPublic !== undefined) setIsPublic(updates.isPublic);
-      if (updates.playgroupPlayerId !== undefined)
-        setPlaygroupPlayerId(updates.playgroupPlayerId);
-      if (updates.playgroupGroupId !== undefined)
-        setPlaygroupGroupId(updates.playgroupGroupId);
-      showMessage("Settings saved", "success");
+      if (updates.isProfileVisible !== undefined)
+        setIsProfileVisible(updates.isProfileVisible);
+      if (updates.isDecksPublic !== undefined)
+        setIsDecksPublic(updates.isDecksPublic);
+      showMessage("Instellingen opgeslagen", "success");
     } catch (err) {
       console.error("Failed to save settings", err);
       showMessage("Error updating settings", "error");
     }
   };
 
-  const refreshPlaygroup = async (pId = playgroupPlayerId, gId = playgroupGroupId) => {
-    if (!pId || !gId) return;
-    try {
-      // Constructing based on user request "onderzoek hoe playgroup.gg deze informatie deelt"
-      // We'll use the documented endpoints for player and playgroup leaderboard
-      const response = await axios.get(`https://api.playgroup.gg/player/${pId}`);
-      const leaderboardRes = await axios.get(`https://api.playgroup.gg/playgroup/${gId}/leaderboard`);
-      
-      // Feedback as requested: username and playgroup name
-      setPlaygroupData({
-        playerName: response.data.name || "Sync Active",
-        groupName: leaderboardRes.data.playgroup?.name || "Group Verified",
-        rankings: leaderboardRes.data.rankings || []
-      });
-      
-      showMessage(`SYNC: ${response.data.name} @ ${leaderboardRes.data.playgroup?.name || gId}`, "success");
-    } catch (e) {
-      console.warn("Playgroup.gg Sync Placeholder (API restricted or offline)");
-      // Fallback/Demo data if real API is shielded
-      setPlaygroupData({
-        playerName: "Player Link Active",
-        groupName: "Connected Group",
-        rankings: savedDecks.map((d, i) => ({ deckName: d.name, rank: Math.floor(Math.random() * 20) + 1 }))
-      });
-    }
-  };
+  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
+  const [deckToShare, setDeckToShare] = useState<SavedDeck | null>(null);
 
-  useEffect(() => {
-    if (playgroupPlayerId && playgroupGroupId) {
-       refreshPlaygroup();
-    }
-  }, [playgroupPlayerId, playgroupGroupId]);
+  const handleShareDeck = (deck: SavedDeck) => {
+    setDeckToShare(deck);
+    setIsShareModalOpen(true);
+  };
   const renderManaSymbols = (manaCost: any, size = "w-4 h-4") => {
     if (!manaCost) return null;
 
@@ -462,14 +469,13 @@ export default function App() {
   const [viewingPublicDecks, setViewingPublicDecks] = useState<any[]>([]);
   const [viewingPublicUser, setViewingPublicUser] = useState<any>(null);
   const [sharedWithMe, setSharedWithMe] = useState<any[]>([]);
-  const [isPublic, setIsPublic] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
   useEffect(() => {
     if (viewMode === "socials") {
       const usersQuery = query(
         collection(db, "users"),
-        where("isPublic", "==", true),
+        where("isDecksPublic", "==", true),
       );
       setIsSocialsLoading(true);
       getDocs(usersQuery)
@@ -714,22 +720,27 @@ export default function App() {
             if (data.userName) setUserName(data.userName);
             if (data.cardsPerRow !== undefined)
               setCardsPerRow(data.cardsPerRow);
-            if (data.isPublic !== undefined) setIsPublic(data.isPublic);
-            if (data.playgroupPlayerId) setPlaygroupPlayerId(data.playgroupPlayerId);
-            if (data.playgroupGroupId) setPlaygroupGroupId(data.playgroupGroupId);
+            setIsProfileVisible(data.isProfileVisible !== undefined ? data.isProfileVisible : true);
+            setIsDecksPublic(data.isDecksPublic !== undefined ? data.isDecksPublic : false);
           }
 
-          await setDoc(
-            userRef,
-            {
-              userId: u.uid,
-              email: u.email,
-              displayName: u.displayName,
-              photoURL: u.photoURL,
-              updatedAt: serverTimestamp(),
-            },
-            { merge: true },
-          );
+          const profileData: any = {
+            userId: u.uid,
+            email: u.email,
+            displayName: u.displayName,
+            photoURL: u.photoURL,
+            updatedAt: serverTimestamp(),
+          };
+
+          // Explicitly set defaults if missing in snap
+          if (!userSnap.exists() || (userSnap.data()?.isProfileVisible === undefined)) {
+            profileData.isProfileVisible = true;
+          }
+          if (!userSnap.exists() || (userSnap.data()?.isDecksPublic === undefined)) {
+            profileData.isDecksPublic = false;
+          }
+
+          await setDoc(userRef, profileData, { merge: true });
         } catch (err: any) {
           console.warn("Firestore profile sync issues (non-critical):", err);
           // Don't show scary UI message for background sync failures
@@ -910,6 +921,13 @@ export default function App() {
   const [viewingDeckName, setViewingDeckName] = useState("");
   const [viewingDeckId, setViewingDeckId] = useState("");
   const [isViewingDeck, setIsViewingDeck] = useState(false);
+
+  const loadLocalDeck = (deck: any) => {
+    setViewingDeckName(deck.deckName || "Saved Deck");
+    setViewingDeckCards(deck.cards || []);
+    setViewingDeckId(deck.id || "");
+    setIsViewingDeck(true);
+  };
   const [isAltCommandersOpen, setIsAltCommandersOpen] = useState(false);
   const [alternativeCommanders, setAlternativeCommanders] = useState<any[]>([]);
   const [zoomedAltCard, setZoomedAltCard] = useState<string | null>(null);
@@ -1038,6 +1056,19 @@ export default function App() {
   const [sortBy, setSortBy] = useState("released");
   const [sortDir, setSortDir] = useState("desc");
   const [newDeckIdInput, setNewDeckIdInput] = useState("");
+
+  useEffect(() => {
+    let title = "Rune Deck Companion";
+    if (deckToShare) {
+      title = `${deckToShare.name} | Rune Deck`;
+    } else if (viewingDeckName) {
+      title = `${viewingDeckName} | Rune Deck`;
+    }
+    document.title = title;
+
+    const ogTitle = document.querySelector('meta[property="og:title"]');
+    if (ogTitle) ogTitle.setAttribute("content", title);
+  }, [deckToShare, viewingDeckName]);
 
   const [copied, setCopied] = useState(false);
 
@@ -2355,17 +2386,24 @@ export default function App() {
   const shareDeck = async (deckId: string, targetEmail: string) => {
     if (!user) return;
     try {
-      // Typically we'd find the user by email, but for now we'll store it as a pending share 
-      // or update the deck's shared list. Assuming a simple implementation for now.
-      const deckRef = doc(db, "users", user.uid, "decks", deckId);
-      await updateDoc(deckRef, {
-        sharedWith: arrayUnion(targetEmail),
-        updatedAt: serverTimestamp(),
+      const deck = savedDecks.find((d) => d.id === deckId);
+      if (!deck) throw new Error("Deck not found");
+
+      await addDoc(collection(db, "sharedDecks"), {
+        fromUserId: user.uid,
+        fromUserName: userName || user.displayName || "Rune User",
+        fromUserEmail: user.email,
+        toUserEmail: targetEmail.toLowerCase().trim(),
+        deckId: deckId,
+        deckName: deck.name,
+        commanderNames: deck.commanderNames || [],
+        createdAt: serverTimestamp(),
       });
-      showMessage(`SIGNAL BEAMED TO ${targetEmail.toUpperCase()}`, "success");
+      
+      showMessage(`DECK VERZONDEN NAAR ${targetEmail.toUpperCase()}`, "success");
     } catch (e) {
       console.error(e);
-      showMessage("VOID INTERFERENCE: SHARE FAILED", "error");
+      showMessage("FOUT BIJ DELEN", "error");
     }
   };
 
@@ -2827,6 +2865,160 @@ Return ONLY JSON. No markdown backticks.`;
 
   return (
     <div className="h-screen rune-bg text-white flex overflow-hidden font-sans relative">
+      {/* Share Modal */}
+      <AnimatePresence>
+        {isShareModalOpen && deckToShare && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[1000] flex items-center justify-center p-4 backdrop-blur-xl bg-black/80"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-[#0f1214] border border-white/10 rounded-[3rem] p-8 md:p-12 w-full max-w-lg shadow-[0_30px_100px_rgba(0,0,0,0.8)] relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12">
+                <Share2 className="w-32 h-32 text-orange-500" />
+              </div>
+
+              <div className="flex items-center justify-between mb-10 relative z-10">
+                <div>
+                  <h3 className="text-2xl font-black uppercase tracking-widest text-white">Deck Delen</h3>
+                  <p className="text-[10px] font-mono text-white/30 uppercase tracking-[0.3em] font-bold mt-1">{deckToShare.name}</p>
+                </div>
+                <button
+                  onClick={() => setIsShareModalOpen(false)}
+                  className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-colors"
+                >
+                  <X className="w-5 h-5 text-white/40" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 relative z-10 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
+                {/* Social Share */}
+                <div className="grid grid-cols-4 gap-2 mb-4">
+                  {[
+                    { 
+                      name: "WhatsApp", 
+                      icon: MessageCircle, 
+                      color: "bg-[#25D366]",
+                      action: (d: SavedDeck) => {
+                        const text = `Check mijn Magic deck: ${d.name}! Bekijk hem hier: ${window.location.origin}?deck=${d.id}`;
+                        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
+                      }
+                    },
+                    { 
+                      name: "Email", 
+                      icon: Mail, 
+                      color: "bg-[#EA4335]",
+                      action: (d: SavedDeck) => {
+                        const subject = `Magic Deck: ${d.name}`;
+                        const body = `Hoi! Bekijk mijn nieuwe Magic deck: ${d.name}\n\nLink: ${window.location.origin}?deck=${d.id}`;
+                        window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+                      }
+                    },
+                    { 
+                      name: "Discord", 
+                      icon: Send, 
+                      color: "bg-[#5865F2]",
+                      action: (d: SavedDeck) => {
+                        const text = `Check mijn Magic deck: ${d.name}! ${window.location.origin}?deck=${d.id}`;
+                        navigator.clipboard.writeText(text);
+                        showMessage("LINK VOOR DISCORD GEKOPIEERD", "success");
+                      }
+                    },
+                    { 
+                      name: "Kopieer", 
+                      icon: Copy, 
+                      color: "bg-[#06B6D4]",
+                      action: (d: SavedDeck) => {
+                        const url = window.location.origin + "?deck=" + d.id;
+                        navigator.clipboard.writeText(url);
+                        showMessage("LINK_GEKOPIEERD", "success");
+                        document.title = d.name;
+                      }
+                    }
+                  ].map((opt) => (
+                    <button
+                      key={opt.name}
+                      onClick={() => opt.action(deckToShare)}
+                      className="flex flex-col items-center justify-center p-3 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-white/[0.05] transition-all group gap-2"
+                    >
+                      <div className={`w-10 h-10 rounded-xl ${opt.color} flex items-center justify-center shadow-lg group-hover:scale-110 group-hover:-rotate-3 transition-all`}>
+                          <opt.icon className="w-5 h-5 text-white" />
+                      </div>
+                      <span className="text-[7px] font-black uppercase tracking-widest text-white/40">{opt.name}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {/* Internal User Share */}
+                <div className="space-y-4 pt-4 border-t border-white/5">
+                  <div className="flex items-center gap-3 mb-2">
+                    <User className="w-4 h-4 text-purple-500" />
+                    <h4 className="text-[10px] font-magic font-black uppercase tracking-widest text-white/60">Deel met Rune Gebruikers</h4>
+                  </div>
+                  
+                  <div className="relative">
+                    <input 
+                      type="text"
+                      placeholder="Zoek op naam of email..."
+                      value={userSearch}
+                      onChange={(e) => searchUsers(e.target.value)}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white outline-none focus:border-purple-500/40 transition-all pl-10"
+                    />
+                    <Search className="w-4 h-4 text-white/20 absolute left-3 top-1/2 -translate-y-1/2" />
+                    {isSearchingUsers && (
+                      <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                        <div className="w-3 h-3 border-2 border-purple-500/20 border-t-purple-500 rounded-full animate-spin" />
+                      </div>
+                    )}
+                  </div>
+
+                  {foundUsers.length > 0 && (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {foundUsers.map(u => (
+                        <button
+                          key={u.id}
+                          onClick={async () => {
+                            try {
+                              setLoading(true);
+                              await shareDeck(deckToShare.id, u.email);
+                              showMessage(`GEDEELD MET ${u.displayName?.toUpperCase()}`, "success");
+                              setIsShareModalOpen(false);
+                            } catch (e) {
+                              showMessage("DELEN MISLUKT", "error");
+                            } finally {
+                              setLoading(false);
+                            }
+                          }}
+                          className="w-full flex items-center gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-xl hover:bg-purple-500/10 hover:border-purple-500/20 transition-all text-left group"
+                        >
+                          <div className="w-8 h-8 rounded-full bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-[10px] font-black text-purple-400">
+                             {u.displayName?.[0] || "?"}
+                          </div>
+                          <div>
+                            <p className="text-[11px] font-bold text-white/80">{u.displayName}</p>
+                            <p className="text-[9px] text-white/20">{u.email}</p>
+                          </div>
+                          <Send className="w-3 h-3 ml-auto text-white/10 group-hover:text-purple-400 group-hover:translate-x-1 transition-all" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {userSearch.length >= 3 && foundUsers.length === 0 && !isSearchingUsers && (
+                    <p className="text-[9px] text-center text-white/20 py-4 italic">Geen gebruikers gevonden...</p>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
       <div
         className="fixed inset-0 z-0 opacity-[0.04] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat bg-fixed object-cover"
         style={{ backgroundImage: `url(${runesBackground})` }}
@@ -3722,77 +3914,59 @@ Return ONLY JSON. No markdown backticks.`;
                 {/* Tactical Switches */}
                 <div className="grid grid-cols-1 gap-3">
                   <div
-                    onClick={() => saveUserSettings({ isPublic: !isPublic })}
-                    className={`flex items-center justify-between p-4 rounded-2xl cursor-pointer border transition-all ${isPublic ? "bg-cyan-500/5 border-cyan-500/30 shadow-[0_0_20px_rgba(6,182,212,0.1)]" : "bg-white/[0.02] border-white/5 hover:border-white/10"}`}
+                    onClick={() => saveUserSettings({ isProfileVisible: !isProfileVisible })}
+                    className={`flex items-center justify-between p-4 rounded-2xl cursor-pointer border transition-all ${isProfileVisible ? "bg-purple-500/5 border-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.1)]" : "bg-white/[0.02] border-white/5 hover:border-white/10"}`}
                   >
                     <div className="flex items-center gap-3">
-                      <Globe
-                        className={`w-4 h-4 ${isPublic ? "text-cyan-400" : "text-white/20"}`}
+                      <User
+                        className={`w-4 h-4 ${isProfileVisible ? "text-purple-400" : "text-white/20"}`}
                       />
                       <div className="flex flex-col">
                         <span
-                          className={`text-[10px] font-magic font-black uppercase tracking-widest ${isPublic ? "text-white" : "text-white/40"}`}
+                          className={`text-[10px] font-magic font-black uppercase tracking-widest ${isProfileVisible ? "text-white" : "text-white/40"}`}
                         >
-                          Public Searchable Profile
+                          Maak mijzelf zichtbaar
                         </span>
                         <span className="text-[7px] font-mono text-white/20 uppercase">
-                          Allow others to browse your collections
+                          Andere gebruikers kunnen naar je zoeken
                         </span>
                       </div>
                     </div>
                     <div
-                      className={`w-8 h-4 rounded-full relative transition-all ${isPublic ? "bg-cyan-500" : "bg-white/10"}`}
+                      className={`w-8 h-4 rounded-full relative transition-all ${isProfileVisible ? "bg-purple-500" : "bg-white/10"}`}
                     >
                       <div
-                        className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isPublic ? "left-4.5" : "left-0.5"}`}
+                        className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isProfileVisible ? "left-4.5" : "left-0.5"}`}
                       />
                     </div>
                   </div>
 
-                  {/* Playgroup.gg Integration Section */}
-                  <div className="p-4 bg-orange-500/[0.03] border border-orange-500/10 rounded-2xl space-y-4">
-                    <div className="flex items-center gap-2">
-                       <Radio className="w-3 h-3 text-orange-500" />
-                       <span className="text-[9px] font-magic font-black uppercase tracking-[0.2em] text-white/40">Playgroup.gg Data Sync</span>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-3">
-                       <div className="space-y-1">
-                          <span className="text-[7px] font-black text-white/20 uppercase ml-1">Player ID</span>
-                          <input 
-                            type="text" 
-                            value={playgroupPlayerId}
-                            onChange={(e) => setPlaygroupPlayerId(e.target.value)}
-                            onBlur={(e) => saveUserSettings({ playgroupPlayerId: e.target.value })}
-                            className="w-full bg-black/40 border border-white/5 rounded-lg px-3 py-2 text-[10px] text-white font-mono outline-none focus:border-orange-500/40 transition-all"
-                            placeholder="p_xxxx"
-                          />
-                       </div>
-                       <div className="space-y-1">
-                          <span className="text-[7px] font-black text-white/20 uppercase ml-1">Group ID</span>
-                          <input 
-                            type="text" 
-                            value={playgroupGroupId}
-                            onChange={(e) => setPlaygroupGroupId(e.target.value)}
-                            onBlur={(e) => saveUserSettings({ playgroupGroupId: e.target.value })}
-                            className="w-full bg-black/40 border border-white/5 rounded-lg px-3 py-2 text-[10px] text-white font-mono outline-none focus:border-cyan-500/40 transition-all"
-                            placeholder="g_xxxx"
-                          />
-                       </div>
-                    </div>
-
-                    {playgroupData && (
-                      <div className="flex items-center justify-between px-3 py-2 bg-white/5 rounded-xl border border-white/5 animate-in slide-in-from-top-2 duration-300">
-                         <div className="flex flex-col">
-                            <span className="text-[7px] font-black text-orange-400 uppercase tracking-widest">{playgroupData.playerName}</span>
-                            <span className="text-[7px] font-mono text-white/20 uppercase">{playgroupData.groupName}</span>
-                         </div>
-                         <div className="flex items-center gap-2">
-                            <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                            <span className="text-[7px] font-black text-emerald-500 uppercase">Synced</span>
-                         </div>
+                  <div
+                    onClick={() => saveUserSettings({ isDecksPublic: !isDecksPublic })}
+                    className={`flex items-center justify-between p-4 rounded-2xl cursor-pointer border transition-all ${isDecksPublic ? "bg-orange-500/5 border-orange-500/30 shadow-[0_0_20px_rgba(249,115,22,0.1)]" : "bg-white/[0.02] border-white/5 hover:border-white/10"}`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <Globe
+                        className={`w-4 h-4 ${isDecksPublic ? "text-orange-400" : "text-white/20"}`}
+                      />
+                      <div className="flex flex-col">
+                        <span
+                          className={`text-[10px] font-magic font-black uppercase tracking-widest ${isDecksPublic ? "text-white" : "text-white/40"}`}
+                        >
+                          Maak mijn decks zichtbaar
+                        </span>
+                        <span className="text-[7px] font-mono text-white/20 uppercase">
+                          Toon je collectie in de publieke feed
+                        </span>
                       </div>
-                    )}
+                    </div>
+                    <div
+                      className={`w-8 h-4 rounded-full relative transition-all ${isDecksPublic ? "bg-orange-500" : "bg-white/10"}`}
+                    >
+                      <div
+                        className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isDecksPublic ? "left-4.5" : "left-0.5"}`}
+                      />
+                    </div>
                   </div>
                 </div>
 
@@ -4301,24 +4475,6 @@ Return ONLY JSON. No markdown backticks.`;
                           </div>
                           {deck.totalCost ? (
                             <div className="flex flex-col items-end gap-1">
-                              <div className="flex gap-2">
-                                {(() => {
-                                  const pDeck = (playgroupData?.rankings || []).find((r: any) => {
-                                    // Robust matching for deck rankings - remove all non-alphanumeric and spaces
-                                    const rName = (r.deckName || r.name || "").toLowerCase().replace(/[^a-z0-9]/g, '');
-                                    const dName = (deck.name || "").toLowerCase().replace(/[^a-z0-9]/g, '');
-                                    return rName.length > 2 && (rName === dName || dName.includes(rName) || rName.includes(dName));
-                                  });
-                                  if (pDeck) {
-                                    return (
-                                      <div className="flex items-center bg-cyan-600/95 backdrop-blur-md px-3 py-1.5 rounded-full border border-cyan-400/50 shadow-[0_0_15px_rgba(6,182,212,0.4)] min-h-[30px] animate-in slide-in-from-right duration-500 group-hover:scale-105 transition-all z-10">
-                                        <span className="text-[8px] text-white/50 font-magic font-extrabold uppercase mr-1 tracking-widest leading-none">PG Rank</span>
-                                        <span className="text-[12px] text-white font-mono font-black">#{pDeck.rank}</span>
-                                      </div>
-                                    );
-                                  }
-                                  return null;
-                                })()}
                                 <div className="flex items-center bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-[#00aeef]/20 shadow-xl group-hover:border-[#00aeef]/40 transition-all min-h-[30px]">
                                   <span className="text-[8px] text-[#00aeef]/70 font-magic font-extrabold uppercase mr-2 tracking-widest leading-none">
                                     Price
@@ -4328,7 +4484,6 @@ Return ONLY JSON. No markdown backticks.`;
                                   </span>
                                 </div>
                               </div>
-                            </div>
                           ) : null}
                         </div>
 
@@ -4437,39 +4592,27 @@ Return ONLY JSON. No markdown backticks.`;
                         <div className="flex items-center pt-5 mt-auto border-t border-white/5 gap-3">
                           <button
                             onClick={() => viewDeckDetails(deck.id)}
-                            className="flex-[2] px-4 py-4 bg-cyan-500 shadow-[0_0_30px_rgba(6,182,212,0.4)] rounded-2xl text-black font-magic font-black text-[12px] uppercase tracking-[0.3em] hover:bg-cyan-400 hover:scale-[1.03] transition-all active:scale-95 flex items-center justify-center gap-3 group relative overflow-hidden"
+                            className="flex-[1.5] px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white/80 font-magic font-bold text-[10px] uppercase tracking-[0.2em] hover:bg-white/10 hover:border-white/20 transition-all active:scale-95 flex items-center justify-center gap-2 group"
                           >
-                            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
-                            <Eye className="w-5 h-5 pointer-events-none group-hover:animate-pulse" />
-                            <span>View Deck</span>
+                            <Eye className="w-4 h-4 text-white/30 group-hover:text-cyan-400 transition-colors" />
+                            <span>Details</span>
                           </button>
-                          <button
-                            onClick={async () => {
-                              if (!auth.currentUser) {
-                                showMessage("AUTHENTICATION REQUIRED", "error");
-                                return;
-                              }
-                              const shareTarget = prompt(
-                                "Enter User Email to share with:",
-                              );
-                              if (shareTarget) {
-                                setLoading(true);
-                                await shareDeck(deck.id, shareTarget);
-                                setLoading(false);
-                              }
-                            }}
-                            className="w-12 h-12 flex items-center justify-center bg-white/5 hover:bg-indigo-500/20 border border-white/5 hover:border-indigo-500/30 rounded-2xl text-white/40 hover:text-indigo-400 transition-all active:scale-90 group"
-                            title="Share Deck"
-                          >
-                            <Send className="w-4 h-4 group-hover:rotate-12 transition-transform" />
-                          </button>
-                          <button
-                            onClick={() => setDeckToDelete(deck.id)}
-                            className="w-12 h-12 flex items-center justify-center bg-white/5 hover:bg-red-500/20 border border-white/5 hover:border-red-500/30 rounded-2xl text-white/40 hover:text-red-400 transition-all active:scale-90 group"
-                            title="Delete Deck"
-                          >
-                            <Trash2 className="w-4 h-4 group-hover:scale-110 transition-transform" />
-                          </button>
+                          <div className="flex flex-1 gap-2">
+                             <button
+                               onClick={() => handleShareDeck(deck)}
+                               className="p-3 bg-orange-500/5 hover:bg-orange-500/10 border border-orange-500/10 rounded-xl transition-all flex items-center justify-center group flex-1"
+                               title="Deel Deck"
+                             >
+                               <Share2 className="w-4 h-4 text-orange-400/60 group-hover:text-orange-400 group-hover:scale-110 transition-all" />
+                             </button>
+                             <button
+                               onClick={() => setDeckToDelete(deck.id)}
+                               className="p-3 bg-red-500/5 hover:bg-red-500/10 border border-white/5 hover:border-red-500/20 rounded-xl transition-all group flex-1"
+                               title="Verwijder Deck"
+                             >
+                               <Trash2 className="w-4 h-4 text-white/10 group-hover:text-red-500/60 transition-colors" />
+                             </button>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -4514,6 +4657,8 @@ Return ONLY JSON. No markdown backticks.`;
                 setSearchQuery={setSearchQuery}
                 performSearch={performSearch}
                 setCurrentCI={setCurrentCI}
+                showMessage={showMessage}
+                loadLocalDeck={loadLocalDeck}
               />
             )}
           </div>
@@ -4522,6 +4667,85 @@ Return ONLY JSON. No markdown backticks.`;
 
       {/* Onboarding Tutorial Modal */}
       {/* DECK_VIEW_MODAL_COMPLETE_START */}
+      {/* Public Decks Selection Modal */}
+      <AnimatePresence>
+        {viewingPublicDecks.length > 0 && viewingPublicUser && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[1200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl"
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 30 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 30 }}
+              className="w-full max-w-2xl bg-[#0c0c0c] border border-cyan-500/20 rounded-[3rem] p-8 shadow-[0_0_80px_rgba(6,182,212,0.15)] flex flex-col relative"
+            >
+               <div className="absolute top-4 right-8">
+                  <button 
+                    onClick={() => {
+                      setViewingPublicDecks([]);
+                      setViewingPublicUser(null);
+                    }} 
+                    className="p-3 bg-white/5 border border-white/5 rounded-2xl text-white/20 hover:text-red-500 transition-all"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+               </div>
+
+               <div className="flex items-center gap-6 mb-10">
+                  <div className="w-16 h-16 rounded-full border border-cyan-500/30 overflow-hidden shadow-[0_0_20px_rgba(6,182,212,0.2)] bg-cyan-500/5 flex items-center justify-center">
+                     {viewingPublicUser.photoURL ? (
+                       <img src={viewingPublicUser.photoURL} className="w-full h-full object-cover" />
+                     ) : (
+                       <User className="w-8 h-8 text-cyan-500/30" />
+                     )}
+                  </div>
+                  <div>
+                    <h2 className="text-3xl font-magic font-black text-white uppercase tracking-tight">
+                       {viewingPublicUser.displayName || viewingPublicUser.userName}'s Decks
+                    </h2>
+                    <p className="text-[10px] font-mono text-cyan-500/50 uppercase tracking-[0.4em]">
+                       {viewingPublicDecks.length} Active Command Streams
+                    </p>
+                  </div>
+               </div>
+
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[50vh] overflow-y-auto no-scrollbar pr-2">
+                 {viewingPublicDecks.map((deck) => (
+                   <button
+                     key={deck.id}
+                     onClick={() => {
+                        loadLocalDeck(deck);
+                        setViewingPublicDecks([]);
+                     }}
+                     className="rune-panel p-6 bg-white/[0.02] border-white/5 hover:bg-cyan-500/5 hover:border-cyan-500/30 transition-all group text-left"
+                   >
+                     <div className="flex items-center justify-between mb-4">
+                        <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 shadow-lg">
+                           <Layers className="w-5 h-5 text-cyan-400 group-hover:rotate-12 transition-transform" />
+                        </div>
+                        <div className="flex gap-1">
+                           {deck.colors?.map((c: string) => (
+                             <div key={c} className={`w-3 h-3 rounded-full bg-mana-${c.toLowerCase()}`} />
+                           ))}
+                        </div>
+                     </div>
+                     <h3 className="text-sm font-magic font-black text-white uppercase tracking-widest group-hover:text-cyan-400 transition-colors line-clamp-1">
+                        {deck.deckName || "Untitled Archive"}
+                     </h3>
+                     <span className="text-[9px] font-mono text-white/30 uppercase tracking-[0.2em] line-clamp-1">
+                        {deck.commanderNames?.join(", ") || "No Commander"}
+                     </span>
+                   </button>
+                 ))}
+               </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <AnimatePresence>
         {isViewingDeck && viewingDeckCards && (
           <motion.div
@@ -5810,7 +6034,6 @@ Return ONLY JSON. No markdown backticks.`;
               setIsViewingDeck={setIsViewingDeck}
               showMessage={showMessage}
               viewDeckDetails={viewDeckDetails}
-              setIsPublic={setIsPublic}
               setShowAdminChamber={setShowAdminChamber}
             />
           </motion.div>
@@ -6648,7 +6871,6 @@ function AdminChamber({
   fetchArchidektDeck,
   setIsViewingDeck,
   viewDeckDetails,
-  setIsPublic,
   setShowAdminChamber,
 }: {
   isOpen: boolean;
@@ -6665,7 +6887,6 @@ function AdminChamber({
   fetchArchidektDeck: (id: string, autoSelect?: boolean) => void;
   setIsViewingDeck: (val: boolean) => void;
   viewDeckDetails: (id: string, source?: string) => Promise<void>;
-  setIsPublic: (val: boolean) => void;
   setShowAdminChamber: (val: boolean) => void;
 }) {
   const [users, setUsers] = useState<any[]>([]);
@@ -6885,13 +7106,12 @@ function AdminChamber({
                       </div>
                       <div className="flex flex-col">
                         <div className="flex items-center gap-3">
-                           <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{selectedUser.userName || selectedUser.displayName}</h2>
-                           {selectedUser.isPublic && <div className="px-3 py-1 bg-cyan-500/10 border border-cyan-500/20 rounded-full text-[10px] font-black text-cyan-400 uppercase tracking-widest shadow-inner">Public_Key_Active</div>}
+                           <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{selectedUser.userName || selectedUser.displayName || "Rune Gebruiker"}</h2>
+                           {selectedUser.isDecksPublic && <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/20 rounded-full text-[10px] font-black text-purple-400 uppercase tracking-widest shadow-inner">Collectie Openbaar</div>}
                         </div>
                         <p className="text-sm font-mono text-white/30 mt-1">{selectedUser.email}</p>
                         <div className="flex gap-4 mt-6">
                            <button onClick={() => {
-                             setIsPublic(true);
                              setViewMode("socials");
                              setShowAdminChamber(false);
                              showMessage(`VIEWING_MODE: ${selectedUser.userName}`, "success");
@@ -8146,20 +8366,20 @@ function OutlawSheriff() {
                     <Zap className="w-6 h-6 md:w-10 md:h-10 text-orange-500 -rotate-45 group-hover:-rotate-90 transition-transform duration-1000" />
                   </div>
                   <div>
-                    <h2 className="text-xl md:text-4xl font-magic font-black text-white uppercase tracking-widest">De Protocolen</h2>
-                    <p className="text-[9px] md:text-[11px] font-mono text-white/30 uppercase tracking-[0.2em] md:tracking-[0.4em] mt-1 md:mt-3">Initialisatie_Versie_2.6</p>
+                    <h2 className="text-xl md:text-4xl font-magic font-black text-white uppercase tracking-widest">Speluitleg</h2>
+                    <p className="text-[9px] md:text-[11px] font-mono text-white/30 uppercase tracking-[0.2em] md:tracking-[0.4em] mt-1 md:mt-3">Regels_en_Rollen_Overzicht</p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
                   <div className="space-y-4 md:space-y-8 text-white/60 text-xs md:text-[14px] leading-relaxed font-sans">
                     <p className="italic">
-                      In Sheriff (BANG!) krijgt elke speler aan het begin een geheime rol. Deze bepalen je doel en bondgenoten.
+                      Sheriff is een spel waarbij je niet weet welke rol de andere spelers hebben. Elke speler krijgt een geheim doel en moet samenwerken of anderen misleiden om te winnen.
                     </p>
                     <div className="bg-orange-500/10 border-l-2 md:border-l-4 border-orange-500 p-4 md:p-8 rounded-r-xl md:rounded-r-[2rem] space-y-2 md:space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
-                       <h4 className="text-orange-500 font-magic font-black uppercase text-[9px] md:text-[11px] tracking-widest">De Wet van de Sheriff</h4>
+                       <h4 className="text-orange-500 font-magic font-black uppercase text-[9px] md:text-[11px] tracking-widest">De Rol van de Sheriff</h4>
                        <p className="text-white/80 leading-relaxed text-[11px] md:text-[13px]">
-                         De Sheriff maakt zich direct <span className="text-white font-bold underline decoration-orange-500/40">bekend</span>. Krijgt <span className="text-orange-500 font-black">50% extra LIFE</span> en opent de game.
+                         De Sheriff is de enige speler die <span className="text-white font-bold underline decoration-orange-500/40">bekend is</span> bij iedereen. Omdat iedereen hem wil uitschakelen, begint de Sheriff met <span className="text-orange-500 font-black">50% extra levens</span>.
                        </p>
                     </div>
                   </div>
@@ -8201,32 +8421,32 @@ function OutlawSheriff() {
                     c: "text-orange-500", 
                     bg: "bg-orange-500/10",
                     border: "border-orange-500/20",
-                    t: "De Orde",
-                    d: "Elimineer Outlaws en Renegade. Identiteit bekend."
+                    t: "De Wet",
+                    d: "Schakel alle Boeven en de Verrader uit. Iedereen weet dat jij de Sheriff bent. Je hebt extra levens om langer te overleven."
                   },
                   { 
                     n: "Deputy", 
                     c: "text-blue-400", 
                     bg: "bg-blue-400/10",
                     border: "border-blue-400/20",
-                    t: "De Beschermer",
-                    d: "Help de Sheriff. Je wint als de Sheriff wint."
+                    t: "De Wet",
+                    d: "Bescherm de Sheriff tegen aanvallen. Je wint als de Sheriff wint. Houd je eigen rol wel geheim voor anderen."
                   },
                   { 
                     n: "Outlaw", 
                     c: "text-red-500", 
                     bg: "bg-red-500/10",
                     border: "border-red-500/20",
-                    t: "De Chaos",
-                    d: "Dood de Sheriff. Zodra hij sterft, win jij."
+                    t: "De Boeven",
+                    d: "Jouw doel is simpel: schakel de Sheriff uit. Zodra de Sheriff dood is, winnen alle Outlaws meteen."
                   },
                   { 
                     n: "Renegade", 
                     c: "text-cyan-400", 
                     bg: "bg-cyan-400/10",
                     border: "border-cyan-400/20",
-                    t: "De Opportunist",
-                    d: "Wees de laatste man. Dood Sheriff als laatste."
+                    t: "De Verrader",
+                    d: "Je speelt voor jezelf. Je wint als je als laatste overblijft, maar pas op: de Sheriff moet als allerlaatste doodgaan."
                   }
                 ].map((r, i) => (
                   <motion.div 
@@ -8261,10 +8481,10 @@ function OutlawSheriff() {
                    <div className="space-y-2 md:space-y-3 group/win">
                      <p className="text-[9px] md:text-[11px] font-magic font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
                        <span className="w-1.5 h-1.5 bg-orange-500 rounded-full" />
-                       Sheriff & Deputies
+                       Sheriff en Helpers
                      </p>
                      <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
-                       Winnen als alle <span className="text-white font-bold">Outlaws</span> en de <span className="text-white font-bold">Renegade</span> weg zijn.
+                       Je wint als alle <span className="text-white font-bold tracking-widest">OUTLAWS</span> en de <span className="text-white font-bold tracking-widest">RENEGADE</span> zijn uitgeschakeld.
                      </p>
                    </div>
                    <div className="space-y-2 md:space-y-3 group/win">
@@ -8273,7 +8493,7 @@ function OutlawSheriff() {
                         Outlaws
                      </p>
                      <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
-                       Winnen direct zodra de <span className="text-white font-bold">Sheriff sterft</span>.
+                       Je wint zodra de <span className="text-white font-bold tracking-widest">SHERIFF</span> dood is (tenzij de Renegade wint).
                      </p>
                    </div>
                    <div className="space-y-2 md:space-y-3 group/win border-t border-white/5 pt-6 md:pt-8">
@@ -8282,7 +8502,7 @@ function OutlawSheriff() {
                         Renegade
                      </p>
                      <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
-                       Wint als hij de <span className="text-white font-black">allerlaatste</span> is die de Sheriff doodt.
+                       Je wint als jij de <span className="text-white font-black tracking-widest">LAATSTE OVERLEVENDE</span> bent nadat de Sheriff is gedood.
                      </p>
                    </div>
                  </div>
@@ -8296,10 +8516,10 @@ function OutlawSheriff() {
                  </h3>
                  <div className="space-y-3 md:space-y-4">
                    {[
-                     { label: "Elimineer Outlaws", actor: "Wet", desc: "Prioriteit #1" },
-                     { label: "Focus de Wet", actor: "Outlaws", desc: "Snelste winst" },
-                     { label: "Balans", actor: "Renegade", desc: "Help de zwakken" },
-                     { label: "Finale Duel", actor: "Renegade", desc: "Dood Sheriff laatst" }
+                     { label: "Pak de boeven", actor: "Sheriff & Deputy", desc: "Prioriteit: schakel de Outlaws uit." },
+                     { label: "Focus de Sheriff", actor: "Outlaws", desc: "Snelste weg naar de overwinning." },
+                     { label: "Houd de balans", actor: "Renegade", desc: "Zorg dat geen partij te sterk wordt." },
+                     { label: "Het laatste duel", actor: "Renegade", desc: "Dood de Sheriff als allerlaatste." }
                    ].map((item, i) => (
                      <div key={i} className="group/item relative p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-white/[0.04] transition-all">
                        <div className="flex justify-between items-start mb-1 md:mb-2">
@@ -8391,6 +8611,8 @@ function SocialsPage({
   setSearchQuery,
   performSearch,
   setCurrentCI,
+  showMessage,
+  loadLocalDeck,
 }: {
   setViewMode: (m: any) => void;
   user: any;
@@ -8409,6 +8631,8 @@ function SocialsPage({
   setSearchQuery: (q: string) => void;
   performSearch: (options: any) => Promise<void>;
   setCurrentCI: (ci: string) => void;
+  showMessage: (text: string, type?: "info" | "error" | "success") => void;
+  loadLocalDeck: (deck: any) => void;
 }) {
   const isAdmin = user?.email?.toLowerCase() === "sdebeer@gmail.com";
   const [activeTab, setActiveTab] = useState<
@@ -8416,6 +8640,7 @@ function SocialsPage({
   >("community");
   const [publicUsers, setPublicUsers] = useState<any[]>([]);
   const [sharedMessages, setSharedMessages] = useState<any[]>([]);
+  const [sharedDecksList, setSharedDecksList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -8424,7 +8649,7 @@ function SocialsPage({
       setLoading(true);
       try {
         const usersSnap = await getDocs(
-          query(collection(db, "users"), where("isPublic", "==", true)),
+          query(collection(db, "users"), where("isProfileVisible", "==", true)),
         );
         const users: any[] = [];
         usersSnap.forEach((d) => {
@@ -8443,6 +8668,18 @@ function SocialsPage({
           const shared: any[] = [];
           sharedSnap.forEach((d) => shared.push({ id: d.id, ...d.data() }));
           setSharedMessages(shared);
+
+          const sharedDecksSnap = await getDocs(
+            query(
+              collection(db, "sharedDecks"),
+              where("toUserEmail", "==", user.email.toLowerCase().trim()),
+            ),
+          );
+          const sDecks: any[] = [];
+          sharedDecksSnap.forEach((d) =>
+            sDecks.push({ id: d.id, ...d.data() }),
+          );
+          setSharedDecksList(sDecks);
         }
       } catch (e) {
         console.error(e);
@@ -8534,13 +8771,13 @@ function SocialsPage({
 
           <div className="flex bg-white/[0.03] p-1.5 rounded-[2rem] border border-white/5 backdrop-blur-3xl shadow-2xl">
             {[
-              { id: "community", label: "community" },
-              { id: "shared", label: "shared" },
+              { id: "community", label: "Community" },
+              { id: "shared", label: "Ontvangen" },
             ].map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`px-8 py-3 rounded-[1.5rem] text-[10px] font-magic font-black uppercase tracking-widest transition-all ${activeTab === tab.id ? "bg-orange-500 text-black shadow-[0_0_30px_rgba(249,115,22,0.3)]" : "text-white/30 hover:text-white/60"}`}
+                className={`px-8 py-3 rounded-[1.5rem] text-[10px] font-magic font-black uppercase tracking-widest transition-all ${activeTab === tab.id ? "bg-purple-500 text-black shadow-[0_0_30px_rgba(168,85,247,0.3)]" : "text-white/30 hover:text-white/60"}`}
               >
                 {tab.label}
               </button>
@@ -8561,9 +8798,9 @@ function SocialsPage({
                   {/* Active Users Section */}
                   <div className="space-y-6">
                     <div className="flex items-center gap-4 px-4">
-                      <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(249,115,22,1)]" />
+                      <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(168,85,247,1)]" />
                       <h3 className="text-[10px] font-magic font-black text-white/50 uppercase tracking-[0.3em]">
-                        Active Signal Streams
+                        Actieve Signaalstromen
                       </h3>
                     </div>
                     {loading ? (
@@ -8573,7 +8810,7 @@ function SocialsPage({
                     ) : publicUsers.length === 0 ? (
                       <div className="py-20 text-center rune-panel">
                         <p className="text-white/20 font-magic font-black uppercase tracking-widest">
-                          No public users found.
+                          Geen openbare gebruikers gevonden.
                         </p>
                       </div>
                     ) : (
@@ -8584,6 +8821,10 @@ function SocialsPage({
                             user={u}
                             onClick={async () => {
                               setIsMobileMenuOpen?.(false);
+                              if (!u.isDecksPublic) {
+                                showMessage("Deze gebruiker deelt geen actieve decks.", "info");
+                                return;
+                              }
                               const decksSnap = await getDocs(
                                 collection(db, "users", u.id, "decks"),
                               );
@@ -8593,7 +8834,10 @@ function SocialsPage({
                               );
                               setViewingPublicDecks(decks);
                               setViewingPublicUser(u);
-                              setIsViewingDeck(true);
+                              if (decks.length === 1) {
+                                loadLocalDeck(decks[0]);
+                                setViewingPublicDecks([]);
+                              }
                             }}
                           />
                         ))}
@@ -8606,7 +8850,7 @@ function SocialsPage({
                     <div className="flex items-center gap-3 px-2">
                       <Sparkles className="w-4 h-4 text-cyan-400" />
                       <h3 className="text-xs font-magic font-black text-white/80 uppercase tracking-[0.2em]">
-                        Creators
+                        Aanbevolen Makers
                       </h3>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -8625,20 +8869,88 @@ function SocialsPage({
                   exit={{ opacity: 0, y: -20 }}
                   className="space-y-4"
                 >
-                  {sharedMessages.length === 0 ? (
-                    <div className="py-20 text-center rune-panel bg-white/[0.02]">
+                  {sharedMessages.length === 0 && sharedDecksList.length === 0 ? (
+                    <div className="py-20 text-center rune-panel bg-white/[0.02] rounded-[3rem]">
                       <Mail className="w-12 h-12 text-white/5 mx-auto mb-4" />
                       <p className="text-white/20 font-magic font-black uppercase tracking-widest">
-                        You have no shared cards.
+                        Je hebt nog geen gedeelde transmissions...
                       </p>
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      {sharedMessages.map((msg) => (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      {/* Shared Decks */}
+                      {sharedDecksList.map((sd: any) => (
                         <div
-                          key={msg.id}
-                          className="rune-panel p-6 bg-white/[0.03] hover:bg-white/[0.05] transition-all group"
+                          key={sd.id}
+                          className="bg-white/[0.03] border border-white/5 p-6 rounded-[2.5rem] hover:border-purple-500/30 transition-all group flex flex-col justify-between"
                         >
+                          <div>
+                            <div className="flex items-center justify-between mb-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
+                                  <Share2 className="w-4 h-4 text-purple-400 group-hover:rotate-12 transition-transform" />
+                                </div>
+                                <div className="flex flex-col">
+                                  <span className="text-[9px] font-magic font-black text-purple-400 uppercase tracking-widest">
+                                    Gedeeld Deck
+                                  </span>
+                                  <h4 className="text-[14px] font-magic font-black text-white group-hover:text-purple-300 transition-colors uppercase truncate max-w-[150px]">
+                                    {sd.deckName}
+                                  </h4>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                 <p className="text-[9px] font-sans font-bold text-white/40 max-w-[100px] truncate">{sd.fromUserName || sd.fromUserEmail}</p>
+                                 <p className="text-[7px] font-mono text-white/10">{sd.createdAt?.toDate?.()?.toLocaleDateString()}</p>
+                              </div>
+                            </div>
+                            
+                            {sd.commanderNames?.length > 0 && (
+                              <div className="flex flex-wrap gap-2 mb-6">
+                                 {sd.commanderNames.map((name: string) => (
+                                   <span key={name} className="px-2 py-0.5 bg-purple-500/5 border border-purple-500/10 rounded text-[8px] text-purple-300 font-bold uppercase truncate max-w-full">
+                                      {name}
+                                   </span>
+                                 ))}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex gap-2">
+                             <button
+                               onClick={() => {
+                                 setViewingPublicDecks([]);
+                                 setViewingPublicUser({ id: sd.fromUserId, email: sd.fromUserEmail });
+                                 if (sd.cards) {
+                                   loadLocalDeck(sd);
+                                 } else {
+                                   viewDeckDetails(sd.deckId);
+                                 }
+                               }}
+                               className="flex-1 py-2.5 bg-purple-500 text-black rounded-xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-purple-400 shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
+                             >
+                               <Eye className="w-3 h-3" />
+                               <span>Bekijken</span>
+                             </button>
+                             <button
+                               onClick={async () => {
+                                 await deleteDoc(doc(db, "sharedDecks", sd.id));
+                                 setSharedDecksList(prev => prev.filter(p => p.id !== sd.id));
+                               }}
+                               className="p-2.5 bg-white/5 border border-white/5 rounded-xl text-white/20 hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/20 transition-all"
+                             >
+                                <Trash2 className="w-3.5 h-3.5" />
+                             </button>
+                          </div>
+                        </div>
+                      ))}
+
+                      {/* Shared Card Selections */}
+                      {sharedMessages.map((msg) => (
+                         <div
+                           key={msg.id}
+                           className="rune-panel p-6 bg-white/[0.03] hover:bg-white/[0.05] transition-all group rounded-[2.5rem]"
+                         >
                           <div className="flex items-center justify-between mb-4">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
@@ -9007,10 +9319,10 @@ function PublicUserCard({ user, onClick }: any) {
   return (
     <div
       onClick={onClick}
-      className="rune-panel p-6 bg-[#0c0c0c] hover:bg-orange-500/5 border-white/5 hover:border-orange-500/30 transition-all duration-500 cursor-pointer group relative flex items-center justify-between"
+      className="rune-panel p-6 bg-[#0c0c0c] hover:bg-cyan-500/5 border-white/5 hover:border-cyan-500/30 transition-all duration-500 cursor-pointer group relative flex items-center justify-between"
     >
       <div className="flex items-center gap-4">
-        <div className="w-12 h-12 rounded-full border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden group-hover:border-orange-500/50 transition-colors shadow-lg">
+        <div className="w-12 h-12 rounded-full border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden group-hover:border-cyan-500/50 transition-colors shadow-lg">
           {user.photoURL ? (
             <img
               src={user.photoURL}
@@ -9022,7 +9334,7 @@ function PublicUserCard({ user, onClick }: any) {
           )}
         </div>
         <div>
-          <h3 className="text-sm font-magic font-black text-white uppercase tracking-widest group-hover:text-orange-400 transition-colors line-clamp-1">
+          <h3 className="text-sm font-magic font-black text-white uppercase tracking-widest group-hover:text-cyan-400 transition-colors line-clamp-1">
             {user.displayName || user.userName || "Elder User"}
           </h3>
           <span className="text-[9px] font-mono text-white/30 uppercase tracking-[0.2em]">
@@ -9031,9 +9343,9 @@ function PublicUserCard({ user, onClick }: any) {
         </div>
       </div>
       <div className="flex flex-col items-end gap-1">
-        <Layers className="w-4 h-4 text-white/10 group-hover:text-orange-500 animate-pulse" />
-        <span className="text-[8px] font-magic font-black text-white/20 uppercase tracking-widest">
-          Browse
+        <Layers className={`w-4 h-4 ${user.isDecksPublic ? "text-cyan-500 animate-pulse" : "text-white/5"}`} />
+        <span className={`text-[8px] font-magic font-black uppercase tracking-widest ${user.isDecksPublic ? "text-white/40" : "text-white/10"}`}>
+          {user.isDecksPublic ? "Browse" : "Private"}
         </span>
       </div>
     </div>
@@ -9057,7 +9369,7 @@ function ShareSelectionOverlay({
         setFetchingUsers(true);
         try {
           const snap = await getDocs(
-            query(collection(db, "users"), where("isPublic", "==", true)),
+            query(collection(db, "users"), where("isProfileVisible", "==", true)),
           );
           const users: any[] = [];
           snap.forEach((d) => users.push({ id: d.id, ...d.data() }));
