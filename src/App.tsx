@@ -8083,7 +8083,7 @@ function OutlawSheriff() {
   };
 
   return (
-    <div className="h-full bg-[#020608] overflow-y-auto no-scrollbar relative p-6 sm:p-12 md:p-20 selection:bg-orange-500/30 font-sans">
+    <div className="h-full bg-[#020608] overflow-y-auto no-scrollbar relative p-4 sm:p-8 md:p-20 selection:bg-orange-500/30 font-sans">
       {/* Background Ambience */}
       <div className="fixed inset-0 pointer-events-none">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.12)_0%,transparent_50%)]" />
@@ -8111,77 +8111,75 @@ function OutlawSheriff() {
         className="max-w-7xl mx-auto relative z-10 space-y-24"
       >
         {/* Hero Header */}
-        <div className="text-center space-y-10">
+        <div className="text-center space-y-6 md:space-y-10 mt-4 md:mt-0">
           <div className="inline-block relative">
             <motion.div variants={itemVariants} className="relative">
-              <h1 className="text-7xl md:text-[12rem] font-magic font-black text-white uppercase tracking-[0.25em] leading-none drop-shadow-[0_0_60px_rgba(255,255,255,0.08)]">
+              <h1 className="text-5xl sm:text-7xl md:text-[12rem] font-magic font-black text-white uppercase tracking-[0.25em] leading-none drop-shadow-[0_0_60px_rgba(255,255,255,0.08)]">
                 SHERIFF
               </h1>
-              <div className="absolute -inset-x-20 top-1/2 -translate-y-1/2 h-[1px] bg-gradient-to-r from-transparent via-orange-500/40 to-transparent" />
-              <div className="absolute left-1/2 -bottom-8 -translate-x-1/2 flex gap-6 items-center whitespace-nowrap bg-black/40 backdrop-blur-3xl px-8 py-2 rounded-full border border-orange-500/20">
-                <Shield className="w-5 h-5 text-orange-500" />
-                <span className="text-orange-500 font-magic text-[10px] tracking-[0.8em] uppercase font-black">Multiplayer Variant</span>
-                <Shield className="w-5 h-5 text-orange-500" />
+              <div className="absolute -inset-x-10 md:-inset-x-20 top-1/2 -translate-y-1/2 h-[1px] bg-gradient-to-r from-transparent via-orange-500/40 to-transparent" />
+              <div className="absolute left-1/2 -bottom-6 md:-bottom-8 -translate-x-1/2 flex gap-3 md:gap-6 items-center whitespace-nowrap bg-black/40 backdrop-blur-3xl px-4 md:px-8 py-1.5 md:py-2 rounded-full border border-orange-500/20">
+                <Shield className="w-3.5 h-3.5 md:w-5 h-5 text-orange-500" />
+                <span className="text-orange-500 font-magic text-[8px] md:text-[10px] tracking-[0.4em] md:tracking-[0.8em] uppercase font-black">Multiplayer Variant</span>
+                <Shield className="w-3.5 h-3.5 md:w-5 h-5 text-orange-500" />
               </div>
             </motion.div>
           </div>
-          <motion.p variants={itemVariants} className="text-xs md:text-sm font-mono text-cyan-400/50 tracking-[0.6em] uppercase max-w-3xl mx-auto pt-10">
+          <motion.p variants={itemVariants} className="text-[10px] md:text-sm font-mono text-cyan-400/50 tracking-[0.3em] md:tracking-[0.6em] uppercase max-w-3xl mx-auto pt-4 md:pt-10 px-4">
             Een tactisch spel van deductie, verraad en overleving
           </motion.p>
         </div>
 
         {/* Info Grid */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-12">
           {/* Main Column: Rules & Setup */}
-          <div className="lg:col-span-8 space-y-12">
+          <div className="lg:col-span-8 space-y-6 md:space-y-12">
             {/* Spelopzet Panel */}
-            <motion.div variants={itemVariants} className="rune-panel bg-black/40 border border-white/10 rounded-[3rem] p-10 md:p-14 overflow-hidden relative group">
-              <div className="absolute top-0 right-0 p-12 opacity-[0.03] rotate-12 group-hover:opacity-[0.08] transition-opacity duration-1000">
-                <Users className="w-72 h-72 text-white" />
+            <motion.div variants={itemVariants} className="rune-panel bg-black/40 border border-white/10 rounded-2xl md:rounded-[3rem] p-6 md:p-14 overflow-hidden relative group">
+              <div className="absolute top-0 right-0 p-6 md:p-12 opacity-[0.02] md:opacity-[0.03] rotate-12 group-hover:opacity-[0.08] transition-opacity duration-1000">
+                <Users className="w-48 md:w-72 h-48 md:h-72 text-white" />
               </div>
               
-              <div className="space-y-12 relative z-10">
-                <div className="flex items-center gap-8 border-b border-white/5 pb-10">
-                  <div className="w-20 h-20 bg-white/[0.03] border border-white/10 rounded-3xl flex items-center justify-center rotate-45 group-hover:rotate-90 transition-transform duration-1000">
-                    <Zap className="w-10 h-10 text-orange-500 -rotate-45 group-hover:-rotate-90 transition-transform duration-1000" />
+              <div className="space-y-8 md:space-y-12 relative z-10">
+                <div className="flex items-center gap-4 md:gap-8 border-b border-white/5 pb-6 md:pb-10">
+                  <div className="w-12 h-12 md:w-20 md:h-20 bg-white/[0.03] border border-white/10 rounded-xl md:rounded-3xl flex items-center justify-center rotate-45 group-hover:rotate-90 transition-transform duration-1000">
+                    <Zap className="w-6 h-6 md:w-10 md:h-10 text-orange-500 -rotate-45 group-hover:-rotate-90 transition-transform duration-1000" />
                   </div>
                   <div>
-                    <h2 className="text-4xl font-magic font-black text-white uppercase tracking-widest">De Protocolen</h2>
-                    <p className="text-[11px] font-mono text-white/30 uppercase tracking-[0.4em] mt-3">Initialisatie_Versie_2.6</p>
+                    <h2 className="text-xl md:text-4xl font-magic font-black text-white uppercase tracking-widest">De Protocolen</h2>
+                    <p className="text-[9px] md:text-[11px] font-mono text-white/30 uppercase tracking-[0.2em] md:tracking-[0.4em] mt-1 md:mt-3">Initialisatie_Versie_2.6</p>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                  <div className="space-y-8 text-white/60 text-[14px] leading-relaxed font-sans">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 md:gap-12">
+                  <div className="space-y-4 md:space-y-8 text-white/60 text-xs md:text-[14px] leading-relaxed font-sans">
                     <p className="italic">
-                      In Sheriff (gebaseerd op BANG!) krijgt elke speler aan het begin van de game een geheime rol. Deze rollen bepalen je doel en wie je bondgenoten zijn—vaak zonder dat je weet wie zij zijn.
+                      In Sheriff (BANG!) krijgt elke speler aan het begin een geheime rol. Deze bepalen je doel en bondgenoten.
                     </p>
-                    <div className="bg-orange-500/10 border-l-4 border-orange-500 p-8 rounded-r-[2rem] space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
-                       <h4 className="text-orange-500 font-magic font-black uppercase text-[11px] tracking-widest">De Wet van de Sheriff</h4>
-                       <p className="text-white/80 leading-relaxed">
-                         De Sheriff is de enige speler die zijn rol direct <span className="text-white font-bold underline decoration-orange-500/40">bekend maakt</span>. Hij krijgt <span className="text-orange-500 font-black">50% extra LIFE</span> (bijv. 60 in plaats van 40) en mag de game openen.
+                    <div className="bg-orange-500/10 border-l-2 md:border-l-4 border-orange-500 p-4 md:p-8 rounded-r-xl md:rounded-r-[2rem] space-y-2 md:space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+                       <h4 className="text-orange-500 font-magic font-black uppercase text-[9px] md:text-[11px] tracking-widest">De Wet van de Sheriff</h4>
+                       <p className="text-white/80 leading-relaxed text-[11px] md:text-[13px]">
+                         De Sheriff maakt zich direct <span className="text-white font-bold underline decoration-orange-500/40">bekend</span>. Krijgt <span className="text-orange-500 font-black">50% extra LIFE</span> en opent de game.
                        </p>
                     </div>
                   </div>
 
-                  <div className="space-y-6">
-                    <div className="p-8 bg-white/[0.02] rounded-[2.5rem] border border-white/5 space-y-4 hover:border-orange-500/20 transition-colors group/stats">
-                      <p className="text-[10px] font-mono text-white/20 uppercase tracking-widest group-hover/stats:text-orange-500/60 transition-colors">Verdeling 5 Spelers</p>
+                  <div className="space-y-4 md:space-y-6">
+                    <div className="p-4 md:p-8 bg-white/[0.02] rounded-xl md:rounded-[2.5rem] border border-white/5 space-y-2 md:space-y-4 hover:border-orange-500/20 transition-colors group/stats">
+                      <p className="text-[8px] md:text-[10px] font-mono text-white/20 uppercase tracking-widest group-hover/stats:text-orange-500/60 transition-colors">Verdeling 5 Spelers</p>
                       <div className="flex justify-between items-center">
-                        <div className="text-3xl font-magic font-black text-white tracking-[0.2em]">1S, 1D, 2O, 1R</div>
-                        <div className="w-8 h-[1px] bg-white/10" />
+                        <div className="text-lg md:text-3xl font-magic font-black text-white tracking-[0.2em]">1S, 1D, 2O, 1R</div>
                       </div>
                     </div>
-                    <div className="p-8 bg-white/[0.02] rounded-[2.5rem] border border-white/5 space-y-4 hover:border-cyan-500/20 transition-colors group/stats">
-                      <p className="text-[10px] font-mono text-white/20 uppercase tracking-widest group-hover/stats:text-cyan-500/60 transition-colors">Verdeling 6 Spelers</p>
+                    <div className="p-4 md:p-8 bg-white/[0.02] rounded-xl md:rounded-[2.5rem] border border-white/5 space-y-2 md:space-y-4 hover:border-cyan-500/20 transition-colors group/stats">
+                      <p className="text-[8px] md:text-[10px] font-mono text-white/20 uppercase tracking-widest group-hover/stats:text-cyan-500/60 transition-colors">Verdeling 6 Spelers</p>
                       <div className="flex justify-between items-center">
-                        <div className="text-3xl font-magic font-black text-white tracking-[0.2em]">1S, 2D, 2O, 1R</div>
-                        <div className="w-8 h-[1px] bg-white/10" />
+                        <div className="text-lg md:text-3xl font-magic font-black text-white tracking-[0.2em]">1S, 2D, 2O, 1R</div>
                       </div>
                     </div>
-                    <div className="p-5 bg-gradient-to-r from-cyan-500/10 to-transparent rounded-2xl border-l border-cyan-500/30 flex items-center gap-4">
-                      <Compass className="w-5 h-5 text-cyan-400" />
-                      <p className="text-[10px] font-magic font-bold text-cyan-400 uppercase tracking-widest">Aanbevolen voor Commander</p>
+                    <div className="p-3 md:p-5 bg-gradient-to-r from-cyan-500/10 to-transparent rounded-xl md:rounded-2xl border-l border-cyan-500/30 flex items-center gap-3 md:gap-4">
+                      <Compass className="w-4 h-4 md:w-5 h-5 text-cyan-400" />
+                      <p className="text-[8px] md:text-[10px] font-magic font-bold text-cyan-400 uppercase tracking-widest">Protocol Commander</p>
                     </div>
                   </div>
                 </div>
@@ -8189,14 +8187,14 @@ function OutlawSheriff() {
             </motion.div>
 
             {/* Roles Section */}
-            <div className="space-y-8">
-              <div className="flex items-center gap-4 px-6">
+            <div className="space-y-6 md:space-y-8">
+              <div className="flex items-center gap-3 md:gap-4 px-2 md:px-6">
                 <div className="h-[1px] flex-1 bg-white/5" />
-                <h3 className="text-xs font-magic font-black text-white/40 uppercase tracking-[0.5em]">De Geheime Rollen</h3>
+                <h3 className="text-[10px] font-magic font-black text-white/40 uppercase tracking-[0.3em] md:tracking-[0.5em]">De Geheime Rollen</h3>
                 <div className="h-[1px] flex-1 bg-white/5" />
               </div>
               
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="grid grid-cols-2 md:grid-cols-2 gap-3 md:gap-8">
                 {[
                   { 
                     n: "Sheriff", 
@@ -8204,7 +8202,7 @@ function OutlawSheriff() {
                     bg: "bg-orange-500/10",
                     border: "border-orange-500/20",
                     t: "De Orde",
-                    d: "Elimineer alle Outlaws en de Renegade. Je begint als enige met kaarten op tafel (bekende identiteit) en extra levens."
+                    d: "Elimineer Outlaws en Renegade. Identiteit bekend."
                   },
                   { 
                     n: "Deputy", 
@@ -8212,7 +8210,7 @@ function OutlawSheriff() {
                     bg: "bg-blue-400/10",
                     border: "border-blue-400/20",
                     t: "De Beschermer",
-                    d: "Help de Sheriff. Je wint als de Sheriff wint. Je moet vaak de Sheriff overtuigen van je loyaliteit zonder jezelf te verklappen aan de andere vijanden."
+                    d: "Help de Sheriff. Je wint als de Sheriff wint."
                   },
                   { 
                     n: "Outlaw", 
@@ -8220,7 +8218,7 @@ function OutlawSheriff() {
                     bg: "bg-red-500/10",
                     border: "border-red-500/20",
                     t: "De Chaos",
-                    d: "Dood de Sheriff. Zodra de Sheriff sterft, win jij (tenzij de Renegade de laatste is die leeft). Je focus ligt puur op geweld tegen de wet."
+                    d: "Dood de Sheriff. Zodra hij sterft, win jij."
                   },
                   { 
                     n: "Renegade", 
@@ -8228,20 +8226,20 @@ function OutlawSheriff() {
                     bg: "bg-cyan-400/10",
                     border: "border-cyan-400/20",
                     t: "De Opportunist",
-                    d: "Jouw doel is om de laatste man te zijn. Je moet iedereen doden, maar de Sheriff moet als allerlaatste sterven in een 1-tegen-1 duel."
+                    d: "Wees de laatste man. Dood Sheriff als laatste."
                   }
                 ].map((r, i) => (
                   <motion.div 
                     key={i} 
                     variants={itemVariants}
-                    whileHover={{ y: -8, scale: 1.02 }}
-                    className={`p-10 rounded-[3rem] border ${r.border} ${r.bg} space-y-6 transition-all shadow-[0_10px_40px_rgba(0,0,0,0.2)] flex flex-col group`}
+                    whileHover={{ y: -4, scale: 1.02 }}
+                    className={`p-4 md:p-10 rounded-2xl md:rounded-[3rem] border ${r.border} ${r.bg} space-y-2 md:space-y-6 transition-all shadow-xl flex flex-col group`}
                   >
-                    <div className="flex items-center justify-between">
-                      <h3 className={`text-3xl font-magic font-black uppercase tracking-widest ${r.c}`}>{r.n}</h3>
-                      <div className="text-[10px] font-mono text-white/30 uppercase tracking-[0.3em] font-bold">{r.t}</div>
+                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-1">
+                      <h3 className={`text-sm md:text-3xl font-magic font-black uppercase tracking-widest ${r.c}`}>{r.n}</h3>
+                      <div className="text-[7px] md:text-[10px] font-mono text-white/30 uppercase tracking-widest font-bold">{r.t}</div>
                     </div>
-                    <p className="text-[13px] text-white/60 leading-relaxed font-sans">{r.d}</p>
+                    <p className="text-[9px] md:text-[13px] text-white/60 leading-relaxed font-sans">{r.d}</p>
                   </motion.div>
                 ))}
               </div>
@@ -8249,67 +8247,67 @@ function OutlawSheriff() {
           </div>
 
           {/* Right Column: Meta & Strategy */}
-          <div className="lg:col-span-4 space-y-12">
+          <div className="lg:col-span-4 space-y-6 md:space-y-12">
             {/* Victory Conditions Panel */}
-            <motion.div variants={itemVariants} className="rune-panel bg-black/60 border border-cyan-500/20 rounded-[3rem] p-10 space-y-14 shadow-2xl relative overflow-hidden">
+            <motion.div variants={itemVariants} className="rune-panel bg-black/60 border border-cyan-500/20 rounded-2xl md:rounded-[3rem] p-6 md:p-10 space-y-8 md:space-y-14 shadow-2xl relative overflow-hidden">
                <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 blur-3xl rounded-full" />
                
-               <div className="space-y-8 relative z-10">
-                 <h3 className="text-2xl font-magic font-black text-white uppercase tracking-widest border-b border-white/10 pb-6 flex items-center gap-4">
-                   <Zap className="w-5 h-5 text-cyan-400 animate-pulse" />
+               <div className="space-y-6 md:space-y-8 relative z-10">
+                 <h3 className="text-lg md:text-2xl font-magic font-black text-white uppercase tracking-widest border-b border-white/10 pb-4 md:pb-6 flex items-center gap-3 md:gap-4">
+                   <Zap className="w-4 h-4 md:w-5 h-5 text-cyan-400 animate-pulse" />
                    Overwinning
                  </h3>
-                 <div className="space-y-10">
-                   <div className="space-y-3 group/win">
-                     <p className="text-[11px] font-magic font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
-                       <span className="w-2 h-2 bg-orange-500 rounded-full group-hover:scale-150 transition-transform" />
+                 <div className="space-y-6 md:space-y-10">
+                   <div className="space-y-2 md:space-y-3 group/win">
+                     <p className="text-[9px] md:text-[11px] font-magic font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 bg-orange-500 rounded-full" />
                        Sheriff & Deputies
                      </p>
-                     <p className="text-[13px] text-white/70 italic leading-relaxed pl-4 border-l border-white/5 group-hover:border-orange-500/40 transition-colors">
-                       Winnen als alle <span className="text-white font-bold underline underline-offset-4 decoration-orange-500/20">Outlaws</span> en de <span className="text-white font-bold underline underline-offset-4 decoration-orange-500/20">Renegade</span> geëlimineerd zijn.
+                     <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
+                       Winnen als alle <span className="text-white font-bold">Outlaws</span> en de <span className="text-white font-bold">Renegade</span> weg zijn.
                      </p>
                    </div>
-                   <div className="space-y-3 group/win">
-                     <p className="text-[11px] font-magic font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
-                        <span className="w-2 h-2 bg-red-500 rounded-full group-hover:scale-150 transition-transform" />
+                   <div className="space-y-2 md:space-y-3 group/win">
+                     <p className="text-[9px] md:text-[11px] font-magic font-black text-red-500 uppercase tracking-widest flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 bg-red-500 rounded-full" />
                         Outlaws
                      </p>
-                     <p className="text-[13px] text-white/70 italic leading-relaxed pl-4 border-l border-white/5 group-hover:border-red-500/40 transition-colors">
-                       Winnen direct zodra de <span className="text-white font-bold">Sheriff sterft</span>. (Alleen als de Renegade NIET de enige is die overblijft met de Sheriff).
+                     <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
+                       Winnen direct zodra de <span className="text-white font-bold">Sheriff sterft</span>.
                      </p>
                    </div>
-                   <div className="space-y-3 group/win border-t border-white/5 pt-8">
-                     <p className="text-[11px] font-magic font-black text-cyan-400 uppercase tracking-widest flex items-center gap-2">
-                        <span className="w-2 h-2 bg-cyan-400 rounded-full group-hover:scale-150 transition-transform" />
+                   <div className="space-y-2 md:space-y-3 group/win border-t border-white/5 pt-6 md:pt-8">
+                     <p className="text-[9px] md:text-[11px] font-magic font-black text-cyan-400 uppercase tracking-widest flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full" />
                         Renegade
                      </p>
-                     <p className="text-[13px] text-white/70 italic leading-relaxed pl-4 border-l border-white/5 group-hover:border-cyan-400/40 transition-colors">
-                       Wint ALLEEN als hij de <span className="text-white font-black underline decoration-cyan-400/20 underline-offset-4">allerlaatste speler</span> is die de Sheriff doodt na een duel.
+                     <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
+                       Wint als hij de <span className="text-white font-black">allerlaatste</span> is die de Sheriff doodt.
                      </p>
                    </div>
                  </div>
                </div>
 
                {/* Elimination Order Section */}
-               <div className="space-y-8 relative z-10 pt-4">
-                 <h3 className="text-2xl font-magic font-black text-white uppercase tracking-widest border-b border-white/10 pb-6 flex items-center gap-4">
-                   <Skull className="w-5 h-5 text-red-500" />
-                   Tactische Volgorde
+               <div className="space-y-6 md:space-y-8 relative z-10 pt-2 md:pt-4">
+                 <h3 className="text-lg md:text-2xl font-magic font-black text-white uppercase tracking-widest border-b border-white/10 pb-4 md:pb-6 flex items-center gap-3 md:gap-4">
+                   <Skull className="w-4 h-4 md:w-5 h-5 text-red-500" />
+                   Tactiek
                  </h3>
-                 <div className="space-y-4">
+                 <div className="space-y-3 md:space-y-4">
                    {[
-                     { label: "Elimineer Outlaws", actor: "Sheriff & Deputy", desc: "Prioriteit #1" },
-                     { label: "Focus de Wet", actor: "Outlaws", desc: "Direct pad naar winst" },
-                     { label: "Balans behouden", actor: "Renegade", desc: "Help de zwakken (eerst)" },
+                     { label: "Elimineer Outlaws", actor: "Wet", desc: "Prioriteit #1" },
+                     { label: "Focus de Wet", actor: "Outlaws", desc: "Snelste winst" },
+                     { label: "Balans", actor: "Renegade", desc: "Help de zwakken" },
                      { label: "Finale Duel", actor: "Renegade", desc: "Dood Sheriff laatst" }
                    ].map((item, i) => (
-                     <div key={i} className="group/item relative p-6 bg-white/[0.03] border border-white/5 rounded-3xl hover:bg-white/[0.06] hover:border-white/20 transition-all">
-                       <div className="flex justify-between items-start mb-2">
-                         <span className="text-[9px] font-mono text-white/30 uppercase tracking-widest group-hover/item:text-cyan-400 transition-colors">{item.actor}</span>
-                         <div className="w-1.5 h-1.5 rounded-full bg-white/10 group-hover/item:bg-cyan-500 animate-pulse" />
+                     <div key={i} className="group/item relative p-4 md:p-6 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-white/[0.04] transition-all">
+                       <div className="flex justify-between items-start mb-1 md:mb-2">
+                         <span className="text-[7px] md:text-[9px] font-mono text-white/30 uppercase tracking-widest">{item.actor}</span>
+                         <div className="w-1 h-1 bg-white/10 rounded-full" />
                        </div>
-                       <h5 className="text-[13px] font-magic font-black text-white uppercase tracking-widest mb-1">{item.label}</h5>
-                       <p className="text-[10px] text-white/40 italic">{item.desc}</p>
+                       <h5 className="text-[10px] md:text-[13px] font-magic font-black text-white uppercase tracking-widest">{item.label}</h5>
+                       <p className="text-[8px] md:text-[10px] text-white/40 italic">{item.desc}</p>
                      </div>
                    ))}
                  </div>
@@ -8317,14 +8315,13 @@ function OutlawSheriff() {
             </motion.div>
 
             {/* Strategic Protocol Footer */}
-            <motion.div variants={itemVariants} className="p-10 bg-orange-500/5 border border-orange-500/20 rounded-[3rem] text-center space-y-8 relative overflow-hidden">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(249,115,22,0.1),transparent_70%)]" />
-              <Radio className="w-12 h-12 text-orange-500 mx-auto animate-pulse relative z-10" />
-              <div className="space-y-4 relative z-10">
-                <p className="text-[11px] font-magic font-black text-white uppercase tracking-[0.6em]">Arcaan Protocol</p>
-                <div className="h-[2px] w-12 bg-orange-500/30 mx-auto" />
-                <p className="text-[13px] text-white/50 italic leading-relaxed max-w-xs mx-auto">
-                  "De Sheriff heerst door macht, de Renegade door geduld, en de Outlaws door chaos. Kies je rol, maar vergeet nooit je eed."
+            <motion.div variants={itemVariants} className="p-6 md:p-10 bg-orange-500/5 border border-orange-500/20 rounded-2xl md:rounded-[3rem] text-center space-y-6 md:space-y-8 relative overflow-hidden">
+              <Radio className="w-8 h-8 md:w-12 md:h-12 text-orange-500 mx-auto animate-pulse relative z-10" />
+              <div className="space-y-2 md:space-y-4 relative z-10">
+                <p className="text-[9px] md:text-[11px] font-magic font-black text-white uppercase tracking-[0.4em] md:tracking-[0.6em]">Arcaan Protocol</p>
+                <div className="h-[1px] md:h-[2px] w-8 md:w-12 bg-orange-500/30 mx-auto" />
+                <p className="text-[11px] md:text-[13px] text-white/50 italic leading-relaxed max-w-xs mx-auto">
+                  "Kies je rol, maar vergeet nooit je eed."
                 </p>
               </div>
             </motion.div>
@@ -8332,7 +8329,7 @@ function OutlawSheriff() {
         </div>
         
         {/* Visual Footer Accents */}
-        <div className="pt-20 flex justify-center gap-12 text-white/5 font-magic text-6xl select-none">
+        <div className="pt-10 md:pt-20 flex justify-center gap-6 md:gap-12 text-white/5 font-magic text-3xl md:text-6xl select-none">
           <span>ᛉ</span>
           <span>ᚦ</span>
           <span>ᚱ</span>
