@@ -65,11 +65,11 @@
   }
 
   .rune-panel:hover::before, .rune-panel:hover::after {
-    @apply border-orange-500/80;
+    @apply border-cyan-500/80;
   }
   
   .rune-book-spine {
-    @apply absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-[#00A8E8]/20 via-[#00A8E8]/5 to-transparent border-r border-[#00A8E8]/20 hidden md:block;
+    @apply absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-cyan-500/20 via-cyan-500/5 to-transparent border-r border-cyan-500/20 hidden md:block;
   }
 }
 
@@ -121,6 +121,7 @@
 
 body {
   @apply bg-[#0c0c0c] text-white antialiased font-sans;
+  background-color: #0c0c0c !important;
 }
 
 h1, h2, .magic-text {
@@ -129,9 +130,9 @@ h1, h2, .magic-text {
 
 /* Force lighter weights for all elements to answer user request for "less bold" design */
 .font-black, .font-extrabold, .font-bold {
-  font-weight: 500 !important;
+  font-weight: 400 !important;
 }
 
 .font-magic {
-  font-weight: 600 !important;
+  font-weight: 500 !important;
 }

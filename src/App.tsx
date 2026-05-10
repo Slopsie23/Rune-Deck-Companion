@@ -80,6 +80,8 @@ import {
   History,
   BarChart2,
   Heart,
+  Clock,
+  ArrowUpDown,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import axios from "axios";
@@ -162,7 +164,7 @@ try {
     );
   }
 } catch (e) {
-  console.error("Fout bij het initialiseren van Gemini AI:", e);
+  console.error("Error initializing Gemini AI:", e);
 }
 
 const BearIcon = PawPrint;
@@ -181,7 +183,6 @@ const FloatingArcaneField = () => {
     { s: "ᛗ", t: "rune", c: "text-white" },
     { s: "ᚠ", t: "rune", c: "text-blue-500" },
     { s: "ᚢ", t: "rune", c: "text-red-500" },
-    { s: "۞", t: "rune", c: "text-orange-400" },
     { s: "Ж", t: "rune", c: "text-cyan-400" },
   ];
 
@@ -292,6 +293,7 @@ export default function App() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [showAdminChamber, setShowAdminChamber] = useState(false);
   const [showRoadmap, setShowRoadmap] = useState(false);
+  const [roadmapInitialChangelog, setRoadmapInitialChangelog] = useState(false);
 
   const [cardsPerRow, setCardsPerRow] = useState<number>(0); // 0 means 'auto' (~220px)
   const [userTitle, setUserTitle] = useState("Deckmaster");
@@ -349,7 +351,7 @@ export default function App() {
     // Set browser theme color
     const metaThemeColor = document.querySelector('meta[name="theme-color"]');
     if (metaThemeColor) {
-      metaThemeColor.setAttribute("content", "#f97316");
+      metaThemeColor.setAttribute("content", "#0c0c0c");
     }
 
     // Optional connection check (silent)
@@ -392,7 +394,7 @@ export default function App() {
         setIsProfileVisible(updates.isProfileVisible);
       if (updates.isDecksPublic !== undefined)
         setIsDecksPublic(updates.isDecksPublic);
-      showMessage("Instellingen opgeslagen", "success");
+      showMessage("Settings saved", "success");
     } catch (err) {
       console.error("Failed to save settings", err);
       showMessage("Error updating settings", "error");
@@ -889,11 +891,11 @@ export default function App() {
       console.log("Login success:", result.user.email);
     } catch (error: any) {
       console.error("Detailed Login Error:", error);
-      let errorMsg = error.message || error.code || "Onbekende fout";
+      let errorMsg = error.message || error.code || "Unknown error";
       if (error.code === "auth/popup-blocked") {
-        errorMsg = "Popup geblokkeerd! Sta popups toe voor deze site.";
+        errorMsg = "Popup blocked! Please allow popups for this site.";
       }
-      showMessage("Login mislukt: " + errorMsg, "error");
+      showMessage("Login failed: " + errorMsg, "error");
     } finally {
       setIsLoggingIn(false);
       console.log("Login process finished.");
@@ -2400,10 +2402,10 @@ export default function App() {
         createdAt: serverTimestamp(),
       });
       
-      showMessage(`DECK VERZONDEN NAAR ${targetEmail.toUpperCase()}`, "success");
+      showMessage(`DECK SENT TO ${targetEmail.toUpperCase()}`, "success");
     } catch (e) {
       console.error(e);
-      showMessage("FOUT BIJ DELEN", "error");
+      showMessage("SHARING FAILED", "error");
     }
   };
 
@@ -2709,7 +2711,7 @@ Return ONLY JSON. No markdown backticks.`;
       console.error("Failed to fetch commander for tags", err);
       let msg = err.message || "Unknown error";
       if (msg.includes("API key expired")) {
-        msg = "API key expired. Vernieuw je Gemini API key in de instellingen.";
+        msg = "API key expired. Refresh your Gemini API key in the settings.";
       }
       showMessage(`Magic failed: ${msg}`);
     } finally {
@@ -2916,7 +2918,7 @@ Return ONLY JSON. No markdown backticks.`;
                       color: "bg-[#EA4335]",
                       action: (d: SavedDeck) => {
                         const subject = `Magic Deck: ${d.name}`;
-                        const body = `Hoi! Bekijk mijn nieuwe Magic deck: ${d.name}\n\nLink: ${window.location.origin}?deck=${d.id}`;
+                        const body = `Hey! Check out my new Magic deck: ${d.name}\n\nLink: ${window.location.origin}?deck=${d.id}`;
                         window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
                       }
                     },
@@ -2925,19 +2927,19 @@ Return ONLY JSON. No markdown backticks.`;
                       icon: Send, 
                       color: "bg-[#5865F2]",
                       action: (d: SavedDeck) => {
-                        const text = `Check mijn Magic deck: ${d.name}! ${window.location.origin}?deck=${d.id}`;
+                        const text = `Check out my Magic deck: ${d.name}! ${window.location.origin}?deck=${d.id}`;
                         navigator.clipboard.writeText(text);
-                        showMessage("LINK VOOR DISCORD GEKOPIEERD", "success");
+                        showMessage("DISCORD LINK COPIED", "success");
                       }
                     },
                     { 
-                      name: "Kopieer", 
+                      name: "Copy Link", 
                       icon: Copy, 
                       color: "bg-[#06B6D4]",
                       action: (d: SavedDeck) => {
                         const url = window.location.origin + "?deck=" + d.id;
                         navigator.clipboard.writeText(url);
-                        showMessage("LINK_GEKOPIEERD", "success");
+                        showMessage("LINK_COPIED", "success");
                         document.title = d.name;
                       }
                     }
@@ -2959,13 +2961,13 @@ Return ONLY JSON. No markdown backticks.`;
                 <div className="space-y-4 pt-4 border-t border-white/5">
                   <div className="flex items-center gap-3 mb-2">
                     <User className="w-4 h-4 text-purple-500" />
-                    <h4 className="text-[10px] font-magic font-black uppercase tracking-widest text-white/60">Deel met Rune Gebruikers</h4>
+                    <h4 className="text-[10px] font-magic font-black uppercase tracking-widest text-white/60">Share with Rune Users</h4>
                   </div>
                   
                   <div className="relative">
                     <input 
                       type="text"
-                      placeholder="Zoek op naam of email..."
+                      placeholder="Search by name or email..."
                       value={userSearch}
                       onChange={(e) => searchUsers(e.target.value)}
                       className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-xs text-white outline-none focus:border-purple-500/40 transition-all pl-10"
@@ -2987,10 +2989,10 @@ Return ONLY JSON. No markdown backticks.`;
                             try {
                               setLoading(true);
                               await shareDeck(deckToShare.id, u.email);
-                              showMessage(`GEDEELD MET ${u.displayName?.toUpperCase()}`, "success");
+                              showMessage(`SHARED WITH ${u.displayName?.toUpperCase()}`, "success");
                               setIsShareModalOpen(false);
                             } catch (e) {
-                              showMessage("DELEN MISLUKT", "error");
+                              showMessage("SHARING FAILED", "error");
                             } finally {
                               setLoading(false);
                             }
@@ -3011,7 +3013,7 @@ Return ONLY JSON. No markdown backticks.`;
                   )}
 
                   {userSearch.length >= 3 && foundUsers.length === 0 && !isSearchingUsers && (
-                    <p className="text-[9px] text-center text-white/20 py-4 italic">Geen gebruikers gevonden...</p>
+                    <p className="text-[9px] text-center text-white/20 py-4 italic">No users found...</p>
                   )}
                 </div>
               </div>
@@ -3027,49 +3029,76 @@ Return ONLY JSON. No markdown backticks.`;
       <div className="absolute bottom-0 left-[20%] w-[40vh] h-[40vh] bg-orange-500/5 blur-[120px] rounded-full pointer-events-none" />
 
       {/* Mobile Top Bar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#070707]/90 backdrop-blur-3xl border-b border-white/[0.04] z-[120] flex items-center justify-between px-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
+      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#0c0c0c]/90 backdrop-blur-3xl border-b border-white/[0.04] z-[120] flex items-center justify-between px-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
         <div
           className="flex items-center gap-3 cursor-pointer"
           onClick={goHome}
         >
-          <Zap className="w-5 h-5 text-orange-500 drop-shadow-[0_0_8px_rgba(249,115,22,0.6)]" />
+          <Zap className="w-5 h-5 text-cyan-400 drop-shadow-[0_0_8px_rgba(6,182,212,0.6)]" />
           <h1 className="text-[10px] font-magic font-black uppercase tracking-[0.3em] text-white">
-            Rune Deck <span className="text-orange-500">{VERSION}</span>
+            Rune Deck <span className="text-cyan-400">{VERSION}</span>
           </h1>
         </div>
         <div className="flex items-center gap-2">
-          {user && (
-            <button 
-              onClick={() => setIsSettingsOpen(true)}
-              className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center overflow-hidden active:scale-95 transition-all mr-1"
-            >
-              {user.photoURL ? (
-                <img src={user.photoURL} alt="" title={user.displayName || "User"} className="w-full h-full object-cover" />
-              ) : (
-                <User className="w-4 h-4 text-white/40" />
-              )}
-            </button>
-          )}
-          {viewMode === "cards" && (
-            <button
-              onClick={() => setIsFiltersOpen(!isFiltersOpen)}
-              className={`p-2 transition-colors ${isFiltersOpen ? "text-cyan-400" : "text-white/40 hover:text-orange-500"}`}
-            >
-              <Filter className="w-6 h-6" />
-            </button>
-          )}
           <button
             onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-            className="p-2 text-white/40 hover:text-orange-500 transition-colors"
+            className="p-2 text-white/40 hover:text-cyan-400 transition-colors"
           >
             {isMobileMenuOpen ? (
-              <X className="w-7 h-7 text-orange-500" />
+              <X className="w-7 h-7 text-cyan-400" />
             ) : (
               <Menu className="w-7 h-7" />
             )}
           </button>
         </div>
       </div>
+
+      {/* Mobile Filter Dropdown */}
+      <AnimatePresence>
+        {isFiltersOpen && viewMode === "cards" && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="md:hidden fixed top-16 left-0 right-0 z-[110] bg-[#0c0c0c]/95 backdrop-blur-2xl border-b border-white/10 p-5 shadow-2xl overflow-y-auto max-h-[70vh] no-scrollbar"
+          >
+            <div className="flex items-center justify-between mb-4 pb-2 border-b border-white/5">
+              <h3 className="text-xs font-magic font-black uppercase tracking-widest text-cyan-400">Live Filters</h3>
+              <button onClick={() => setIsFiltersOpen(false)} className="text-white/20"><X className="w-4 h-4" /></button>
+            </div>
+            {/* Context Filters */}
+            <div className="space-y-4">
+               <div>
+                  <label className="text-[8px] font-magic font-black text-white/30 uppercase tracking-widest block mb-2">Context Search</label>
+                  <input 
+                    type="text"
+                    value={contextQuery}
+                    onChange={(e) => setContextQuery(e.target.value)}
+                    placeholder="e.g. card disadvantage, land destruction..."
+                    className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-[10px] text-white outline-none focus:border-cyan-500/30 transition-all font-mono"
+                  />
+               </div>
+               <div className="grid grid-cols-2 gap-2">
+                 <button onClick={() => setSortBy(sortBy === "released" ? "usd" : "released")} className="py-2.5 rounded-xl border border-white/10 text-[9px] font-magic font-black uppercase text-white/60 bg-white/5 flex items-center justify-center gap-2">
+                   <Clock className="w-3 h-3" /> {sortBy === "released" ? "By Date" : "By Price"}
+                 </button>
+                 <button onClick={() => setSortDir(sortDir === "asc" ? "desc" : "asc")} className="py-2.5 rounded-xl border border-white/10 text-[9px] font-magic font-black uppercase text-white/60 bg-white/5 flex items-center justify-center gap-2">
+                   <ArrowUpDown className="w-3 h-3" /> {sortDir === "asc" ? "Asc" : "Desc"}
+                 </button>
+               </div>
+               <button 
+                  onClick={() => {
+                    setIsFiltersOpen(false);
+                    performSearch();
+                  }}
+                  className="w-full py-3 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-500/30 text-cyan-400 rounded-xl text-[9px] font-magic font-black uppercase tracking-widest shadow-lg shadow-cyan-500/10"
+               >
+                 Apply Filters
+               </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Sidebar */}
       <aside
@@ -3707,13 +3736,12 @@ Return ONLY JSON. No markdown backticks.`;
             </div>
 
             <button
-              onClick={() => setShowRoadmap(true)}
+              onClick={() => { setRoadmapInitialChangelog(false); setShowRoadmap(true); }}
               className="p-3 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-400 hover:text-green-300 hover:border-green-500/40 hover:bg-green-500/20 transition-all group relative overflow-hidden shrink-0 shadow-[0_0_15px_rgba(34,197,94,0.1)]"
-              title="Rune-Tech Manual"
+              title="Arcane Manual"
             >
               <HelpCircle className="w-5 h-5 relative z-10 animate-pulse" />
               <div className="absolute inset-0 bg-gradient-to-tr from-green-500/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              {/* Glow effect */}
               <div className="absolute -inset-1 bg-green-500/10 blur-xl opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none" />
             </button>
           </div>
@@ -3779,6 +3807,7 @@ Return ONLY JSON. No markdown backticks.`;
                     { label: 'Calendar', icon: Calendar, action: () => handleFunModeClick("calendar"), color: 'text-orange-400 border-orange-500/20 bg-orange-500/5' },
                     { label: 'Sheriff', icon: Shield, action: () => handleFunModeClick("sheriff"), color: 'text-amber-400 border-amber-500/20 bg-amber-500/5' },
                     { label: 'Judge_AI', icon: Gavel, action: () => handleFunModeClick("judge"), color: 'text-green-400 border-green-500/20 bg-green-500/5' },
+                    { label: 'History', icon: History, action: () => { setRoadmapInitialChangelog(true); setShowRoadmap(true); setShowFunHub(false); }, color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/5' },
                     { 
                       label: 'Bears', 
                       icon: PawPrint, 
@@ -3925,10 +3954,10 @@ Return ONLY JSON. No markdown backticks.`;
                         <span
                           className={`text-[10px] font-magic font-black uppercase tracking-widest ${isProfileVisible ? "text-white" : "text-white/40"}`}
                         >
-                          Maak mijzelf zichtbaar
+                          Public Profile
                         </span>
                         <span className="text-[7px] font-mono text-white/20 uppercase">
-                          Andere gebruikers kunnen naar je zoeken
+                          Allow others to find and follow you
                         </span>
                       </div>
                     </div>
@@ -3953,10 +3982,10 @@ Return ONLY JSON. No markdown backticks.`;
                         <span
                           className={`text-[10px] font-magic font-black uppercase tracking-widest ${isDecksPublic ? "text-white" : "text-white/40"}`}
                         >
-                          Maak mijn decks zichtbaar
+                          Public Collection
                         </span>
                         <span className="text-[7px] font-mono text-white/20 uppercase">
-                          Toon je collectie in de publieke feed
+                          Share your deck builds with the community
                         </span>
                       </div>
                     </div>
@@ -3974,26 +4003,26 @@ Return ONLY JSON. No markdown backticks.`;
                 <div className="space-y-3">
                   <div className="flex items-center justify-between px-1">
                     <span className="text-[8px] font-magic font-black text-white/30 uppercase tracking-widest">
-                      Card Gallery Scale
+                      Visual Density
                     </span>
                     <span className="text-[8px] font-mono text-orange-500/60 uppercase">
-                      {cardsPerRow === 0 ? "Default Layout" : `${cardsPerRow} Per Row`}
+                      {cardsPerRow === 0 ? "Auto Cards" : `${cardsPerRow} Cards`}
                     </span>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="grid grid-cols-3 gap-2">
                     <button
                       onClick={() => saveUserSettings({ cardsPerRow: 0 })}
-                      className={`flex-1 py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === 0 ? "bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10"}`}
+                      className={`py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === 0 ? "bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10"}`}
                     >
-                      Dynamic
+                      Auto Cards
                     </button>
-                    {[3, 5, 8].map((n) => (
+                    {[1, 2, 3, 5, 8].map((n) => (
                       <button
                         key={n}
                         onClick={() => saveUserSettings({ cardsPerRow: n })}
-                        className={`flex-1 py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === n ? "bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10"}`}
+                        className={`${(n === 1 || n === 2) ? 'md:hidden' : 'flex-1'} py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === n ? "bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10"}`}
                       >
-                        {n} Cards
+                        {n} {n === 1 ? "Card" : "Cards"}
                       </button>
                     ))}
                   </div>
@@ -4601,7 +4630,7 @@ Return ONLY JSON. No markdown backticks.`;
                              <button
                                onClick={() => handleShareDeck(deck)}
                                className="p-3 bg-orange-500/5 hover:bg-orange-500/10 border border-orange-500/10 rounded-xl transition-all flex items-center justify-center group flex-1"
-                               title="Deel Deck"
+                               title="Share Deck"
                              >
                                <Share2 className="w-4 h-4 text-orange-400/60 group-hover:text-orange-400 group-hover:scale-110 transition-all" />
                              </button>
@@ -6046,6 +6075,42 @@ Return ONLY JSON. No markdown backticks.`;
           <RoadmapModal
             isOpen={showRoadmap}
             onClose={() => setShowRoadmap(false)}
+            initialShowChangelog={roadmapInitialChangelog}
+            onNavigate={(action) => {
+              setShowRoadmap(false);
+              if (action === "changelog") {
+                setRoadmapInitialChangelog(true);
+                setShowRoadmap(true);
+              } else if (action === "manage_decks") {
+                setViewMode("manage_decks");
+              } else if (action === "cards") {
+                setViewMode("cards");
+              } else if (action === "stats") {
+                setViewMode("stats");
+              } else if (action === "sets") {
+                setViewMode("sets");
+              } else if (action === "synergy") {
+                setIsDeckboxOpen(true);
+              } else if (action === "socials") {
+                setViewMode("socials");
+              } else if (action === "judge") {
+                setViewMode("judge");
+              } else if (action === "calendar") {
+                setViewMode("calendar");
+              } else if (action === "sets") {
+                setViewMode("sets");
+              } else if (action === "radio") {
+                setViewMode("radio");
+              } else if (action === "sheriff") {
+                setViewMode("sheriff");
+              } else if (action === "stats") {
+                setViewMode("stats");
+              } else if (action === "manage_decks") {
+                setViewMode("manage_decks");
+              } else if (action === "cards") {
+                setViewMode("cards");
+              }
+            }}
           />
         )}
       </AnimatePresence>
@@ -6278,10 +6343,47 @@ Return ONLY JSON. No markdown backticks.`;
 function RoadmapModal({
   isOpen,
   onClose,
+  initialShowChangelog = false,
+  onNavigate,
 }: {
   isOpen: boolean;
   onClose: () => void;
+  initialShowChangelog?: boolean;
+  onNavigate: (action: string) => void;
 }) {
+  const [showChangelog, setShowChangelog] = useState(initialShowChangelog);
+
+  // Sync state when prop changes or modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setShowChangelog(initialShowChangelog);
+    }
+  }, [isOpen, initialShowChangelog]);
+
+  const releaseHistory = [
+    {
+      version: "V2.6.16",
+      date: "May 2026",
+      changes: [
+        "Unified Rune-Tech aesthetic across all modules",
+        "Functional mobile filter system",
+        "Mobile-optimized card gallery scaling (1-2 columns)",
+        "Added Release History to Arcane Manual",
+        "Dark startup optimization for zero-latency black theme",
+        "Consistent English localization"
+      ]
+    },
+    {
+      version: "V2.6.15",
+      date: "April 2026",
+      changes: [
+        "Integrated Socials & Shared Selections",
+        "Advanced Synergy Engine v2",
+        "Refined Deckbox operations"
+      ]
+    }
+  ];
+
   const manualSections = [
     {
       group: "VAULT & COLLECTION",
@@ -6289,17 +6391,20 @@ function RoadmapModal({
         {
           term: "LIBRARY",
           flow: "Collection",
-          desc: "Opens your saved decks. Here you can search through your collection, view your decks, and manage your files.",
+          desc: "Access your saved decks. Browse your physical collection and managed imports.",
+          action: "manage_decks",
         },
         {
-          term: "ADD DECK",
-          flow: "Import",
-          desc: "Paste an Archidekt/TappedOut URL or ID. Click 'Add' to import external data into your collection.",
+          term: "CARDS",
+          flow: "Grid View",
+          desc: "The standard visual mode for browsing and building your deck interactively.",
+          action: "cards",
         },
         {
-          term: "DELETE",
-          flow: "Remove",
-          desc: "Removes a deck from your collection. Requires confirmation to prevent accidental data loss.",
+          term: "STATS",
+          flow: "Analytics",
+          desc: "Visualize mana curve and color distribution to balance your resources.",
+          action: "stats",
         },
       ],
     },
@@ -6308,18 +6413,21 @@ function RoadmapModal({
       nodes: [
         {
           term: "SEARCH",
-          flow: "Scryfall Search",
-          desc: "Search for cards using Scryfall. Supports keyword, color, and mechanic searches across the card database.",
+          flow: "Scryfall",
+          desc: "Search the Multiverse using Scryfall. Supports complex keyword searches.",
+          action: "cards",
         },
         {
           term: "SYNERGY",
           flow: "Suggestions",
-          desc: "Analyzes your deck's tags and suggests cards that align with your current deck's theme and cards.",
+          desc: "Neural engine suggests cards that align with your current deck tags.",
+          action: "synergy",
         },
         {
-          term: "VEGGIES",
-          flow: "Quick Filter",
-          desc: "Quick filters for 'Ramp', 'Draw', and 'Board Wipes'. Automatically matched to your deck's colors.",
+          term: "SETS",
+          flow: "Chronology",
+          desc: "Browse every MTG set release from Alpha to latest expansions.",
+          action: "sets",
         },
       ],
     },
@@ -6327,59 +6435,45 @@ function RoadmapModal({
       group: "ARCANE UTILITIES",
       nodes: [
         {
-          term: "SHERIFF",
-          flow: "Game Variant",
-          desc: "Explains the rules of this 5+ player Commander variant involving hidden roles: Sheriff, Deputies, Outlaws, and a Renegade.",
-        },
-        {
           term: "JUDGE RUXA",
           flow: "AI Judge",
-          desc: "Ask the AI rules judge for help with complex Magic rules questions.",
+          desc: "Ask our neural judge for help with complex Magic rules questions.",
+          action: "judge",
+        },
+        {
+          term: "CALENDAR",
+          flow: "Events",
+          desc: "Track upcoming MTG set releases and community events.",
+          action: "calendar",
         },
         {
           term: "SOCIALS",
           flow: "Community",
-          desc: "Connect with public users, view shared card selections, and browse popular content creators.",
+          desc: "Connect with public users and browse shared deck transmissions.",
+          action: "socials",
         },
       ],
     },
     {
-      group: "DECK OPERATIONS",
+      group: "GAME VARIANTS",
       nodes: [
         {
-          term: "LIST",
-          flow: "Table View",
-          desc: "Displays your deck as a categorized table. Useful for raw data inspection and spotting gaps in your card types.",
+          term: "SHERIFF",
+          flow: "Multiplayer",
+          desc: "Rules and role management for the Sheriff variant (5+ players).",
+          action: "sheriff",
         },
         {
-          term: "CARDS",
-          flow: "Grid View",
-          desc: "The standard visual mode. Displays card art in a responsive grid for browsing and building.",
-        },
-        {
-          term: "CARDBOARD",
-          flow: "Shopping List",
-          desc: "Mark cards you need. Displays price estimates and allows for text export for ordering physical cards.",
-        },
-      ],
-    },
-    {
-      group: "LOGISTICS & HISTORY",
-      nodes: [
-        {
-          term: "STATS",
-          flow: "Analytics",
-          desc: "Visualizes mana curve, color distribution, and card types. Use this to balance your deck's land count and resources.",
-        },
-        {
-          term: "SETS",
-          flow: "Expansions",
-          desc: "Browse every MTG set release from Alpha to the latest expansions in chronological order.",
+          term: "RADIO",
+          flow: "Ambience",
+          desc: "Atmospheric MTG-themed soundscapes for your game sessions.",
+          action: "radio",
         },
         {
           term: "ROADMAP",
-          flow: "Manual",
-          desc: "The functional guide you are currently reading. Explains all system capabilities and interactions.",
+          flow: "History",
+          desc: "View the system release archive and project evolution logs.",
+          action: "changelog",
         },
       ],
     },
@@ -6425,7 +6519,7 @@ function RoadmapModal({
                 </div>
                 <div>
                   <h2 className="text-2xl font-magic font-black text-green-400 uppercase tracking-[0.5em] leading-none mb-3">
-                    Deck Companion Manual // v2.6.16
+                    Deck Companion Manual // v{VERSION}
                   </h2>
                   <div className="flex items-center gap-8">
                     <div className="flex items-center gap-4">
@@ -6434,7 +6528,7 @@ function RoadmapModal({
                         Library_Active // Companion_Active
                       </p>
                     </div>
-                    <div className="hidden xl:flex items-center gap-6 border-l border-white/5 pl-8">
+                    <div className="hidden xl:flex items-center gap-4 border-l border-white/5 pl-8">
                       {manualSections.map((s, i) => (
                         <button
                           key={i}
@@ -6448,67 +6542,101 @@ function RoadmapModal({
                   </div>
                 </div>
               </div>
-              <button
-                onClick={onClose}
-                className="px-8 py-3 border border-white/10 rounded group hover:border-cyan-500/40 hover:text-cyan-400 transition-all font-mono text-[11px] text-white/20 uppercase tracking-[0.3em]"
-              >
-                Close Manual{" "}
-                <X className="w-4 h-4 inline-block ml-3 group-hover:rotate-90 transition-transform" />
-              </button>
+                <button
+                  onClick={onClose}
+                  className="flex-1 lg:flex-none px-8 py-3 bg-white/5 border border-white/10 rounded-xl hover:border-red-500/40 hover:text-red-400 transition-all font-magic font-black text-[10px] text-white/40 uppercase tracking-widest"
+                >
+                  Close Manual
+                </button>
             </div>
 
-              <div className="flex-1 overflow-y-auto no-scrollbar p-12 lg:p-16">
-                <div className="grid grid-cols-1 lg:grid-cols-4 gap-12">
-                  {manualSections.map((section, idx) => (
-                    <div key={idx} id={`manual-${idx}`} className="space-y-12">
-                      <div className="flex items-center gap-4 border-b border-white/5 pb-4 cursor-pointer group" onClick={() => document.getElementById(`manual-${idx}`)?.scrollIntoView({ behavior: 'smooth' })}>
-                        <h3
-                          className={`text-sm font-magic font-black uppercase tracking-[0.4em] group-hover:translate-x-2 transition-all ${idx === 3 ? "text-amber-400" : "text-green-400"}`}
-                        >
-                          {section.group}
-                        </h3>
-                        <div
-                          className={`flex-1 h-px ${idx === 3 ? "bg-amber-500/10" : "bg-green-500/10"}`}
-                        />
-                      </div>
-
-                      <div className="space-y-10">
-                        {section.nodes.map((node, nIdx) => (
-                          <motion.div
-                            initial={{ opacity: 0, x: -10 }}
-                            animate={{ opacity: 1, x: 0 }}
-                            transition={{ delay: idx * 0.1 + nIdx * 0.05 }}
-                            key={nIdx}
-                            id={`manual-node-${idx}-${nIdx}`}
-                            className="relative pl-10 border-l border-white/5 group cursor-pointer"
-                            onClick={() => document.getElementById(`manual-node-${idx}-${nIdx}`)?.scrollIntoView({ behavior: 'smooth' })}
+            <div className="flex-1 overflow-y-auto no-scrollbar p-12 lg:p-16">
+              <AnimatePresence mode="wait">
+                {showChangelog ? (
+                  <motion.div
+                    key="changelog"
+                    initial={{ opacity: 0, x: 20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -20 }}
+                    className="space-y-12"
+                  >
+                    <div className="flex items-center gap-4 border-b border-white/5 pb-4">
+                      <History className="w-5 h-5 text-cyan-400" />
+                      <h3 className="text-xl font-magic font-black uppercase tracking-[0.4em] text-cyan-400">
+                        Release Archive
+                      </h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                      {releaseHistory.map((release) => (
+                        <div key={release.version} className="rune-panel p-8 bg-white/[0.01] hover:bg-white/[0.03] transition-all group border-l-4 border-l-cyan-500/40 shadow-xl shadow-cyan-950/10">
+                          <div className="flex items-center justify-between mb-6">
+                            <span className="text-2xl font-magic font-black text-white group-hover:text-cyan-400 transition-colors uppercase tracking-widest">{release.version}</span>
+                            <span className="text-[10px] font-mono text-cyan-500/60 font-bold uppercase tracking-[0.4em]">{release.date}</span>
+                          </div>
+                          <ul className="space-y-4">
+                            {release.changes.map((change, i) => (
+                              <li key={i} className="flex gap-4 group/item">
+                                <span className="text-cyan-500/20 font-mono mt-1 group-hover/item:text-cyan-500 transition-colors">0{i+1}</span>
+                                <span className="text-white/40 font-sans text-sm leading-relaxed group-hover/item:text-white/70 transition-colors">{change}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      ))}
+                    </div>
+                  </motion.div>
+                ) : (
+                  <motion.div
+                    key="manual"
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20 }}
+                    className="grid grid-cols-1 lg:grid-cols-4 gap-12"
+                  >
+                    {manualSections.map((section, idx) => (
+                      <div key={idx} id={`manual-${idx}`} className="space-y-12">
+                        <div className="flex items-center gap-4 border-b border-white/5 pb-4 cursor-pointer group" onClick={() => document.getElementById(`manual-${idx}`)?.scrollIntoView({ behavior: 'smooth' })}>
+                          <h3
+                            className={`text-sm font-magic font-black uppercase tracking-[0.4em] group-hover:translate-x-2 transition-all ${idx === 3 ? "text-amber-400" : "text-green-400"}`}
                           >
-                            <div className="absolute left-[-1px] top-3 w-[3px] h-6 bg-green-500/0 group-hover:bg-green-500 transition-all" />
-                            <div className="absolute left-[-4px] top-[14px] w-2 h-2 bg-black border border-white/20 rotate-45 group-hover:border-green-500 group-hover:bg-green-500/20 transition-all" />
+                            {section.group}
+                          </h3>
+                          <div
+                            className={`flex-1 h-px ${idx === 3 ? "bg-amber-500/10" : "bg-green-500/10"}`}
+                          />
+                        </div>
 
-                            <div className="space-y-4">
-                              <div className="flex items-center justify-between">
-                                <span
-                                  className={`text-[13px] font-magic font-black uppercase tracking-widest transition-colors ${idx === 3 ? "text-amber-400/80 group-hover:text-amber-300" : "text-white/80 group-hover:text-green-400"}`}
-                                >
+                        <div className="space-y-10">
+                          {section.nodes.map((node, nIdx) => (
+                            <motion.div
+                              initial={{ opacity: 0, x: -10 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: idx * 0.1 + nIdx * 0.05 }}
+                              key={nIdx}
+                              className="rune-panel p-6 bg-white/[0.01] hover:bg-white/[0.03] transition-all group"
+                            >
+                              <div className="flex items-center justify-between mb-4">
+                                <span className="text-xs font-magic font-black text-white group-hover:text-green-400 transition-colors uppercase tracking-[0.2em]">
                                   {node.term}
                                 </span>
-                                <span
-                                  className={`text-[9px] font-mono font-bold uppercase tracking-wider ${idx === 3 ? "text-amber-500/30" : "text-green-500/30"}`}
-                                >
-                                  {node.flow}
-                                </span>
+                                <div className="px-2 py-1 bg-green-500/5 border border-green-500/10 group-hover:border-green-500/40 rounded transition-all">
+                                  <span className="text-[7px] font-mono text-green-500/40 uppercase tracking-widest font-black group-hover:text-green-400">
+                                    {node.flow}
+                                  </span>
+                                </div>
                               </div>
-                              <p className="text-[12px] text-white/30 leading-relaxed font-sans font-light group-hover:text-white/60 transition-colors">
+                              <p className="text-[11px] text-white/30 leading-relaxed font-sans group-hover:text-white/60 transition-colors">
                                 {node.desc}
                               </p>
-                            </div>
-                          </motion.div>
-                        ))}
+                            </motion.div>
+                          ))}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
 
               {/* System Logic Banner */}
               <div className="mt-24 p-12 border border-green-500/10 bg-white/[0.01] flex flex-col md:flex-row items-center justify-between gap-12 relative overflow-hidden">
@@ -6539,7 +6667,6 @@ function RoadmapModal({
                   ))}
                 </div>
               </div>
-            </div>
 
             {/* Footer Bottom Bar */}
             <div className="px-10 py-6 border-t border-white/5 bg-black/80 flex items-center justify-between">
@@ -6547,6 +6674,13 @@ function RoadmapModal({
                 <span className="text-[10px] font-mono text-white/10 uppercase tracking-[0.8em]">
                   My Decks Command Centre
                 </span>
+                <button
+                  onClick={() => setShowChangelog(!showChangelog)}
+                  className={`flex items-center gap-2 px-4 py-1.5 rounded-lg border transition-all text-[9px] font-magic font-bold uppercase tracking-widest ${showChangelog ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-400" : "bg-white/5 border-white/10 text-white/20 hover:text-white"}`}
+                >
+                  <History className="w-3 h-3" />
+                  {showChangelog ? "Show Manual" : "View History"}
+                </button>
               </div>
               <div className="flex items-center gap-6">
                 <div className="flex items-center gap-2">
@@ -7106,7 +7240,7 @@ function AdminChamber({
                       </div>
                       <div className="flex flex-col">
                         <div className="flex items-center gap-3">
-                           <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{selectedUser.userName || selectedUser.displayName || "Rune Gebruiker"}</h2>
+                           <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{selectedUser.userName || selectedUser.displayName || "Rune User"}</h2>
                            {selectedUser.isDecksPublic && <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/20 rounded-full text-[10px] font-black text-purple-400 uppercase tracking-widest shadow-inner">Collectie Openbaar</div>}
                         </div>
                         <p className="text-sm font-mono text-white/30 mt-1">{selectedUser.email}</p>
@@ -7317,7 +7451,7 @@ function JudgeView() {
         data.power && data.toughness
           ? `P/T: ${data.power}/${data.toughness}`
           : "";
-      const oracle = data.oracle_text || "Geen regeltekst gevonden.";
+      const oracle = data.oracle_text || "No rule text found.";
       const colors = data.color_identity?.join(", ") || "Kleurloos";
       return `**Kaart: ${data.name}**\n**Metadata:** ${typeLine} | ${cmc} | ${pt}\n**Color Identity:** ${colors}\n**Regeltekst:** ${oracle}\n`;
     } catch (e) {
@@ -7337,10 +7471,10 @@ function JudgeView() {
 
     try {
       // 1. Extract card names
-      const systemPrompt = `Je bent een gespecialiseerde Magic: The Gathering kaartnaam extractor. Extraheer ALLE MTG kaartnamen uit de tekst van de gebruiker. 
-      Geef ALLEEN de namen terug als een komma-gescheiden lijst. 
-      Let op: Zelfs gedeeltelijke namen of bijnamen moeten worden herkend als MTG kaarten als ze duidelijk daarnaar verwijzen.
-      Als er geen kaarten zijn, geef dan een lege string terug.`;
+      const systemPrompt = `You are a specialized Magic: The Gathering card name extractor. Extract ALL MTG card names from the user's text. 
+      Return ONLY the names as a comma-separated list. 
+      Note: Even partial names or nicknames should be recognized as MTG cards if they clearly refer to them.
+      If no cards are present, return an empty string.`;
 
       if (!ai) {
         throw new Error("AI not initialized. Check GEMINI_API_KEY.");
@@ -7394,10 +7528,10 @@ function JudgeView() {
       if (err.message) {
         if (err.message.includes("AI not initialized")) {
           errorMsg =
-            "Mijn excuses, de archieven zijn nog niet ontsloten. Configureer de GEMINI_API_KEY om mijn wijsheid te raadplegen.";
+            "My apologies, the archives are not yet unlocked. Please configure the GEMINI_API_KEY to consult my wisdom.";
         } else if (err.message.includes("API key expired")) {
           errorMsg =
-            "Mijn excuses, mijn API key lijkt verlopen te zijn. Vernieuw deze in de instellingen.";
+            "My apologies, my API key seems to have expired. Please refresh it in the settings.";
         } else {
           errorMsg = `Er is iets misgegaan: ${err.message.slice(0, 50)}...`;
         }
@@ -7460,12 +7594,12 @@ function JudgeView() {
       const systemPrompt = `Je bent Ruxa, een deskundige maar bondige Magic: The Gathering Judge. 
       
       MISSIE:
-      Beantwoord regelsvragen van de gebruiker direct en trefzeker. Gebruik de meegeleverde context als bron.
+      Answer the user's rules questions directly and accurately. Use the provided context as a source.
       
       RICHTLIJNEN VOOR STIJL EN TAAL:
-      - Antwoord in het NEDERLANDS, maar gebruik de officiële ENGELSE Magic jargon (bijv. "state-based actions", "priority", "stack", "trigger", "resolven"). Gebruik termen als "resolven" in plaats van "resolving zijn geweest".
-      - GEBRUIK GEEN opmaak zoals sterretjes (* of **) voor het jargon; laat de tekst vloeiend in de zin staan.
-      - NOEM NOOIT specifieke regelnummers (bijv. CR 123.4) tenzij de gebruiker er expliciet naar vraagt.
+      - Answer in ENGLISH only. Use official Magic jargon.
+      - DO NOT USE formatting like asterisks (* or **) for jargon; keep the text flowing smoothly in the sentence.
+      - NEVER mention specific rule numbers (e.g. CR 123.4) unless explicitly asked by the user.
       - GEBRUIK ALTIJD de officiële mana- en tap-symbolen TUSSEN ACCURATES ({BRACKETS}) voor ELKE verwijzing naar mana of tap: {T} voor tap, {Q} voor untap, {W}, {U}, {B}, {R}, {G} voor mana, {C} voor colorless, en {0}, {1}, {2}, etc. voor generieke mana. (Bijv: "{T}: Voeg {G} toe").
       - Voor meerdere mana symbolen, schrijf ze apart: bijv. {C}{C} of {G}{G}.
       - Wees bondig. Geef het antwoord in maximaal een paar zinnen.
@@ -7496,7 +7630,7 @@ function JudgeView() {
         }
         if (e.message && e.message.includes("API key expired")) {
           throw new Error(
-            "API key expired. Vernieuw je Gemini API key in de instellingen.",
+            "API key expired. Refresh your Gemini API key in the settings.",
           );
         }
         throw e;
@@ -7517,7 +7651,7 @@ function JudgeView() {
         ...prev,
         {
           role: "assistant",
-          content: `Mijn excuses, de archieven zijn tijdelijk verzegeld.${detail}`,
+          content: `My apologies, the archives are temporarily sealed.${detail}`,
         },
       ]);
     }
@@ -8182,11 +8316,11 @@ function ReleaseCalendar({
           <RotateCw className="w-10 h-10 text-cyan-500 animate-spin" />
         </div>
       ) : (
-        <div className="flex-1 relative mt-10 overflow-x-auto no-scrollbar w-full pb-32">
+        <div className="flex-1 relative mt-10 overflow-x-auto overflow-y-hidden w-full pb-32 touch-pan-x">
           {/* Main Horizontal Timeline Line */}
-          <div className="absolute left-12 right-12 h-[2px] bg-gradient-to-r from-transparent via-cyan-500 to-orange-500 top-1/2 -translate-y-1/2 opacity-30 shadow-[0_0_30px_rgba(6,182,212,0.5)] z-0 min-w-[800px] sm:min-w-[1200px]" />
+          <div className="absolute left-12 right-12 h-[2px] bg-gradient-to-r from-transparent via-cyan-500 to-orange-500 top-1/2 -translate-y-1/2 opacity-30 shadow-[0_0_30px_rgba(6,182,212,0.5)] z-0 min-w-[1200px] md:min-w-[1600px]" />
 
-          <div className="flex items-center justify-between h-full relative z-20 overflow-visible flex-nowrap px-12 min-w-[800px] sm:min-w-[1200px]">
+          <div className="flex items-center justify-between h-full relative z-20 overflow-visible flex-nowrap px-12 min-w-[1200px] md:min-w-[1600px]">
             {timeline.map((set, idx) => {
               const isTop = idx % 2 === 0;
               const releaseDate = new Date(set.released_at);
@@ -8772,7 +8906,7 @@ function SocialsPage({
           <div className="flex bg-white/[0.03] p-1.5 rounded-[2rem] border border-white/5 backdrop-blur-3xl shadow-2xl">
             {[
               { id: "community", label: "Community" },
-              { id: "shared", label: "Ontvangen" },
+              { id: "shared", label: "Received" },
             ].map((tab) => (
               <button
                 key={tab.id}
@@ -8800,7 +8934,7 @@ function SocialsPage({
                     <div className="flex items-center gap-4 px-4">
                       <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(168,85,247,1)]" />
                       <h3 className="text-[10px] font-magic font-black text-white/50 uppercase tracking-[0.3em]">
-                        Actieve Signaalstromen
+                        Active Signal Streams
                       </h3>
                     </div>
                     {loading ? (
@@ -8810,7 +8944,7 @@ function SocialsPage({
                     ) : publicUsers.length === 0 ? (
                       <div className="py-20 text-center rune-panel">
                         <p className="text-white/20 font-magic font-black uppercase tracking-widest">
-                          Geen openbare gebruikers gevonden.
+                          No public users found.
                         </p>
                       </div>
                     ) : (
@@ -8822,7 +8956,7 @@ function SocialsPage({
                             onClick={async () => {
                               setIsMobileMenuOpen?.(false);
                               if (!u.isDecksPublic) {
-                                showMessage("Deze gebruiker deelt geen actieve decks.", "info");
+                                showMessage("This user is not sharing any active decks.", "info");
                                 return;
                               }
                               const decksSnap = await getDocs(
@@ -8850,7 +8984,7 @@ function SocialsPage({
                     <div className="flex items-center gap-3 px-2">
                       <Sparkles className="w-4 h-4 text-cyan-400" />
                       <h3 className="text-xs font-magic font-black text-white/80 uppercase tracking-[0.2em]">
-                        Aanbevolen Makers
+                        Featured Creators
                       </h3>
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -8873,7 +9007,7 @@ function SocialsPage({
                     <div className="py-20 text-center rune-panel bg-white/[0.02] rounded-[3rem]">
                       <Mail className="w-12 h-12 text-white/5 mx-auto mb-4" />
                       <p className="text-white/20 font-magic font-black uppercase tracking-widest">
-                        Je hebt nog geen gedeelde transmissions...
+                        No shared transmissions detected...
                       </p>
                     </div>
                   ) : (
@@ -8892,7 +9026,7 @@ function SocialsPage({
                                 </div>
                                 <div className="flex flex-col">
                                   <span className="text-[9px] font-magic font-black text-purple-400 uppercase tracking-widest">
-                                    Gedeeld Deck
+                                    Shared Deck
                                   </span>
                                   <h4 className="text-[14px] font-magic font-black text-white group-hover:text-purple-300 transition-colors uppercase truncate max-w-[150px]">
                                     {sd.deckName}
