@@ -1657,6 +1657,67 @@ export default function App() {
     }
   };
 
+  const fetchMoxfieldDeck = async (id: string, autoSelect: boolean = true) => {
+    if (!id.trim()) return;
+    setLoading(true);
+    try {
+      const { data } = await axios.get(`/api/mf/${id}`);
+      if (data.error) throw new Error(data.error);
+
+      const commanderNames: string[] = [];
+      const existingNames = new Set<string>();
+      const cardLists: string[] = [];
+      const deckName = data.name || `Moxfield Deck ${id}`;
+
+      // Process commanders
+      if (data.commanders) {
+        Object.keys(data.commanders).forEach((name) => {
+          commanderNames.push(name);
+          existingNames.add(name);
+          const qty = data.commanders[name].quantity || 1;
+          for (let i = 0; i < qty; i++) cardLists.push(name);
+        });
+      }
+
+      // Process partner commanders if any
+      if (data.commandersPartner) {
+        Object.keys(data.commandersPartner).forEach((name) => {
+          if (!commanderNames.includes(name)) commanderNames.push(name);
+          existingNames.add(name);
+          const qty = data.commandersPartner[name].quantity || 1;
+          for (let i = 0; i < qty; i++) cardLists.push(name);
+        });
+      }
+
+      // Process mainboard
+      if (data.mainboard) {
+        Object.keys(data.mainboard).forEach((name) => {
+          existingNames.add(name);
+          const qty = data.mainboard[name].quantity || 1;
+          for (let i = 0; i < qty; i++) cardLists.push(name);
+        });
+      }
+
+      let totalCost = data.totalPrice || 0;
+
+      await initializeDeckState(
+        id,
+        deckName,
+        commanderNames,
+        existingNames,
+        totalCost,
+        autoSelect,
+      );
+    } catch (error: any) {
+      console.error(error);
+      const msg =
+        error.response?.data?.error || "Failed to load deck from Moxfield";
+      showMessage(msg, "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchAnyDeck = async (input: string, autoSelect: boolean = true) => {
     const trimmed = input.trim();
     if (!trimmed) return;
@@ -1680,10 +1741,17 @@ export default function App() {
         source = "archidekt";
         const match = rawId.match(/decks\/(\d+)/);
         if (match) deckId = match[1];
+      } else if (rawId.includes("moxfield.com")) {
+        source = "moxfield";
+        const match = rawId.match(/decks\/([^/?#]+)/);
+        if (match) deckId = match[1];
       } else {
         // If no url, detect by format: Archidekt IDs are usually numeric
         if (/^\d+$/.test(deckId)) {
           source = "archidekt";
+        } else if (deckId.length > 15) {
+          // Moxfield IDs are usually longer non-obvious strings
+          source = "moxfield";
         } else {
           source = "tappedout";
         }
@@ -1691,6 +1759,8 @@ export default function App() {
 
       if (source === "archidekt") {
         await fetchArchidektDeck(deckId, autoSelect);
+      } else if (source === "moxfield") {
+        await fetchMoxfieldDeck(deckId, autoSelect);
       } else {
         await fetchTappedOutDeck(deckId, autoSelect);
       }
@@ -2205,7 +2275,9 @@ export default function App() {
     setLoading(true);
     try {
       if (!source) {
-        source = /^\d+$/.test(id) ? "archidekt" : "tappedout";
+        if (/^\d+$/.test(id)) source = "archidekt";
+        else if (id.length > 15) source = "moxfield";
+        else source = "tappedout";
       }
 
       let parsedCards: any[] = [];
@@ -2269,6 +2341,39 @@ export default function App() {
               card: item.card || { oracleCard: { name: item.name } },
             }));
         }
+      } else if (source === "moxfield") {
+        const { data } = await axios.get(`/api/mf/${id}`);
+        if (data.error) throw new Error(data.error);
+        deckName = data.name || `Moxfield Deck ${id}`;
+
+        const cards: any[] = [];
+        if (data.commanders) {
+          Object.keys(data.commanders).forEach((name) => {
+            cards.push({
+              card: { oracleCard: { name } },
+              quantity: data.commanders[name].quantity || 1,
+              categories: ["commander"],
+            });
+          });
+        }
+        if (data.commandersPartner) {
+          Object.keys(data.commandersPartner).forEach((name) => {
+            cards.push({
+              card: { oracleCard: { name } },
+              quantity: data.commandersPartner[name].quantity || 1,
+              categories: ["commander"],
+            });
+          });
+        }
+        if (data.mainboard) {
+          Object.keys(data.mainboard).forEach((name) => {
+            cards.push({
+              card: { oracleCard: { name } },
+              quantity: data.mainboard[name].quantity || 1,
+            });
+          });
+        }
+        parsedCards = cards;
       } else {
         const { data } = await axios.get(`/api/ad/${id}`);
         const cards = data.cards || (data.data && data.data.cards);
@@ -3807,7 +3912,6 @@ Return ONLY JSON. No markdown backticks.`;
                     { label: 'Calendar', icon: Calendar, action: () => handleFunModeClick("calendar"), color: 'text-orange-400 border-orange-500/20 bg-orange-500/5' },
                     { label: 'Sheriff', icon: Shield, action: () => handleFunModeClick("sheriff"), color: 'text-amber-400 border-amber-500/20 bg-amber-500/5' },
                     { label: 'Judge_AI', icon: Gavel, action: () => handleFunModeClick("judge"), color: 'text-green-400 border-green-500/20 bg-green-500/5' },
-                    { label: 'History', icon: History, action: () => { setRoadmapInitialChangelog(true); setShowRoadmap(true); setShowFunHub(false); }, color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/5' },
                     { 
                       label: 'Bears', 
                       icon: PawPrint, 
@@ -4418,7 +4522,7 @@ Return ONLY JSON. No markdown backticks.`;
                     <div className="flex gap-2">
                       <input
                         type="text"
-                        placeholder="Archidekt or TappedOut ID/URL..."
+                        placeholder="Archidekt, TappedOut or Moxfield ID/URL..."
                         className="bg-black/60 border border-[#2a2a2a] shadow-[inset_0_1px_5px_rgba(0,0,0,0.8)] rounded-sm px-4 py-2 text-[11px] flex-1 focus:border-cyan-500/50 outline-none placeholder:text-white/20 text-cyan-400 font-magic transition-colors"
                         value={newDeckIdInput}
                         onChange={(e) => setNewDeckIdInput(e.target.value)}
@@ -4435,6 +4539,9 @@ Return ONLY JSON. No markdown backticks.`;
                         Add Deck
                       </button>
                     </div>
+                    <p className="text-[7px] font-mono text-white/20 italic text-right px-1">
+                      Tip: ensure your deck is "Public" to import successfully.
+                    </p>
 
                     {publicUsers.length > 0 && (
                       <div className="relative group">
@@ -4634,10 +4741,10 @@ Return ONLY JSON. No markdown backticks.`;
                              >
                                <Share2 className="w-4 h-4 text-orange-400/60 group-hover:text-orange-400 group-hover:scale-110 transition-all" />
                              </button>
-                             <button
+                            <button
                                onClick={() => setDeckToDelete(deck.id)}
-                               className="p-3 bg-red-500/5 hover:bg-red-500/10 border border-white/5 hover:border-red-500/20 rounded-xl transition-all group flex-1"
-                               title="Verwijder Deck"
+                               className="p-3 bg-red-500/5 hover:bg-red-500/10 border border-white/5 hover:border-red-500/20 rounded-xl transition-all group flex-1 flex items-center justify-center"
+                               title="Delete Deck"
                              >
                                <Trash2 className="w-4 h-4 text-white/10 group-hover:text-red-500/60 transition-colors" />
                              </button>
@@ -7594,11 +7701,12 @@ function JudgeView() {
       const systemPrompt = `Je bent Ruxa, een deskundige maar bondige Magic: The Gathering Judge. 
       
       MISSIE:
-      Answer the user's rules questions directly and accurately. Use the provided context as a source.
+      Beantwoord vragen over spelregels direct en nauwkeurig. Gebruik de verstrekte context als bron.
       
       RICHTLIJNEN VOOR STIJL EN TAAL:
-      - Answer in ENGLISH only. Use official Magic jargon.
-      - DO NOT USE formatting like asterisks (* or **) for jargon; keep the text flowing smoothly in the sentence.
+      - Antwoord ALTIJD in het NEDERLANDS.
+      - Gebruik de officiële Magic jargon in het ENGELS (bijv. "state-based actions", "priority", "stack", "trigger", "resolve", "on the battlefield").
+      - Gebruik GEEN opmaak zoals sterretjes (* of **) voor jargon; laat de tekst vloeiend in de zin lopen.
       - NEVER mention specific rule numbers (e.g. CR 123.4) unless explicitly asked by the user.
       - GEBRUIK ALTIJD de officiële mana- en tap-symbolen TUSSEN ACCURATES ({BRACKETS}) voor ELKE verwijzing naar mana of tap: {T} voor tap, {Q} voor untap, {W}, {U}, {B}, {R}, {G} voor mana, {C} voor colorless, en {0}, {1}, {2}, etc. voor generieke mana. (Bijv: "{T}: Voeg {G} toe").
       - Voor meerdere mana symbolen, schrijf ze apart: bijv. {C}{C} of {G}{G}.
@@ -8480,7 +8588,7 @@ function OutlawSheriff() {
             </motion.div>
           </div>
           <motion.p variants={itemVariants} className="text-[10px] md:text-sm font-mono text-cyan-400/50 tracking-[0.3em] md:tracking-[0.6em] uppercase max-w-3xl mx-auto pt-4 md:pt-10 px-4">
-            Een tactisch spel van deductie, verraad en overleving
+            Een tactisch spel van deductie en overleving
           </motion.p>
         </div>
 
@@ -8519,21 +8627,50 @@ function OutlawSheriff() {
                   </div>
 
                   <div className="space-y-4 md:space-y-6">
-                    <div className="p-4 md:p-8 bg-white/[0.02] rounded-xl md:rounded-[2.5rem] border border-white/5 space-y-2 md:space-y-4 hover:border-orange-500/20 transition-colors group/stats">
-                      <p className="text-[8px] md:text-[10px] font-mono text-white/20 uppercase tracking-widest group-hover/stats:text-orange-500/60 transition-colors">Verdeling 5 Spelers</p>
-                      <div className="flex justify-between items-center">
-                        <div className="text-lg md:text-3xl font-magic font-black text-white tracking-[0.2em]">1S, 1D, 2O, 1R</div>
-                      </div>
-                    </div>
-                    <div className="p-4 md:p-8 bg-white/[0.02] rounded-xl md:rounded-[2.5rem] border border-white/5 space-y-2 md:space-y-4 hover:border-cyan-500/20 transition-colors group/stats">
-                      <p className="text-[8px] md:text-[10px] font-mono text-white/20 uppercase tracking-widest group-hover/stats:text-cyan-500/60 transition-colors">Verdeling 6 Spelers</p>
-                      <div className="flex justify-between items-center">
-                        <div className="text-lg md:text-3xl font-magic font-black text-white tracking-[0.2em]">1S, 2D, 2O, 1R</div>
-                      </div>
-                    </div>
-                    <div className="p-3 md:p-5 bg-gradient-to-r from-cyan-500/10 to-transparent rounded-xl md:rounded-2xl border-l border-cyan-500/30 flex items-center gap-3 md:gap-4">
-                      <Compass className="w-4 h-4 md:w-5 h-5 text-cyan-400" />
-                      <p className="text-[8px] md:text-[10px] font-magic font-bold text-cyan-400 uppercase tracking-widest">Protocol Commander</p>
+                    <div className="rune-panel bg-white/[0.02] rounded-xl md:rounded-[2.5rem] border border-white/5 p-4 md:p-8 space-y-4 md:space-y-6">
+                      <h4 className="text-[10px] md:text-xs font-magic font-black text-orange-500 uppercase tracking-widest">Rol Verdeling</h4>
+                      <table className="w-full text-[9px] md:text-sm font-sans text-white/70 border-collapse">
+                        <thead>
+                          <tr className="border-b border-white/10 text-left">
+                            <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-white/40">Spelers</th>
+                            <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-orange-500">S</th>
+                            <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-blue-400">D</th>
+                            <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-red-500">O</th>
+                            <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-cyan-400">R</th>
+                          </tr>
+                        </thead>
+                        <tbody className="font-mono">
+                          <tr className="border-b border-white/5">
+                            <td className="py-2 md:py-4 text-white font-black">5 Spelers</td>
+                            <td className="py-2 md:py-4">1</td>
+                            <td className="py-2 md:py-4">1</td>
+                            <td className="py-2 md:py-4">2</td>
+                            <td className="py-2 md:py-4">1</td>
+                          </tr>
+                          <tr className="border-b border-white/5">
+                            <td className="py-2 md:py-4 text-white font-black">6 Spelers</td>
+                            <td className="py-2 md:py-4">1</td>
+                            <td className="py-2 md:py-4">2</td>
+                            <td className="py-2 md:py-4">2</td>
+                            <td className="py-2 md:py-4">1</td>
+                          </tr>
+                          <tr className="border-b border-white/5">
+                            <td className="py-2 md:py-4 text-white font-black">7 Spelers</td>
+                            <td className="py-2 md:py-4">1</td>
+                            <td className="py-2 md:py-4">2</td>
+                            <td className="py-2 md:py-4">3</td>
+                            <td className="py-2 md:py-4">1</td>
+                          </tr>
+                          <tr className="">
+                            <td className="py-2 md:py-4 text-white font-black">8 Spelers</td>
+                            <td className="py-2 md:py-4">1</td>
+                            <td className="py-2 md:py-4">3</td>
+                            <td className="py-2 md:py-4">3</td>
+                            <td className="py-2 md:py-4">1</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                      <p className="text-[7px] md:text-[9px] text-white/30 italic">S: Sheriff | D: Deputy | O: Outlaw | R: Renegade</p>
                     </div>
                   </div>
                 </div>
@@ -8556,7 +8693,7 @@ function OutlawSheriff() {
                     bg: "bg-orange-500/10",
                     border: "border-orange-500/20",
                     t: "De Wet",
-                    d: "Schakel alle Boeven en de Verrader uit. Iedereen weet dat jij de Sheriff bent. Je hebt extra levens om langer te overleven."
+                    d: "Schakel alle Outlaws en de Renegade uit. Iedereen weet dat jij de Sheriff bent. Je hebt extra levens om langer te overleven."
                   },
                   { 
                     n: "Deputy", 
@@ -8571,15 +8708,15 @@ function OutlawSheriff() {
                     c: "text-red-500", 
                     bg: "bg-red-500/10",
                     border: "border-red-500/20",
-                    t: "De Boeven",
-                    d: "Jouw doel is simpel: schakel de Sheriff uit. Zodra de Sheriff dood is, winnen alle Outlaws meteen."
+                    t: "De Outlaws",
+                    d: "Jouw doel is simpel: Dood de Sheriff. Zodra de Sheriff dood is, winnen alle Outlaws meteen."
                   },
                   { 
                     n: "Renegade", 
                     c: "text-cyan-400", 
                     bg: "bg-cyan-400/10",
                     border: "border-cyan-400/20",
-                    t: "De Verrader",
+                    t: "De Renegade",
                     d: "Je speelt voor jezelf. Je wint als je als laatste overblijft, maar pas op: de Sheriff moet als allerlaatste doodgaan."
                   }
                 ].map((r, i) => (
@@ -8615,7 +8752,7 @@ function OutlawSheriff() {
                    <div className="space-y-2 md:space-y-3 group/win">
                      <p className="text-[9px] md:text-[11px] font-magic font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
                        <span className="w-1.5 h-1.5 bg-orange-500 rounded-full" />
-                       Sheriff en Helpers
+                       Sheriff en Deputy('s)
                      </p>
                      <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
                        Je wint als alle <span className="text-white font-bold tracking-widest">OUTLAWS</span> en de <span className="text-white font-bold tracking-widest">RENEGADE</span> zijn uitgeschakeld.
@@ -8650,8 +8787,8 @@ function OutlawSheriff() {
                  </h3>
                  <div className="space-y-3 md:space-y-4">
                    {[
-                     { label: "Pak de boeven", actor: "Sheriff & Deputy", desc: "Prioriteit: schakel de Outlaws uit." },
-                     { label: "Focus de Sheriff", actor: "Outlaws", desc: "Snelste weg naar de overwinning." },
+                     { label: "Pak de Outlaws", actor: "Sheriff & Deputy", desc: "Prioriteit: schakel de Outlaws uit." },
+                     { label: "Dood de Sheriff", actor: "Outlaws", desc: "Snelste weg naar de overwinning." },
                      { label: "Houd de balans", actor: "Renegade", desc: "Zorg dat geen partij te sterk wordt." },
                      { label: "Het laatste duel", actor: "Renegade", desc: "Dood de Sheriff als allerlaatste." }
                    ].map((item, i) => (
@@ -8668,17 +8805,6 @@ function OutlawSheriff() {
                </div>
             </motion.div>
 
-            {/* Strategic Protocol Footer */}
-            <motion.div variants={itemVariants} className="p-6 md:p-10 bg-orange-500/5 border border-orange-500/20 rounded-2xl md:rounded-[3rem] text-center space-y-6 md:space-y-8 relative overflow-hidden">
-              <Radio className="w-8 h-8 md:w-12 md:h-12 text-orange-500 mx-auto animate-pulse relative z-10" />
-              <div className="space-y-2 md:space-y-4 relative z-10">
-                <p className="text-[9px] md:text-[11px] font-magic font-black text-white uppercase tracking-[0.4em] md:tracking-[0.6em]">Arcaan Protocol</p>
-                <div className="h-[1px] md:h-[2px] w-8 md:w-12 bg-orange-500/30 mx-auto" />
-                <p className="text-[11px] md:text-[13px] text-white/50 italic leading-relaxed max-w-xs mx-auto">
-                  "Kies je rol, maar vergeet nooit je eed."
-                </p>
-              </div>
-            </motion.div>
           </div>
         </div>
         

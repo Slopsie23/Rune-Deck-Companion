@@ -242,6 +242,23 @@ async function startServer() {
     }
   });
 
+  // Proxy for Moxfield to avoid CORS
+  app.get("/api/mf/:id", async (req, res) => {
+    try {
+      const response = await axios.get(`https://api2.moxfield.com/v2/decks/all/${req.params.id}`, {
+        headers: {
+          "User-Agent": "RuneDeck/2.0",
+          "Accept": "application/json"
+        },
+      });
+      res.json(response.data);
+    } catch (error: any) {
+      console.error("Moxfield Proxy Error:", error.message);
+      const status = error.response?.status || 500;
+      res.status(status).json({ error: `Failed to fetch from Moxfield: ${error.message}` });
+    }
+  });
+
   // Serve static files from public directory
   app.use(express.static(path.join(process.cwd(), "public")));
 
