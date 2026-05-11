@@ -69,6 +69,7 @@ import {
   PieChart as PieChartIcon,
   Maximize2,
   Mail,
+  MessageSquare,
   MessageCircle,
   Send,
   Share2,
@@ -343,6 +344,8 @@ export default function App() {
     type?: "oracle" | "name" | "mechanic" | "other";
   } | null>(null);
   const [pendingTags, setPendingTags] = useState<Record<string, string[]>>({});
+  const [deckDescriptions, setDeckDescriptions] = useState<Record<string, string>>({});
+  const [isAiGeneratingTags, setIsAiGeneratingTags] = useState<Record<string, boolean>>({});
 
   // Performance and reliability for mobile
   useEffect(() => {
@@ -465,6 +468,7 @@ export default function App() {
 
   const [showShareOverlay, setShowShareOverlay] = useState(false);
   const [shareRecipientEmail, setShareRecipientEmail] = useState("");
+  const [shareMessage, setShareMessage] = useState("");
   const [isSharing, setIsSharing] = useState(false);
   const [isSocialsLoading, setIsSocialsLoading] = useState(false);
   const [publicUsers, setPublicUsers] = useState<any[]>([]);
@@ -513,13 +517,16 @@ export default function App() {
       await setDoc(doc(collection(db, "sharedSelections")), {
         fromUserId: user.uid,
         fromUserEmail: user.email,
+        fromUserName: user.displayName || userName || "Anonymous Wizard",
         toUserEmail: shareRecipientEmail.toLowerCase().trim(),
         cards: deckbox,
+        message: shareMessage,
         createdAt: serverTimestamp(),
       });
       showMessage(`Sent to ${shareRecipientEmail}`, "success");
       setShowShareOverlay(false);
       setShareRecipientEmail("");
+      setShareMessage("");
     } catch (e) {
       console.error(e);
       showMessage("Failed to share", "error");
@@ -715,6 +722,14 @@ export default function App() {
           // Init profile
           const userRef = doc(db, "users", u.uid);
           const userSnap = await getDoc(userRef);
+          
+          const profileData: any = {
+            userId: u.uid,
+            email: u.email,
+            displayName: u.displayName,
+            photoURL: u.photoURL,
+            updatedAt: serverTimestamp(),
+          };
 
           if (userSnap.exists()) {
             const data = userSnap.data();
@@ -724,22 +739,20 @@ export default function App() {
               setCardsPerRow(data.cardsPerRow);
             setIsProfileVisible(data.isProfileVisible !== undefined ? data.isProfileVisible : true);
             setIsDecksPublic(data.isDecksPublic !== undefined ? data.isDecksPublic : false);
-          }
 
-          const profileData: any = {
-            userId: u.uid,
-            email: u.email,
-            displayName: u.displayName,
-            photoURL: u.photoURL,
-            updatedAt: serverTimestamp(),
-          };
-
-          // Explicitly set defaults if missing in snap
-          if (!userSnap.exists() || (userSnap.data()?.isProfileVisible === undefined)) {
+            // FORCE DEFAULTS ONCE FOR EXISTING USERS
+            if (!data.defaultsAppliedV3) {
+              profileData.isProfileVisible = true;
+              profileData.isDecksPublic = false;
+              profileData.defaultsAppliedV3 = true;
+              setIsProfileVisible(true);
+              setIsDecksPublic(false);
+            }
+          } else {
+            // New User defaults
             profileData.isProfileVisible = true;
-          }
-          if (!userSnap.exists() || (userSnap.data()?.isDecksPublic === undefined)) {
             profileData.isDecksPublic = false;
+            profileData.defaultsAppliedV3 = true;
           }
 
           await setDoc(userRef, profileData, { merge: true });
@@ -2824,6 +2837,116 @@ Return ONLY JSON. No markdown backticks.`;
     }
   };
 
+  const generateAiTagsFromDescription = async (deckId: string, description: string) => {
+    if (!description.trim()) return;
+    
+    setIsAiGeneratingTags(prev => ({ ...prev, [deckId]: true }));
+    console.log(`[AI] Starting extraction for deck ${deckId}...`);
+    try {
+      const deck = savedDecks.find(d => d.id === deckId);
+      const existingTags = deck?.tags || [];
+      
+      const prompt = `You are a professional Magic: The Gathering deck architect.
+The player will describe what they want their deck to do (they might use Dutch or English).
+Description: "${description}"
+
+Suggest 5-8 valid Scryfall search queries that represent deep mechanical synergies for this deck goal.
+Output a valid JSON array of objects.
+Each object must have:
+"label": A short, readable name for the tag IN ENGLISH (e.g. "Sacrifice Layout", "Token Generation")
+"query": The EXACT Scryfall search syntax (e.g. o:"sacrifice a creature", oracle:"create a 1/1")
+
+Rules:
+1. Must be valid Scryfall syntax.
+2. Must find cards that synergize with the described goal.
+3. Only return the exact syntax as the query.
+4. If the input is in Dutch, translate the intent but keep the 'label' in English.
+5. Do not include existing tags: ${existingTags.map(t => t.split(":::")[0]).join(", ")}
+
+Return ONLY JSON. No markdown backticks.`;
+
+      if (!ai) {
+        showMessage("AI functionality is not available. Check your GEMINI_API_KEY.", "error");
+        return;
+      }
+
+      console.log("[AI] Sending prompt to Gemini...");
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [{ parts: [{ text: prompt }] }],
+      });
+
+      console.log("[AI] Gemini response received.");
+      let jsonStr = (response.text || "")
+        .replace(/```json/g, "")
+        .replace(/```/g, "")
+        .trim();
+      
+      if (!jsonStr || jsonStr === "undefined") {
+        throw new Error("AI returned invalid JSON: empty or undefined");
+      }
+
+      let parsed = [];
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch (e) {
+        console.error("[AI] JSON Parse Fail:", jsonStr);
+        throw new Error("Failed to parse AI response as JSON");
+      }
+
+      console.log(`[AI] Parsed ${parsed.length} suggestions. Validating with Scryfall...`);
+      const validTags: string[] = [];
+      
+      // Parallelize the Scryfall testing for much better performance
+      const validationPromises = parsed.map(async (item: any) => {
+        if (!item.label || !item.query) return;
+        const testQuery = `(${item.query}) id:${deck?.ci || "c"}`;
+        try {
+          const res = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
+          if (res.data.total_cards > 0) {
+            console.log(`[AI] Valid tag found: ${item.label}`);
+            return `${item.label}:::${item.query}`;
+          }
+        } catch (e) {
+          console.warn(`[AI] Scryfall validation failed for: ${item.query}`);
+          return null;
+        }
+      });
+
+      const results = await Promise.all(validationPromises);
+      results.forEach(res => {
+        if (res) validTags.push(res);
+      });
+
+      console.log(`[AI] Validation complete. ${validTags.length} tags survived.`);
+
+      if (validTags.length > 0 && user) {
+        const deckRef = doc(db, "users", user.uid, "decks", deckId);
+        const combined = Array.from(new Set([...existingTags, ...validTags]));
+        await updateDoc(deckRef, { 
+          tags: combined, 
+          updatedAt: serverTimestamp() 
+        }).catch((err) =>
+          handleFirestoreError(
+            err,
+            OperationType.WRITE,
+            `users/${user.uid}/decks/${deckId}`,
+          ),
+        );
+        showMessage(`AI Magic complete! Added ${validTags.length} synergy tags.`);
+        setSuggestedDecks((prev) => new Set(prev).add(deckId));
+        setDeckDescriptions(prev => ({ ...prev, [deckId]: "" })); // Clear after success
+      } else {
+        showMessage("AI couldn't find valid search queries for that description.", "info");
+      }
+    } catch (error: any) {
+      console.error(error);
+      showMessage(`Failed to generate AI tags: ${error.message || "Unknown error"}`, "error");
+    } finally {
+      setIsAiGeneratingTags(prev => ({ ...prev, [deckId]: false }));
+    }
+  };
+
   const renderColorIdentity = (ci: string) => {
     const fixedCI = ci || "c";
     return (
@@ -4110,7 +4233,7 @@ Return ONLY JSON. No markdown backticks.`;
                       Visual Density
                     </span>
                     <span className="text-[8px] font-mono text-orange-500/60 uppercase">
-                      {cardsPerRow === 0 ? "Auto Cards" : `${cardsPerRow} Cards`}
+                      {cardsPerRow === 0 ? "Auto" : `${cardsPerRow} Cards`}
                     </span>
                   </div>
                   <div className="grid grid-cols-3 gap-2">
@@ -4118,7 +4241,7 @@ Return ONLY JSON. No markdown backticks.`;
                       onClick={() => saveUserSettings({ cardsPerRow: 0 })}
                       className={`py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === 0 ? "bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10"}`}
                     >
-                      Auto Cards
+                      Auto
                     </button>
                     {[1, 2, 3, 5, 8].map((n) => (
                       <button
@@ -4722,6 +4845,51 @@ Return ONLY JSON. No markdown backticks.`;
                                 }
                               }}
                             />
+                          </div>
+
+                          <div className="space-y-3 pt-2">
+                            <div className="flex items-center justify-between px-1">
+                              <span className="text-[8px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">
+                                AI Synergy Goal
+                              </span>
+                              <Sparkles className="w-3 h-3 text-cyan-400/50" />
+                            </div>
+                            <textarea
+                              className="w-full bg-black/20 border border-white/5 rounded-lg px-4 py-3 text-[10px] outline-none focus:border-cyan-500/30 focus:bg-black/40 transition-all placeholder:text-white/10 text-white/60 min-h-[70px] resize-none"
+                              placeholder="Describe what you want this deck to do (Dutch or English)..."
+                              value={deckDescriptions[deck.id] || ""}
+                              onChange={(e) =>
+                                setDeckDescriptions((prev) => ({
+                                  ...prev,
+                                  [deck.id]: e.target.value,
+                                }))
+                              }
+                            />
+                            <button
+                              onClick={() =>
+                                generateAiTagsFromDescription(
+                                  deck.id,
+                                  deckDescriptions[deck.id] || "",
+                                )
+                              }
+                              disabled={
+                                isAiGeneratingTags[deck.id] ||
+                                !deckDescriptions[deck.id]?.trim()
+                              }
+                              className="w-full py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 rounded-lg text-[9px] font-magic font-black uppercase tracking-widest text-cyan-400 transition-all flex items-center justify-center gap-2 disabled:opacity-20 disabled:grayscale"
+                            >
+                              {isAiGeneratingTags[deck.id] ? (
+                                <>
+                                  <RotateCw className="w-3 h-3 animate-spin" />
+                                  <span>Extracting...</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="w-3 h-3" />
+                                  <span>Generate AI Tags</span>
+                                </>
+                              )}
+                            </button>
                           </div>
                         </div>
 
@@ -6228,6 +6396,8 @@ Return ONLY JSON. No markdown backticks.`;
         onShare={shareSelection}
         email={shareRecipientEmail}
         setEmail={setShareRecipientEmail}
+        message={shareMessage}
+        setMessage={setShareMessage}
         loading={isSharing}
       />
 
@@ -7138,6 +7308,7 @@ function AdminChamber({
   const [searchQuery, setSearchQuery] = useState("");
   const [adminTab, setAdminTab] = useState<"users" | "registry">("users");
   const [globalDecks, setGlobalDecks] = useState<any[]>([]);
+  const [userToDeleteConfirm, setUserToDeleteConfirm] = useState<string | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -7183,6 +7354,39 @@ function AdminChamber({
     } catch (e) {
       console.error(e);
       showMessage("GLOBAL_SYNC_ERROR", "error");
+    }
+  };
+
+  const deleteUser = async (targetUserId: string) => {
+    if (!targetUserId) return;
+    try {
+      setLocalLoading(true);
+      // 1. Delete all decks
+      const decksSnap = await getDocs(collection(db, "users", targetUserId, "decks"));
+      for (const d of decksSnap.docs) {
+        await deleteDoc(doc(db, "users", targetUserId, "decks", d.id));
+      }
+      // 2. Delete deckbox
+      const deckboxSnap = await getDocs(collection(db, "users", targetUserId, "deckbox"));
+      for (const c of deckboxSnap.docs) {
+        await deleteDoc(doc(db, "users", targetUserId, "deckbox", c.id));
+      }
+      // 3. Delete user profile
+      await deleteDoc(doc(db, "users", targetUserId));
+      
+      setUsers(prev => prev.filter(u => u.id !== targetUserId));
+      if (selectedUser?.id === targetUserId) {
+        setSelectedUser(null);
+        setUserDecks([]);
+        setUserDeckbox([]);
+      }
+      showMessage("USER_TERMINATED", "success");
+      setUserToDeleteConfirm(null);
+    } catch (e) {
+      console.error(e);
+      showMessage("DELETE_FAILED", "error");
+    } finally {
+      setLocalLoading(false);
     }
   };
 
@@ -7357,6 +7561,7 @@ function AdminChamber({
                              setShowAdminChamber(false);
                              showMessage(`VIEWING_MODE: ${selectedUser.userName}`, "success");
                            }} className="px-6 py-2.5 bg-cyan-500 text-black rounded-xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-cyan-400 transition-all shadow-lg shadow-cyan-500/20 active:scale-95">View_User_Social</button>
+                            <button onClick={() => setUserToDeleteConfirm(selectedUser.id)} className="px-6 py-2.5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-red-500 hover:text-black transition-all active:scale-95">Delete User</button>
                            <button onClick={() => {
                              const csv = [["Name", "Type", "ID"], ...userDecks.map(d => [d.name, "Deck", d.id]), ...userDeckbox.map(c => [c.name, "Card", c.scryfall_id])].map(e => e.join(",")).join("\n");
                              const blob = new Blob([csv], { type: 'text/csv' });
@@ -7494,6 +7699,50 @@ function AdminChamber({
             )}
           </main>
         </div>
+
+        {/* Custom Delete Confirmation Modal */}
+        <AnimatePresence>
+          {userToDeleteConfirm && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-[2000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
+            >
+              <motion.div
+                initial={{ scale: 0.9, y: 20 }}
+                animate={{ scale: 1, y: 0 }}
+                exit={{ scale: 0.9, y: 20 }}
+                className="bg-[#0c0c0c] border border-red-500/30 rounded-[2rem] p-8 max-w-sm w-full shadow-[0_0_50px_rgba(239,68,68,0.2)] text-center space-y-6"
+              >
+                <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-4">
+                  <Trash2 className="w-8 h-8 text-red-500" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-xl font-magic font-black text-white uppercase tracking-tighter">Terminate Entity?</h3>
+                  <p className="text-[10px] text-white/40 uppercase tracking-widest font-mono leading-relaxed">
+                    This will PERMANENTLY erase all decks and card data for <span className="text-red-500 font-black">{selectedUser?.userName || selectedUser?.displayName}</span>. 
+                    This action cannot be reverted.
+                  </p>
+                </div>
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setUserToDeleteConfirm(null)}
+                    className="flex-1 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-magic font-black text-white/40 uppercase tracking-widest transition-all"
+                  >
+                    Abort
+                  </button>
+                  <button
+                    onClick={() => deleteUser(userToDeleteConfirm)}
+                    className="flex-[2] py-3 bg-red-600 hover:bg-red-500 text-black rounded-xl text-[10px] font-magic font-black uppercase tracking-widest transition-all shadow-lg shadow-red-600/20"
+                  >
+                    Confirm Deletion
+                  </button>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {localLoading && (
           <div className="absolute inset-0 z-[1100] bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center gap-6">
@@ -9221,7 +9470,7 @@ function SocialsPage({
                                   Shared Cards
                                 </span>
                                 <span className="text-[11px] font-sans font-black text-white/60">
-                                  {msg.fromUserEmail}
+                                  {msg.fromUserName || msg.fromUserEmail}
                                 </span>
                               </div>
                             </div>
@@ -9229,6 +9478,14 @@ function SocialsPage({
                               {msg.createdAt?.toDate().toLocaleDateString()}
                             </span>
                           </div>
+                          
+                          {msg.message && (
+                            <div className="mb-4 p-4 bg-white/[0.02] border border-white/5 rounded-2xl relative overflow-hidden">
+                               <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500" />
+                               <p className="text-xs italic text-white/60 leading-relaxed font-sans">{msg.message}</p>
+                            </div>
+                          )}
+
                           <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 mb-6">
                             {msg.cards
                               .slice(0, 8)
@@ -9618,6 +9875,8 @@ function ShareSelectionOverlay({
   onShare,
   email,
   setEmail,
+  message,
+  setMessage,
   loading,
 }: any) {
   const [publicUsers, setPublicUsers] = useState<any[]>([]);
@@ -9670,10 +9929,10 @@ function ShareSelectionOverlay({
                   <Send className="w-8 h-8 text-cyan-400" />
                 </div>
                 <h2 className="text-2xl font-magic font-black text-white uppercase tracking-tighter">
-                  Share Selection
+                  Share Cards
                 </h2>
                 <p className="text-[9px] text-white/40 leading-relaxed uppercase tracking-[0.3em] font-mono">
-                  Select a recipient
+                  Broadcasting selected signatures
                 </p>
               </div>
 
@@ -9681,7 +9940,7 @@ function ShareSelectionOverlay({
                 {/* Public Users Quick Select */}
                 <div className="space-y-2">
                   <label className="text-[8px] font-magic font-black text-white/20 uppercase tracking-widest pl-2">
-                    Public Users
+                    Active Users
                   </label>
                   <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
                     {fetchingUsers ? (
@@ -9690,7 +9949,7 @@ function ShareSelectionOverlay({
                       </div>
                     ) : publicUsers.length === 0 ? (
                       <div className="text-[8px] text-white/10 font-bold uppercase tracking-widest py-2 px-4 italic">
-                        No public users detected...
+                        No public beacons detected...
                       </div>
                     ) : (
                       publicUsers.map((u) => (
@@ -9703,13 +9962,13 @@ function ShareSelectionOverlay({
                             <img
                               src={
                                 u.photoURL ||
-                                `https://api.dicebear.com/7.x/bottts/svg?seed=${u.userName}`
+                                `https://api.dicebear.com/7.x/bottts/svg?seed=${u.userName || u.displayName}`
                               }
                               className="w-full h-full object-cover"
                             />
                           </div>
                           <span className="text-[9px] font-magic font-black uppercase tracking-widest pr-2">
-                            {u.displayName || u.userName}
+                            {u.userName || u.displayName}
                           </span>
                         </button>
                       ))
@@ -9717,15 +9976,31 @@ function ShareSelectionOverlay({
                   </div>
                 </div>
 
-                <div className="relative group">
-                  <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-hover:text-cyan-400 transition-colors" />
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="MAgic.player@multiverse.com"
-                    className="w-full bg-black/40 border border-white/5 rounded-2xl px-12 py-4 text-xs focus:border-cyan-500/50 outline-none text-white transition-all font-mono uppercase"
-                  />
+                <div className="space-y-2">
+                  <div className="relative group">
+                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-hover:text-cyan-400 transition-colors" />
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="Target Email Address"
+                      className="w-full bg-black/40 border border-white/5 rounded-2xl px-12 py-4 text-xs focus:border-cyan-500/50 outline-none text-white transition-all font-mono uppercase"
+                    />
+                  </div>
+
+                  <div className="relative group">
+                    <MessageSquare className="absolute left-4 top-6 w-4 h-4 text-white/20 group-hover:text-cyan-400 transition-colors" />
+                    <textarea
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value.substring(0, 200))}
+                      placeholder="Inscribe a message (optional)..."
+                      rows={3}
+                      className="w-full bg-black/40 border border-white/5 rounded-2xl px-12 py-5 text-xs focus:border-cyan-500/50 outline-none text-white transition-all font-sans resize-none"
+                    />
+                    <div className="absolute bottom-3 right-4 text-[7px] font-mono text-white/10 uppercase tracking-widest">
+                      {message.length} / 200 chars
+                    </div>
+                  </div>
                 </div>
               </div>
 
