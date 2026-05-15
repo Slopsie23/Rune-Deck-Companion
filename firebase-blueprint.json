@@ -62,21 +62,35 @@
       "properties": {
         "fromUserId": { "type": "string" },
         "fromUserEmail": { "type": "string" },
+        "fromUserName": { "type": "string" },
         "toUserEmail": { "type": "string" },
         "cards": { "type": "array", "items": { "type": "object" } },
         "createdAt": { "type": "string", "format": "date-time" }
       }
     },
+    "SharedDeck": {
+      "title": "Shared Deck",
+      "description": "A specific deck shared by one user with another.",
+      "type": "object",
+      "properties": {
+        "fromUserId": { "type": "string" },
+        "fromUserName": { "type": "string" },
+        "fromUserEmail": { "type": "string" },
+        "toUserEmail": { "type": "string" },
+        "deckId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
     "Suggestion": {
       "title": "Card Suggestion",
-      "description": "A card suggestion for a specific deck.",
+      "description": "A set of suggested cards for a user's deck or profile.",
       "type": "object",
       "properties": {
         "fromUserId": { "type": "string" },
         "fromUserEmail": { "type": "string" },
+        "fromUserName": { "type": "string" },
         "toUserId": { "type": "string" },
-        "deckId": { "type": "string" },
-        "card": { "type": "object" },
+        "cards": { "type": "array", "items": { "type": "object" } },
         "note": { "type": "string" },
         "createdAt": { "type": "string", "format": "date-time" }
       }
@@ -99,9 +113,13 @@
       "schema": "SharedSelection",
       "description": "Cards shared between users"
     },
+    "/sharedDecks/{sharedDeckId}": {
+      "schema": "SharedDeck",
+      "description": "Specific decks shared between users"
+    },
     "/suggestions/{suggestionId}": {
       "schema": "Suggestion",
-      "description": "Card suggestions for decks"
+      "description": "Card suggestions for users"
     }
   }
 }

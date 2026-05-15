@@ -12,7 +12,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isSignedIn() && request.auth.token.email == 'sdebeer@gmail.com';
+      return isSignedIn() && (request.auth.token.email.lower() == 'sdebeer@gmail.com');
     }
 
     function isOwner(userId) {
@@ -80,6 +80,33 @@ service cloud.firestore {
         allow update: if isOwner(userId) || isAdmin();
         allow delete: if isOwner(userId) || isAdmin();
       }
+    }
+
+    // --- Shared Collections ---
+    match /sharedSelections/{id} {
+      allow get: if isSignedIn() && (request.auth.token.email.lower() == resource.data.toUserEmail.lower() || request.auth.uid == resource.data.fromUserId || isAdmin());
+      allow list: if isSignedIn() && (request.auth.token.email.lower() == resource.data.toUserEmail.lower() || isAdmin());
+      allow create: if isSignedIn() && incoming().fromUserId == request.auth.uid;
+      allow delete: if isSignedIn() && (request.auth.uid == resource.data.fromUserId || request.auth.token.email.lower() == resource.data.toUserEmail.lower() || isAdmin());
+    }
+
+    match /sharedDecks/{id} {
+      allow get: if isSignedIn() && (request.auth.token.email.lower() == resource.data.toUserEmail.lower() || request.auth.uid == resource.data.fromUserId || isAdmin());
+      allow list: if isSignedIn() && (request.auth.token.email.lower() == resource.data.toUserEmail.lower() || isAdmin());
+      allow create: if isSignedIn() && incoming().fromUserId == request.auth.uid;
+      allow delete: if isSignedIn() && (request.auth.uid == resource.data.fromUserId || request.auth.token.email.lower() == resource.data.toUserEmail.lower() || isAdmin());
+    }
+
+    match /suggestions/{id} {
+      allow get: if isSignedIn() && (request.auth.uid == resource.data.toUserId || request.auth.uid == resource.data.fromUserId || isAdmin());
+      allow list: if isSignedIn() && (request.auth.uid == resource.data.toUserId || isAdmin());
+      allow create: if isSignedIn() && incoming().fromUserId == request.auth.uid;
+      allow delete: if isSignedIn() && (request.auth.uid == resource.data.toUserId || request.auth.uid == resource.data.fromUserId || isAdmin());
+    }
+
+    // --- Collection Group Decks (Public Access) ---
+    match /{path=**}/decks/{deckId} {
+      allow list, get: if resource.data.isPublic == true || isAdmin();
     }
   }
 }
