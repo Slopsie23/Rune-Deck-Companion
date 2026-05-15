@@ -101,12 +101,12 @@ import {
 } from "recharts";
 // import runesBackground from './assets/images/runes_background_1777929551380.png';
 const runesBackground = "/runebg.png";
-const VERSION = "V2.6.20";
+const VERSION = "V2.6.19";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
   if (cachedScryfallSets) return cachedScryfallSets;
-  const res = await axios.get("/api/sf/sets");
+  const res = await axios.get("https://api.scryfall.com/sets");
   cachedScryfallSets = res.data;
   return cachedScryfallSets;
 }
@@ -126,8 +126,6 @@ import {
 import { db, auth, googleProvider } from "./lib/firebase";
 import {
   signInWithPopup,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
   onAuthStateChanged,
   signOut,
   setPersistence,
@@ -523,8 +521,6 @@ export default function App() {
           const shared: any[] = [];
           snap.forEach((d) => shared.push({ id: d.id, ...d.data() }));
           setSharedWithMe(shared);
-        }, (err) => {
-          console.error("Shared selections sync failed:", err);
         });
       }
     }
@@ -837,7 +833,7 @@ export default function App() {
           for (const card of placeholders) {
             try {
               const res = await axios.get(
-                `/api/sf/cards/named?exact=${encodeURIComponent(card.name)}`,
+                `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(card.name)}`,
               );
               const sf = res.data;
               const cardId = card.name.replace(/[^a-zA-Z0-9]/g, "_");
@@ -920,35 +916,6 @@ export default function App() {
   }, [user]);
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
-
-  const emailAuth = async () => {
-    if (isLoggingIn) return;
-    if (!email || !password) {
-      showMessage("Email en wachtwoord verplicht", "error");
-      return;
-    }
-    setIsLoggingIn(true);
-    try {
-      if (authMode === "signin") {
-        await signInWithEmailAndPassword(auth, email, password);
-      } else {
-        await createUserWithEmailAndPassword(auth, email, password);
-      }
-    } catch (error: any) {
-      console.error("Email Auth Error:", error);
-      let msg = "Authenticatie mislukt";
-      if (error.code === 'auth/user-not-found') msg = "Gebruiker niet gevonden";
-      if (error.code === 'auth/wrong-password') msg = "Onjuist wachtwoord";
-      if (error.code === 'auth/email-already-in-use') msg = "E-mail al in gebruik";
-      if (error.code === 'auth/weak-password') msg = "Wachtwoord te zwak (min 6 tekens)";
-      showMessage(msg, "error");
-    } finally {
-      setIsLoggingIn(false);
-    }
-  };
 
   const login = async () => {
     if (isLoggingIn) return;
@@ -1261,7 +1228,7 @@ export default function App() {
       try {
         const identifiers = candidates.map((name) => ({ name }));
         const { data: sfData } = await axios.post(
-          "/api/sf/cards/collection",
+          "https://api.scryfall.com/cards/collection",
           { identifiers },
         );
 
@@ -1335,7 +1302,7 @@ export default function App() {
       finalCommanderNames.map((name) =>
         axios
           .get(
-            `/api/sf/cards/named?fuzzy=${encodeURIComponent(name)}`,
+            `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`,
           )
           .catch((err) => {
             console.error(`Commander ${name} not found on Scryfall`, err);
@@ -1392,7 +1359,7 @@ export default function App() {
       const firstCard = Array.from(existingNames)[0];
       try {
         const { data: cData } = await axios.get(
-          `/api/sf/cards/named?fuzzy=${encodeURIComponent(firstCard)}`,
+          `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(firstCard)}`,
         );
         const imgs = getCardImages(cData);
         if (imgs.art_crop) finalArtCrops = [imgs.art_crop];
@@ -1522,7 +1489,7 @@ export default function App() {
           const identifiers = batchNames.map((name) => ({ name }));
           try {
             const { data: sfData } = await axios.post(
-              "/api/sf/cards/collection",
+              "https://api.scryfall.com/cards/collection",
               { identifiers },
             );
             if (sfData && sfData.data) {
@@ -1672,7 +1639,7 @@ export default function App() {
             const batchNames = uniqueNames.slice(i, i + BATCH_SIZE);
             const identifiers = batchNames.map((name) => ({ name }));
             const { data: sfData } = await axios.post(
-              "/api/sf/cards/collection",
+              "https://api.scryfall.com/cards/collection",
               { identifiers },
             );
             if (sfData && sfData.data) {
@@ -1738,45 +1705,36 @@ export default function App() {
       const cardLists: string[] = [];
       const deckName = data.name || `Moxfield Deck ${id}`;
 
-      // Process commanders - Moxfield structure check
-      if (data.commanders && typeof data.commanders === 'object') {
+      // Process commanders
+      if (data.commanders) {
         Object.keys(data.commanders).forEach((name) => {
           commanderNames.push(name);
           existingNames.add(name);
-          const qty = data.commanders[name]?.quantity || 1;
+          const qty = data.commanders[name].quantity || 1;
           for (let i = 0; i < qty; i++) cardLists.push(name);
         });
       }
 
-      // Process partner commanders
-      if (data.commandersPartner && typeof data.commandersPartner === 'object') {
+      // Process partner commanders if any
+      if (data.commandersPartner) {
         Object.keys(data.commandersPartner).forEach((name) => {
           if (!commanderNames.includes(name)) commanderNames.push(name);
           existingNames.add(name);
-          const qty = data.commandersPartner[name]?.quantity || 1;
+          const qty = data.commandersPartner[name].quantity || 1;
           for (let i = 0; i < qty; i++) cardLists.push(name);
         });
       }
 
       // Process mainboard
-      if (data.mainboard && typeof data.mainboard === 'object') {
+      if (data.mainboard) {
         Object.keys(data.mainboard).forEach((name) => {
-          if (!name) return;
           existingNames.add(name);
-          const qty = data.mainboard[name]?.quantity || 1;
+          const qty = data.mainboard[name].quantity || 1;
           for (let i = 0; i < qty; i++) cardLists.push(name);
         });
       }
 
-      // Process sideboard if exists
-      if (data.sideboard && typeof data.sideboard === 'object') {
-        Object.keys(data.sideboard).forEach((name) => {
-          if (!name) return;
-          existingNames.add(name);
-        });
-      }
-
-      const totalCost = data.totalPrice || 0;
+      let totalCost = data.totalPrice || 0;
 
       await initializeDeckState(
         id,
@@ -1915,7 +1873,7 @@ export default function App() {
       // - Partners and Backgrounds CAN have smaller CI (id<=ciString) because they only form the CI when paired
       const query = `f:commander ((t:legendary t:creature id=${ciString}) or ((is:partner or is:background) id<=${ciString}))`;
       const response = await fetch(
-        `/api/sf/cards/search?q=${encodeURIComponent(query)}&order=edhrec`,
+        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=edhrec`,
       );
       const data = await response.json();
 
@@ -2216,7 +2174,7 @@ export default function App() {
       const query = queryParts.join(" ");
 
       // Use unique=cards to get distinct cards, or unique=prints if we want variants
-      const url = `/api/sf/cards/search?q=${encodeURIComponent(query)}&order=${order}&dir=${dir}&unique=cards`;
+      const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=${order}&dir=${dir}&unique=cards`;
       console.log("Searching Scryfall:", url);
       const { data } = await axios.get(url);
       setAllCards(data.data || []);
@@ -2512,7 +2470,7 @@ export default function App() {
             const batch = namesToFetch.slice(i, i + BATCH_SIZE);
             const identifiers = batch.map((name) => ({ name }));
             const { data: sfData } = await axios.post(
-              "/api/sf/cards/collection",
+              "https://api.scryfall.com/cards/collection",
               { identifiers },
             );
             if (sfData && sfData.data) {
@@ -2631,7 +2589,7 @@ export default function App() {
         let resultsCount = 0;
         try {
           const scryRes = await axios.get(
-            `/api/sf/cards/search?q=${encodeURIComponent(testQuery)}`,
+            `https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`,
           );
           resultsCount = scryRes.data.total_cards;
         } catch (e) {}
@@ -2778,7 +2736,7 @@ export default function App() {
         validNames.map((name) =>
           axios
             .get(
-              `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
+              `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
             )
             .then((r) => r.data)
             .catch(() => null),
@@ -2856,7 +2814,7 @@ Return ONLY JSON. No markdown backticks.`;
           // Delay to prevent rate limiting
           await new Promise((r) => setTimeout(r, 100));
           const res = await axios.get(
-            `/api/sf/cards/search?q=${encodeURIComponent(testQuery)}`,
+            `https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`,
           );
           if (res.data.total_cards > 0) {
             validTags.push(`${item.label}:::${item.query}`);
@@ -2968,7 +2926,7 @@ Return ONLY JSON. No markdown backticks.`;
         if (!item.label || !item.query) return;
         const testQuery = `(${item.query}) id:${deck?.ci || "c"}`;
         try {
-          const res = await axios.get(`/api/sf/cards/search?q=${encodeURIComponent(testQuery)}`);
+          const res = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
           if (res.data.total_cards > 0) {
             console.log(`[AI] Valid tag found: ${item.label}`);
             return `${item.label}:::${item.query}`;
@@ -3120,56 +3078,10 @@ Return ONLY JSON. No markdown backticks.`;
             favorite strategies.
           </p>
 
-          <div className="space-y-4 mb-6">
-            <div className="relative">
-              <input
-                type="email"
-                placeholder="E-mail"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                className="w-full bg-black/60 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white font-bold placeholder:text-white/20 focus:border-orange-500/40 transition-all outline-none"
-              />
-            </div>
-            <div className="relative">
-              <input
-                type="password"
-                placeholder="Wachtwoord"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full bg-black/60 border border-white/10 rounded-2xl px-4 py-3 text-sm text-white font-bold placeholder:text-white/20 focus:border-orange-500/40 transition-all outline-none"
-                onKeyDown={(e) => e.key === 'Enter' && emailAuth()}
-              />
-            </div>
-            <button
-              onClick={emailAuth}
-              disabled={isLoggingIn}
-              className="w-full py-4 bg-orange-500 text-black font-magic font-black uppercase tracking-[0.2em] rounded-2xl hover:bg-orange-400 active:scale-95 transition-all shadow-xl text-[10px]"
-            >
-              {isLoggingIn ? "Bezig..." : (authMode === "signin" ? "Inloggen" : "Registreren")}
-            </button>
-            <div className="flex items-center justify-center gap-2 mt-2">
-              <span className="text-[10px] text-white/30 uppercase font-black">
-                {authMode === "signin" ? "Nog geen rune?" : "Al een account?"}
-              </span>
-              <button
-                onClick={() => setAuthMode(authMode === "signin" ? "signup" : "signin")}
-                className="text-[10px] text-orange-500 uppercase font-black hover:underline"
-              >
-                {authMode === "signin" ? "Maak aan" : "Log in"}
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4 mb-6">
-            <div className="h-px flex-1 bg-white/5" />
-            <span className="text-[8px] font-black text-white/10 tracking-[0.3em]">OR</span>
-            <div className="h-px flex-1 bg-white/5" />
-          </div>
-
           <button
             onClick={login}
             disabled={isLoggingIn}
-            className={`w-full flex items-center justify-center gap-3 py-4 rune-panel text-white/60 hover:text-white hover:border-white/20 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10 ${isLoggingIn ? "opacity-50 cursor-wait" : ""}`}
+            className={`w-full flex items-center justify-center gap-3 py-4 rune-panel text-orange-500/80 hover:text-orange-500 hover:border-orange-500/30 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10 ${isLoggingIn ? "opacity-50 cursor-wait" : ""}`}
           >
             {isLoggingIn ? (
               <span className="animate-pulse">signing in...</span>
@@ -5027,7 +4939,7 @@ Return ONLY JSON. No markdown backticks.`;
                               </motion.div>
                             )}
 
-                             {(activeTagTool[deck.id] || 'scan') === 'manual' && (
+                            {(activeTagTool[deck.id] || 'scan') === 'manual' && (
                               <motion.div 
                                 initial={{ opacity: 0, y: 5 }}
                                 animate={{ opacity: 1, y: 0 }}
@@ -6815,16 +6727,6 @@ function RoadmapModal({
 
   const releaseHistory = [
     {
-      version: "V2.6.20",
-      date: "May 2026",
-      changes: [
-        "ARCANE GATEWAY: Added native E-mail & Password authentication protocols",
-        "MOXFIELD PULSE: Hardened Moxfield import transmission through secure API proxies",
-        "IDENTITY REFINEMENT: Renamed 'Tag Search' to 'Rune Based Search' for clearer magical alignment",
-        "INTERFACE POLISH: Mana symbol indicators now perfectly adaptive to energy density"
-      ]
-    },
-    {
       version: "V2.6.19",
       date: "May 2026",
       changes: [
@@ -6955,12 +6857,6 @@ function RoadmapModal({
           flow: "Evolution",
           desc: "View the system release archive and project evolution logs throughout 2026.",
           action: "changelog",
-        },
-        {
-          term: "V2.7 HORIZON",
-          flow: "Roadmap",
-          desc: "1. Deck Versioning (Arcane States); 2. Tournament/Judge Insights; 3. Collaborative Brewing (The Arcane Circle).",
-          action: "roadmap"
         },
       ],
     },
@@ -7522,9 +7418,7 @@ function AdminChamber({
   const fetchUsers = async () => {
     setLocalLoading(true);
     try {
-      const snap = await getDocs(query(
-        collection(db, "users")
-      ));
+      const snap = await getDocs(query(collection(db, "users")));
       const uList = await Promise.all(snap.docs.map(async (d) => {
         const userData = { id: d.id, ...d.data() } as any;
         const decksSnap = await getDocs(collection(db, "users", d.id, "decks"));
@@ -7548,10 +7442,7 @@ function AdminChamber({
 
   const fetchGlobalRegistry = async () => {
     try {
-      const snap = await getDocs(query(
-        collectionGroup(db, "decks"), 
-        where("isPublic", "==", true)
-      ));
+      const snap = await getDocs(query(collectionGroup(db, "decks")));
       const decks = snap.docs.map(d => ({ 
         id: d.id, 
         ...d.data(),
@@ -7623,7 +7514,7 @@ function AdminChamber({
         for (let i = 0; i < identifiers.length; i += 75) {
           const chunk = identifiers.slice(i, i + 75);
           try {
-            const res = await axios.post("/api/sf/cards/collection", { identifiers: chunk });
+            const res = await axios.post("https://api.scryfall.com/cards/collection", { identifiers: chunk });
             const data = res.data.data;
             deckbox = deckbox.map(c => {
               const matched = data.find((sc: any) => 
@@ -7994,7 +7885,7 @@ function JudgeView() {
   const fetchCardSuggestions = async (query: string): Promise<string[]> => {
     try {
       const res = await axios.get(
-        `/api/sf/cards/autocomplete?q=${encodeURIComponent(query)}`,
+        `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(query)}`,
       );
       return res.data.data.slice(0, 5);
     } catch (e) {
@@ -8005,7 +7896,7 @@ function JudgeView() {
   const fetchCardContext = async (name: string): Promise<string> => {
     try {
       const res = await axios.get(
-        `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
+        `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
       );
       const data = res.data;
       const typeLine = data.type_line || "Type: Unknown";
@@ -8065,7 +7956,7 @@ function JudgeView() {
       for (const name of extracted) {
         try {
           const scryRes = await axios.get(
-            `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
+            `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
           );
           validNames.push(scryRes.data.name);
         } catch (err) {
@@ -8145,7 +8036,7 @@ function JudgeView() {
       for (const name of confirmedNames) {
         try {
           const res = await axios.get(
-            `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
+            `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
           );
           cardsData.push(res.data);
           context += `**Kaart: ${res.data.name}**\n**Metadata:** ${res.data.type_line} | Mana Value: ${res.data.cmc} | P/T: ${res.data.power}/${res.data.toughness}\n**Color Identity:** ${res.data.color_identity?.join(", ")}\n**Regeltekst:** ${res.data.oracle_text}\n`;
@@ -9351,11 +9242,6 @@ function SocialsPage({
   const [sharedDecksList, setSharedDecksList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const startArcaneLoading = (msg: string) => {
-    setLoadingMessage(msg);
-    setLoading(true);
-  };
 
   useEffect(() => {
     const fetchCommunity = async () => {

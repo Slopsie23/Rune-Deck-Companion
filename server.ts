@@ -23,26 +23,18 @@ async function startServer() {
   });
 
   // Proxy for Scryfall to avoid CORS and ad-blocker issues
-  app.all("/api/sf/*", async (req, res) => {
+  app.get("/api/sf/*", async (req, res) => {
     try {
       const endpoint = req.params[0];
       const queryParams = new URLSearchParams(req.query as Record<string, string>).toString();
       const url = `https://api.scryfall.com/${endpoint}${queryParams ? '?' + queryParams : ''}`;
       
-      const config: any = {
-        method: req.method,
-        url: url,
+      const response = await axios.get(url, {
         headers: {
           "User-Agent": "RuneDeck/2.0",
           "Accept": "application/json"
         }
-      };
-
-      if (req.method === "POST") {
-        config.data = req.body;
-      }
-
-      const response = await axios(config);
+      });
       res.json(response.data);
     } catch (error: any) {
       if (error.response) {
