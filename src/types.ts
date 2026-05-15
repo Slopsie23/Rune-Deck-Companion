@@ -53,6 +53,7 @@ export interface SavedDeck {
   ranking?: string;
   createdAt?: any;
   updatedAt?: any;
+  isPublic?: boolean;
 }
 
 export interface ScryfallSet {

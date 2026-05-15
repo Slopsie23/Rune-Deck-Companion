@@ -37,7 +37,8 @@
         },
         "ci": { "type": "string", "description": "Color identity string" },
         "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" }
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "isPublic": { "type": "boolean", "description": "Whether this deck is visible to the community" }
       },
       "required": ["id", "userId", "name", "tags", "commanders", "art_crops", "ci", "createdAt", "updatedAt"]
     },

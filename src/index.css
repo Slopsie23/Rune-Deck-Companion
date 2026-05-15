@@ -39,16 +39,17 @@
   .rune-bg {
     background-color: #0c0c0c;
     background-image: 
-      radial-gradient(circle at 50% 50%, rgba(20, 20, 20, 1) 0%, rgba(5, 5, 5, 1) 100%),
-      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 100% 100%, 40px 40px, 40px 40px;
+      radial-gradient(circle at 15% 15%, rgba(6, 182, 212, 0.03) 0%, transparent 15%),
+      radial-gradient(circle at 85% 85%, rgba(249, 115, 22, 0.05) 0%, transparent 20%),
+      linear-gradient(rgba(255, 255, 255, 0.01) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.01) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 60px 60px, 60px 60px;
     background-position: center center;
   }
 
   .rune-panel {
-    border-radius: 0 !important;
-    @apply relative bg-[#121212] border border-[#2a2a2a] shadow-[inset_0_0_20px_rgba(0,0,0,0.8),0_10px_30px_rgba(0,0,0,0.6)];
+    border-radius: 4px !important;
+    @apply relative bg-[#121212] border border-white/[0.03] shadow-[inset_0_0_40px_rgba(0,0,0,0.4),0_10px_40px_rgba(0,0,0,0.6)];
   }
 
   .rune-panel::before, .rune-panel::after {
