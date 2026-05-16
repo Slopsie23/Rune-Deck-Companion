@@ -120,6 +120,13 @@
   box-shadow: inset 0 2px 4px rgba(0,0,0,0.5), 0 0 10px rgba(6,182,212,0.2);
 }
 
+.bg-mana-w { background-color: #f0f2c0 !important; }
+.bg-mana-u { background-color: #b3ceea !important; }
+.bg-mana-b { background-color: #a69f9d !important; }
+.bg-mana-r { background-color: #eb9f82 !important; }
+.bg-mana-g { background-color: #c4d3ca !important; }
+.bg-mana-c { background-color: #ccc2c0 !important; }
+
 body {
   @apply bg-[#0c0c0c] text-white antialiased font-sans;
   background-color: #0c0c0c !important;
@@ -129,10 +136,35 @@ h1, h2, .magic-text {
   @apply font-magic font-bold uppercase tracking-tight;
 }
 
-/* Force lighter weights for all elements to answer user request for "less bold" design */
-.font-black, .font-extrabold, .font-bold {
+/* UI FLAVOR: VIKING-BEAR THEME */
+.bear-fur-pattern {
+  background-image: url("data:image/svg+xml,%3Csvg width='40' height='40' viewBox='0 0 40 40' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 40a2 2 0 0 1 2-2 2 2 0 0 1 2 2H0zm4-4a2 2 0 0 1 2-2 2 2 0 0 1 2 2H4zm4-4a2 2 0 0 1 2-2 2 2 0 0 1 2 2H8zm4-4a2 2 0 0 1 2-2 2 2 0 0 1 2 2h-4zm4-4a2 2 0 0 1 2-2 2 2 0 0 1 2 2h-4zm4-4a2 2 0 0 1 2-2 2 2 0 0 1 2 2h-4zm4-4a2 2 0 0 1 2-2 2 2 0 0 1 2 2h-4zm4-4a2 2 0 0 1 2-2 2 2 0 0 1 2 2h-4z' fill='%23ffffff' fill-opacity='0.02' fill-rule='evenodd'/%3E%3C/svg%3E");
+}
+
+.viking-glow {
+  text-shadow: 0 0 10px rgba(249, 115, 22, 0.4), 0 0 20px rgba(249, 115, 22, 0.2);
+}
+
+.rune-border {
+  border-image: linear-gradient(to bottom right, #f97316, transparent, #f97316) 1;
+}
+
+.admin-glass {
+  background: rgba(10, 10, 10, 0.8);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+/* Force lighter weights for all elements EXCEPT ADMIN */
+body:not(.admin-opened) .font-black, 
+body:not(.admin-opened) .font-extrabold, 
+body:not(.admin-opened) .font-bold {
   font-weight: 400 !important;
 }
+
+.admin-opened .font-black { font-weight: 900 !important; }
+.admin-opened .font-extrabold { font-weight: 800 !important; }
+.admin-opened .font-bold { font-weight: 700 !important; }
 
 .font-magic {
   font-weight: 500 !important;

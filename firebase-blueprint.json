@@ -2,106 +2,42 @@
   "entities": {
     "User": {
       "title": "User Profile",
-      "description": "Public and private information about a user.",
+      "description": "User metadata and settings",
       "type": "object",
       "properties": {
-        "userId": { "type": "string", "description": "The unique identifier for the user (UID from Firebase Auth)" },
-        "email": { "type": "string", "format": "email", "description": "The user's email address" },
-        "displayName": { "type": "string", "description": "The user's display name" },
-        "isPublic": { "type": "boolean", "description": "Whether the user's decks are visible to others" }
-      },
-      "required": ["userId", "email"]
+        "userName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "userTitle": { "type": "string" },
+        "cardsPerRowDesktop": { "type": "number" },
+        "cardsPerRowMobile": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
     },
     "Deck": {
-      "title": "Deck Profile",
-      "description": "Metadata and tags for a saved MTG deck.",
+      "title": "Saved Deck",
+      "description": "A collection of cards with metadata",
       "type": "object",
       "properties": {
-        "id": { "type": "string", "description": "Archidekt ID or internal unique ID" },
-        "userId": { "type": "string", "description": "The UID of the owner" },
-        "name": { "type": "string", "description": "Name of the deck" },
-        "tags": { 
-          "type": "array", 
-          "items": { "type": "string" },
-          "description": "Custom search tags for the deck" 
-        },
-        "commanders": { 
-          "type": "array", 
-          "items": { "type": "string" },
-          "description": "Names of the commanders" 
-        },
-        "art_crops": { 
-          "type": "array", 
-          "items": { "type": "string" },
-          "description": "Art crop URLs for headers" 
-        },
-        "ci": { "type": "string", "description": "Color identity string" },
-        "createdAt": { "type": "string", "format": "date-time" },
-        "updatedAt": { "type": "string", "format": "date-time" },
-        "isPublic": { "type": "boolean", "description": "Whether this deck is visible to the community" }
-      },
-      "required": ["id", "userId", "name", "tags", "commanders", "art_crops", "ci", "createdAt", "updatedAt"]
-    },
-    "SelectedCard": {
-      "title": "Selected Card",
-      "description": "A card currently in the user's active selection (deckbox).",
-      "type": "object",
-      "properties": {
+        "id": { "type": "string" },
         "userId": { "type": "string" },
         "name": { "type": "string" },
-        "thumb": { "type": "string" },
-        "from_deck": { "type": "string" },
-        "qty": { "type": "integer" }
+        "commanders": { "type": "array", "items": { "type": "string" } },
+        "ci": { "type": "string" },
+        "totalCost": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
-      "required": ["userId", "name", "thumb", "from_deck", "qty"]
-    },
-    "SharedSelection": {
-      "title": "Shared Selection",
-      "description": "A set of cards shared from one user to another.",
-      "type": "object",
-      "properties": {
-        "fromUserId": { "type": "string" },
-        "fromUserEmail": { "type": "string" },
-        "toUserEmail": { "type": "string" },
-        "cards": { "type": "array", "items": { "type": "object" } },
-        "createdAt": { "type": "string", "format": "date-time" }
-      }
-    },
-    "Suggestion": {
-      "title": "Card Suggestion",
-      "description": "A card suggestion for a specific deck.",
-      "type": "object",
-      "properties": {
-        "fromUserId": { "type": "string" },
-        "fromUserEmail": { "type": "string" },
-        "toUserId": { "type": "string" },
-        "deckId": { "type": "string" },
-        "card": { "type": "object" },
-        "note": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
-      }
+      "required": ["id", "userId", "name"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
-      "description": "User profile data"
+      "description": "The user document itself"
     },
     "/users/{userId}/decks/{deckId}": {
       "schema": "Deck",
-      "description": "User's saved decks"
-    },
-    "/users/{userId}/deckbox/{cardId}": {
-      "schema": "SelectedCard",
-      "description": "User's active selection panel items"
-    },
-    "/sharedSelections/{selectionId}": {
-      "schema": "SharedSelection",
-      "description": "Cards shared between users"
-    },
-    "/suggestions/{suggestionId}": {
-      "schema": "Suggestion",
-      "description": "Card suggestions for decks"
+      "description": "User saved decks"
     }
   }
 }

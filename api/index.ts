@@ -66,9 +66,12 @@ app.get("/api/sfimg", async (req, res) => {
 app.get("/api/to/:id", async (req, res) => {
   const deckId = req.params.id;
   const commonHeaders = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://tappedout.net/",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache"
   };
 
   // 1. Try JSON API first
@@ -78,13 +81,13 @@ app.get("/api/to/:id", async (req, res) => {
         ...commonHeaders,
         "Accept": "application/json",
       },
-      timeout: 5000
+      timeout: 6000
     });
     if (apiResponse.data && apiResponse.data.inventory) {
       return res.json(apiResponse.data);
     }
-  } catch (e) {
-    console.log(`TappedOut JSON API failed for ${deckId}, falling back to scraping`);
+  } catch (e: any) {
+    console.log(`TappedOut JSON API failed for ${deckId}, status: ${e.response?.status || 'unknown'}, falling back to scraping`);
   }
 
   try {
@@ -97,7 +100,7 @@ app.get("/api/to/:id", async (req, res) => {
       const htmlResponse = await axios.get(`https://tappedout.net/mtg-decks/${deckId}/`, { 
         headers: commonHeaders, 
         responseType: 'text',
-        timeout: 10000
+        timeout: 12000
       });
       const html = htmlResponse.data;
       
@@ -129,9 +132,20 @@ app.get("/api/to/:id", async (req, res) => {
                    .trim();
       };
 
-      $('[id="board-commander"] a.board-link, .board-commander a.board-link, .board-col h3:contains("Commander") + ul a.board-link, .board-col h3:contains("Commandand") + ul a.board-link').each((_, el) => {
-        const name = cleanToName($(el).text());
-        if (name && !commanders.includes(name)) commanders.push(name);
+      const commanderSelectors = [
+        '[id="board-commander"] a.board-link', 
+        '.board-commander a.board-link', 
+        '.board-col h3:contains("Commander") + ul a.board-link', 
+        '.board-col h3:contains("Commandand") + ul a.board-link',
+        '.board-link[data-board="commander"]',
+        'a.board-link[href*="commander"]'
+      ];
+
+      commanderSelectors.forEach(selector => {
+        $(selector).each((_, el) => {
+          const name = cleanToName($(el).text());
+          if (name && !commanders.includes(name)) commanders.push(name);
+        });
       });
       
       // Fallback: Check for *CMDR* identifier in text of any board link
@@ -141,6 +155,18 @@ app.get("/api/to/:id", async (req, res) => {
           if (text.includes('*CMDR*')) {
              const name = cleanToName(text);
              if (name && !commanders.includes(name)) commanders.push(name);
+          }
+        });
+      }
+
+      if (commanders.length === 0) {
+        $('h3').each((_, el) => {
+          const h3Text = $(el).text().toLowerCase();
+          if (h3Text.includes('commander')) {
+             $(el).nextUntil('h3').find('a.board-link').each((__, link) => {
+               const name = cleanToName($(link).text());
+               if (name && !commanders.includes(name)) commanders.push(name);
+             });
           }
         });
       }
@@ -161,8 +187,8 @@ app.get("/api/to/:id", async (req, res) => {
         }
       });
 
-    } catch (e) {
-      console.error("Failed to parse HTML for deck info:", e instanceof Error ? e.message : e);
+    } catch (e: any) {
+      console.error("Failed to parse HTML for TappedOut deck info:", e.message);
     }
 
     // 3. TappedOut .txt download endpoint
@@ -174,19 +200,19 @@ app.get("/api/to/:id", async (req, res) => {
         timeout: 8000
       });
       rawText = response.data;
-    } catch (e) {
-      console.log(`TappedOut TXT format failed for ${deckId}, using scraped cards if available`);
+    } catch (e: any) {
+      console.log(`TappedOut TXT format failed for ${deckId} (status: ${e.response?.status || 'unknown'}), using scraped cards if available`);
     }
     
     if (!rawText && scrapedCards.length === 0) {
-      return res.status(404).json({ error: "Deck not found or private on TappedOut" });
+      return res.status(404).json({ error: "Deck not found (might be private) on TappedOut" });
     }
 
     if (rawText && (rawText.includes("<html") || rawText.includes("<!DOCTYPE"))) {
       if (scrapedCards.length > 0) {
         return res.json({ inventory: scrapedCards, id: deckId, deckName, commanders });
       }
-      return res.status(404).json({ error: "Deck not found (might be private) on TappedOut" });
+      return res.status(404).json({ error: "Deck not found or requires login on TappedOut" });
     }
 
     if (rawText) {
@@ -195,7 +221,7 @@ app.get("/api/to/:id", async (req, res) => {
       res.json({ inventory: scrapedCards, id: deckId, deckName, commanders });
     }
   } catch (error: any) {
-    console.error("TappedOut Proxy Error:", error.message);
+    console.error("TappedOut Proxy Critical Error:", error.message);
     const status = error.response?.status || 500;
     res.status(status).json({ error: `Failed to fetch from TappedOut: ${error.message}` });
   }
@@ -224,6 +250,39 @@ app.get("/api/mf/:id", async (req, res) => {
   } catch (error: any) {
     const status = error.response?.status || 500;
     res.status(status).json({ error: `Failed to fetch from Moxfield: ${error.message}` });
+  }
+});
+
+// Gemini API Proxy
+app.post("/api/gemini", async (req, res) => {
+  try {
+    const { model, contents, config, systemInstruction } = req.body;
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return res.status(500).json({ error: "GEMINI_API_KEY is not set on the server" });
+    }
+
+    const body: any = { 
+      contents,
+      generationConfig: config
+    };
+
+    if (systemInstruction) {
+      body.system_instruction = {
+        parts: [{ text: systemInstruction }]
+      };
+    }
+
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
+      body,
+      { headers: { "Content-Type": "application/json" } }
+    );
+    res.json(response.data);
+  } catch (error: any) {
+    console.error("Gemini Proxy Error:", error.response?.data || error.message);
+    const status = error.response?.status || 500;
+    res.status(status).json(error.response?.data || { error: error.message });
   }
 });
 

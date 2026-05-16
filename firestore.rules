@@ -1,85 +1,29 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    
     // Default deny
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // --- Helpers ---
-    function isSignedIn() {
-      return request.auth != null;
-    }
-
-    function isAdmin() {
-      return isSignedIn() && request.auth.token.email == 'sdebeer@gmail.com';
-    }
-
+    // Helper for owner check
     function isOwner(userId) {
-      return isSignedIn() && request.auth.uid == userId;
+      return request.auth != null && request.auth.uid == userId;
     }
 
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
-    function incoming() {
-      return request.resource.data;
-    }
-
-    function existing() {
-      return resource.data;
-    }
-
-    function isValidDeck(data, ownerId) {
-      return data.id is string && data.id.size() <= 100
-        && data.userId == ownerId
-        && data.name is string && data.name.size() <= 200
-        && data.tags is list && data.tags.size() <= 100
-        && data.commanders is list && data.commanders.size() <= 5
-        && data.art_crops is list && data.art_crops.size() <= 5
-        && data.ci is string && data.ci.size() <= 10
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp
-        && (data.isPublic == null || data.isPublic is bool);
-    }
-
-    function isValidCard(data, ownerId) {
-      return data.name is string && data.name.size() <= 200
-        && data.userId == ownerId
-        && data.thumb is string
-        && data.from_deck is string
-        && data.qty is int && data.qty >= 0 && data.qty <= 999;
-    }
-
-    // --- Users ---
+    // This rule covers /users/UID, /users/UID/decks/ID, /users/UID/deckbox/ID, etc.
     match /users/{userId} {
-      allow get: if isOwner(userId) || isAdmin() || (resource != null && resource.data.isProfileVisible == true);
-      allow list: if (isSignedIn() && resource.data.isProfileVisible == true) || isAdmin();
-      allow create: if isOwner(userId) 
-        && incoming().userId == userId
-        && incoming().email is string
-        && incoming().keys().size() <= 12;
-      allow update: if isOwner(userId) || isAdmin();
-
-      // --- Decks ---
-      match /decks/{deckId} {
-        allow list, get: if isOwner(userId) || isAdmin() || (resource != null && resource.data.isPublic == true);
-        allow create: if isOwner(userId) 
-          && isValidDeck(incoming(), userId)
-          && incoming().createdAt == request.time
-          && incoming().updatedAt == request.time;
-        allow update: if isOwner(userId) || isAdmin();
-        allow delete: if isOwner(userId) || isAdmin();
+      allow read, write: if isOwner(userId);
+      
+      match /{allPaths=**} {
+        allow read, write: if isOwner(userId);
       }
+    }
 
-      // --- Deckbox (Selection) ---
-      match /deckbox/{cardId} {
-        allow list, get: if isOwner(userId) || isAdmin();
-        allow create: if (isOwner(userId) || isAdmin()) && isValidCard(incoming(), userId);
-        allow update: if isOwner(userId) || isAdmin();
-        allow delete: if isOwner(userId) || isAdmin();
-      }
+    // Test connectivity path
+    match /test/connection {
+      allow read: if true;
     }
   }
 }

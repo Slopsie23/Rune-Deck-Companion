@@ -50,7 +50,6 @@ export interface SavedDeck {
   art_crops: string[];
   ci: string;
   totalCost?: number;
-  ranking?: string;
   createdAt?: any;
   updatedAt?: any;
   isPublic?: boolean;

@@ -4,7 +4,6 @@
  */
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { GoogleGenAI, Type } from "@google/genai";
 import {
   Search,
   Plus,
@@ -83,6 +82,12 @@ import {
   Heart,
   Clock,
   ArrowUpDown,
+  Camera,
+  Activity,
+  Link as LinkIcon,
+  Monitor,
+  Smartphone,
+  Loader2,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import axios from "axios";
@@ -111,6 +116,46 @@ async function fetchScryfallSets() {
   return cachedScryfallSets;
 }
 
+// --- FIRESTORE ERROR HANDLING ---
+enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+  BATCH = 'batch',
+}
+
+interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+  }
+}
+
+function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
+  const currentAuth = auth;
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: currentAuth.currentUser?.uid || null,
+      email: currentAuth.currentUser?.email || null,
+      emailVerified: currentAuth.currentUser?.emailVerified || null,
+    },
+    operationType,
+    path
+  };
+  console.error('[Firestore Error Detail]:', JSON.stringify(errInfo, null, 2));
+  // We throw a clean stringified JSON so the infrastructure can parse it if needed
+  throw new Error(JSON.stringify(errInfo));
+}
+// --------------------------------
+
 const logo = "/runebear.png?v=" + new Date().getTime();
 const logoUrl = "/runebg.png";
 
@@ -130,6 +175,7 @@ import {
   signOut,
   setPersistence,
   browserLocalPersistence,
+  updateProfile,
   User as FirebaseUser,
 } from "firebase/auth";
 import {
@@ -155,18 +201,43 @@ import {
 import { Card, DeckCard, SavedDeck, ScryfallSet } from "./types";
 import { IdentityPortal } from "./components/IdentityPortal";
 
-let ai: GoogleGenAI | null = null;
-try {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (apiKey) {
-    ai = new GoogleGenAI({ apiKey });
-  } else {
-    console.warn(
-      "GEMINI_API_KEY is mist. AI functies zullen niet werken tenzij je dit instelt als environment variable.",
-    );
+async function callGemini(options: { 
+  model: string, 
+  contents: any, 
+  config?: any,
+  systemInstruction?: string 
+}) {
+  try {
+    // Transform contents if it's just a string
+    let contents = options.contents;
+    if (typeof contents === "string") {
+      contents = [{ parts: [{ text: contents }] }];
+    }
+
+    let systemInstruction = options.systemInstruction;
+    let config = options.config;
+
+    // Handle the case where systemInstruction was passed inside config (legacy SDK style)
+    if (config?.systemInstruction) {
+        systemInstruction = config.systemInstruction;
+        // Remove it from config so it doesn't get sent as generationConfig
+        const { systemInstruction: _, ...rest } = config;
+        config = rest;
+    }
+
+    const { data } = await axios.post("/api/gemini", {
+      model: options.model,
+      contents,
+      config,
+      systemInstruction
+    });
+
+    const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    return { text: text, data: data };
+  } catch (error: any) {
+    console.error("Gemini call failed:", error.response?.data || error.message);
+    throw error;
   }
-} catch (e) {
-  console.error("Error initializing Gemini AI:", e);
 }
 
 const BearIcon = PawPrint;
@@ -274,6 +345,61 @@ const FloatingArcaneField = () => {
   );
 };
 
+const renderManaSymbols = (manaCost: any, size = "w-4 h-4") => {
+  if (!manaCost) return null;
+
+  let symbols: string[] = [];
+
+  if (Array.isArray(manaCost)) {
+    symbols = manaCost.map((s) => `{${String(s).toUpperCase()}}`);
+  } else {
+    let costString = String(manaCost).toUpperCase();
+    // Normalize string: ensure it has {} around everything if it's raw text
+    if (!costString.includes("{")) {
+      costString = costString
+        .replace(/(\d+)/g, "{$1}")
+        .replace(/([WUBRGCXTSP])/g, "{$1}");
+    }
+    symbols = costString.match(/\{[^}]+\}/g) || [];
+  }
+
+  // WUBRG Sorting Logic
+  const WUBRG_ORDER = ["W", "U", "B", "R", "G", "C"];
+  symbols.sort((a, b) => {
+    const charA = a.replace(/\{|\}/g, "").charAt(0);
+    const charB = b.replace(/\{|\}/g, "").charAt(0);
+    const idxA = WUBRG_ORDER.indexOf(charA);
+    const idxB = WUBRG_ORDER.indexOf(charB);
+    if (idxA === -1 && idxB === -1) return 0;
+    if (idxA === -1) return 1;
+    if (idxB === -1) return -1;
+    return idxA - idxB;
+  });
+
+  return (
+    <div className="flex items-center gap-0.5 flex-wrap justify-center pointer-events-none">
+      {symbols.map((sym, i) => {
+        let inner = sym
+          .replace(/\{|\}/g, "")
+          .replace(/\//g, "")
+          .toUpperCase();
+        if (!inner) return null;
+
+        return (
+          <img
+            key={i}
+            src={`https://svgs.scryfall.io/card-symbols/${inner}.svg`}
+            alt={sym}
+            className={`${size} object-contain shrink-0 select-none block drop-shadow-[0_0_3px_rgba(0,0,0,1)] brightness-125 saturate-150`}
+            referrerPolicy="no-referrer"
+            loading="lazy"
+          />
+        );
+      })}
+    </div>
+  );
+};
+
 export default function App() {
   const [viewMode, setViewMode] = useState<
     | "cards"
@@ -287,68 +413,31 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Searching the Multiverse...");
   const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [showAdminChamber, setShowAdminChamber] = useState(false);
+  const [windowWidth, setWindowWidth] = useState(typeof window !== 'undefined' ? window.innerWidth : 1200);
+
+  useEffect(() => {
+    const handleResize = () => setWindowWidth(window.innerWidth);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  const isMobile = windowWidth < 768;
+
   const [showRoadmap, setShowRoadmap] = useState(false);
   const [roadmapInitialChangelog, setRoadmapInitialChangelog] = useState(false);
-
-  const [cardsPerRow, setCardsPerRow] = useState<number>(0); // 0 means 'auto' (~220px)
+  
+  const [cardsPerRowDesktop, setCardsPerRowDesktop] = useState<number>(0); 
+  const [cardsPerRowMobile, setCardsPerRowMobile] = useState<number>(1); 
   const [userTitle, setUserTitle] = useState("Deckmaster");
   const [userName, setUserName] = useState("");
+  const [photoURL, setPhotoURL] = useState("");
   const [isForceNaming, setIsForceNaming] = useState(false);
-  const [isProfileVisible, setIsProfileVisible] = useState(true);
 
   const startArcaneLoading = (msg: string) => {
     setLoadingMessage(msg);
     setLoading(true);
   };
-  const [isDecksPublic, setIsDecksPublic] = useState(false);
-  const [userSearch, setUserSearch] = useState("");
-  const [foundUsers, setFoundUsers] = useState<any[]>([]);
-  const [isSearchingUsers, setIsSearchingUsers] = useState(false);
 
-  const toggleDeckPublic = async (deck: SavedDeck) => {
-    if (!user) return;
-    const newStatus = !deck.isPublic;
-    try {
-      await updateDoc(doc(db, "users", user.uid, "decks", deck.id), {
-        isPublic: newStatus,
-        updatedAt: serverTimestamp()
-      });
-      showMessage(`Deck is nu ${newStatus ? 'Publiek' : 'Privé'}`, "success");
-    } catch (e) {
-      showMessage("Kon status niet bijwerken", "error");
-    }
-  };
-
-  const searchUsers = async (queryStr: string) => {
-    setUserSearch(queryStr);
-    if (queryStr.length < 3) {
-      setFoundUsers([]);
-      return;
-    }
-    setIsSearchingUsers(true);
-    try {
-      const q = query(
-        collection(db, "users"),
-        where("isProfileVisible", "==", true),
-        limit(50)
-      );
-      const snapshot = await getDocs(q);
-      const allPublic = snapshot.docs.map((d) => ({
-        id: d.id,
-        ...(d.data() as any),
-      }));
-      const filtered = allPublic.filter(u => 
-        u.displayName?.toLowerCase().includes(queryStr.toLowerCase()) || 
-        u.email?.toLowerCase().includes(queryStr.toLowerCase())
-      );
-      setFoundUsers(filtered);
-    } catch (e) {
-      console.error("Search failed", e);
-    }
-    setIsSearchingUsers(false);
-  };
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const [tagToVerify, setTagToVerify] = useState<{
@@ -390,10 +479,10 @@ export default function App() {
 
   const saveUserSettings = async (updates: {
     userTitle?: string;
-    cardsPerRow?: number;
+    cardsPerRowDesktop?: number;
+    cardsPerRowMobile?: number;
     userName?: string;
-    isProfileVisible?: boolean;
-    isDecksPublic?: boolean;
+    photoURL?: string;
   }) => {
     if (!user) return;
     try {
@@ -404,152 +493,31 @@ export default function App() {
           updatedAt: serverTimestamp(),
         },
         { merge: true },
-      );
+      ).catch((err) => handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`));
       if (updates.userTitle !== undefined) setUserTitle(updates.userTitle);
-      if (updates.cardsPerRow !== undefined)
-        setCardsPerRow(updates.cardsPerRow);
+      if (updates.cardsPerRowDesktop !== undefined)
+        setCardsPerRowDesktop(updates.cardsPerRowDesktop);
+      if (updates.cardsPerRowMobile !== undefined)
+        setCardsPerRowMobile(updates.cardsPerRowMobile);
       if (updates.userName !== undefined) setUserName(updates.userName);
-      if (updates.isProfileVisible !== undefined)
-        setIsProfileVisible(updates.isProfileVisible);
-      if (updates.isDecksPublic !== undefined)
-        setIsDecksPublic(updates.isDecksPublic);
-      showMessage("Settings saved", "success");
-    } catch (err) {
-      console.error("Failed to save settings", err);
-      showMessage("Error updating settings", "error");
-    }
-  };
-
-  const [isShareModalOpen, setIsShareModalOpen] = useState(false);
-  const [deckToShare, setDeckToShare] = useState<SavedDeck | null>(null);
-
-  const handleShareDeck = (deck: SavedDeck) => {
-    setDeckToShare(deck);
-    setIsShareModalOpen(true);
-  };
-  const renderManaSymbols = (manaCost: any, size = "w-4 h-4") => {
-    if (!manaCost) return null;
-
-    let symbols: string[] = [];
-
-    if (Array.isArray(manaCost)) {
-      symbols = manaCost.map((s) => `{${String(s).toUpperCase()}}`);
-    } else {
-      let costString = String(manaCost).toUpperCase();
-      // Normalize string: ensure it has {} around everything if it's raw text
-      if (!costString.includes("{")) {
-        costString = costString
-          .replace(/(\d+)/g, "{$1}")
-          .replace(/([WUBRGCXTSP])/g, "{$1}");
-      }
-      symbols = costString.match(/\{[^}]+\}/g) || [];
-    }
-
-    // WUBRG Sorting Logic
-    const WUBRG_ORDER = ["W", "U", "B", "R", "G", "C"];
-    symbols.sort((a, b) => {
-      const charA = a.replace(/\{|\}/g, "").charAt(0);
-      const charB = b.replace(/\{|\}/g, "").charAt(0);
-      const idxA = WUBRG_ORDER.indexOf(charA);
-      const idxB = WUBRG_ORDER.indexOf(charB);
-      if (idxA === -1 && idxB === -1) return 0;
-      if (idxA === -1) return 1;
-      if (idxB === -1) return -1;
-      return idxA - idxB;
-    });
-
-    return (
-      <div className="flex items-center gap-0.5 flex-wrap justify-center pointer-events-none">
-        {symbols.map((sym, i) => {
-          let inner = sym
-            .replace(/\{|\}/g, "")
-            .replace(/\//g, "")
-            .toUpperCase();
-          if (!inner) return null;
-
-          return (
-            <img
-              key={i}
-              src={`https://svgs.scryfall.io/card-symbols/${inner}.svg`}
-              alt={sym}
-              className={`${size} object-contain shrink-0 select-none block drop-shadow-[0_0_3px_rgba(0,0,0,1)] brightness-125 saturate-150`}
-              referrerPolicy="no-referrer"
-              loading="lazy"
-            />
-          );
-        })}
-      </div>
-    );
-  };
-
-  const [showShareOverlay, setShowShareOverlay] = useState(false);
-  const [shareRecipientEmail, setShareRecipientEmail] = useState("");
-  const [shareMessage, setShareMessage] = useState("");
-  const [isSharing, setIsSharing] = useState(false);
-  const [isSocialsLoading, setIsSocialsLoading] = useState(false);
-  const [publicUsers, setPublicUsers] = useState<any[]>([]);
-  const [viewingPublicDecks, setViewingPublicDecks] = useState<any[]>([]);
-  const [viewingPublicUser, setViewingPublicUser] = useState<any>(null);
-  const [sharedWithMe, setSharedWithMe] = useState<any[]>([]);
-  const [authLoading, setAuthLoading] = useState(true);
-
-  useEffect(() => {
-    if (viewMode === "socials" || isShareModalOpen) {
-      const usersQuery = query(
-        collection(db, "users"),
-        where("isProfileVisible", "==", true),
-      );
-      setIsSocialsLoading(true);
-      getDocs(usersQuery)
-        .then((snap) => {
-          const users: any[] = [];
-          snap.forEach((d) => {
-            if (user && d.id !== user.uid) {
-              users.push({ id: d.id, ...d.data() });
-            }
-          });
-          setPublicUsers(users);
-        })
-        .finally(() => setIsSocialsLoading(false));
-
-      if (user && viewMode === "socials") {
-        const sharedQuery = query(
-          collection(db, "sharedSelections"),
-          where("toUserEmail", "==", user.email),
-        );
-        onSnapshot(sharedQuery, (snap) => {
-          const shared: any[] = [];
-          snap.forEach((d) => shared.push({ id: d.id, ...d.data() }));
-          setSharedWithMe(shared);
+      if (updates.photoURL !== undefined) setPhotoURL(updates.photoURL);
+      
+      // Update Firebase Auth profile for consistency
+      if (updates.userName || updates.photoURL) {
+        await updateProfile(user, {
+          displayName: updates.userName || user.displayName,
+          photoURL: updates.photoURL || user.photoURL
         });
       }
-    }
-  }, [viewMode, user]);
 
-  const shareSelection = async () => {
-    if (!user || !shareRecipientEmail || deckbox.length === 0) return;
-    setIsSharing(true);
-    try {
-      await setDoc(doc(collection(db, "sharedSelections")), {
-        fromUserId: user.uid,
-        fromUserEmail: user.email,
-        fromUserName: user.displayName || userName || "Anonymous Wizard",
-        toUserEmail: shareRecipientEmail.toLowerCase().trim(),
-        cards: deckbox,
-        message: shareMessage,
-        createdAt: serverTimestamp(),
-      });
-      showMessage(`Sent to ${shareRecipientEmail}`, "success");
-      setShowShareOverlay(false);
-      setShareRecipientEmail("");
-      setShareMessage("");
-    } catch (e) {
-      console.error(e);
-      showMessage("Failed to share", "error");
-    } finally {
-      setIsSharing(false);
+      showMessage("IDENTITY_SYNC_COMPLETE", "success");
+    } catch (err) {
+      handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
     }
   };
+
+
+  const [authLoading, setAuthLoading] = useState(true);
 
   const [allCards, setAllCards] = useState<Card[]>([]);
   const [isBearSearch, setIsBearSearch] = useState(false);
@@ -726,6 +694,20 @@ export default function App() {
   };
 
 
+  useEffect(() => {
+    async function testConnection() {
+      try {
+        await getDocFromServer(doc(db, "test", "connection"));
+        console.log("Firestore connection verified");
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("offline")) {
+          console.error("Firestore is offline. Check configuration.");
+        }
+      }
+    }
+    testConnection();
+  }, []);
+
   // --- Auth & Firestore Sync ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -733,7 +715,6 @@ export default function App() {
       setAuthLoading(false);
 
       if (u) {
-        setIsAdmin(u.email === "sdebeer@gmail.com");
         try {
           // Init profile
           const userRef = doc(db, "users", u.uid);
@@ -753,31 +734,31 @@ export default function App() {
             if (data.userName) {
               setUserName(data.userName);
               setIsForceNaming(false);
+            } else if (u.displayName) {
+              setUserName(u.displayName);
+              setIsForceNaming(false);
             } else {
-              // No custom userName yet
               setIsForceNaming(true);
             }
-            if (data.cardsPerRow !== undefined)
-              setCardsPerRow(data.cardsPerRow);
-            setIsProfileVisible(data.isProfileVisible !== undefined ? data.isProfileVisible : true);
-            setIsDecksPublic(data.isDecksPublic !== undefined ? data.isDecksPublic : false);
+            if (data.photoURL) setPhotoURL(data.photoURL);
+            if (data.cardsPerRowDesktop !== undefined)
+              setCardsPerRowDesktop(data.cardsPerRowDesktop);
+            if (data.cardsPerRowMobile !== undefined)
+              setCardsPerRowMobile(data.cardsPerRowMobile);
 
-            // FORCE DEFAULTS ONCE FOR EXISTING USERS
             if (!data.defaultsAppliedV3) {
-              profileData.isProfileVisible = true;
-              profileData.isDecksPublic = false;
               profileData.defaultsAppliedV3 = true;
-              setIsProfileVisible(true);
-              setIsDecksPublic(false);
             }
           } else {
-            // New User defaults
-            profileData.isProfileVisible = true;
-            profileData.isDecksPublic = false;
+            profileData.createdAt = serverTimestamp();
             profileData.defaultsAppliedV3 = true;
+            setIsForceNaming(!u.displayName);
+            if (u.displayName) setUserName(u.displayName);
           }
 
-          await setDoc(userRef, profileData, { merge: true });
+          await setDoc(userRef, profileData, { merge: true }).catch((err) =>
+            handleFirestoreError(err, OperationType.WRITE, `users/${u.uid}`),
+          );
         } catch (err: any) {
           console.warn("Firestore profile sync issues (non-critical):", err);
           // Don't show scary UI message for background sync failures
@@ -803,6 +784,7 @@ export default function App() {
         snapshot.forEach((doc) => {
           const data = doc.data();
           decks.push({
+            id: doc.id,
             ...(data as any),
             createdAt: data.createdAt?.toDate?.() || data.createdAt,
             updatedAt: data.updatedAt?.toDate?.() || data.updatedAt,
@@ -844,7 +826,7 @@ export default function App() {
                 highRes: sf.image_uris?.normal || sf.image_uris?.large || "",
                 prices: sf.prices || {},
                 name: sf.name, // 1 op 1 de naam uit scryfall
-              });
+              }).catch(err => handleFirestoreError(err, OperationType.UPDATE, `users/${user.uid}/deckbox/${cardId}`));
             } catch (e) {
               console.warn(`Could not repair ${card.name}`);
             }
@@ -915,7 +897,32 @@ export default function App() {
     };
   }, [user]);
 
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  
+  const handleEmailAuth = async (mode: 'login' | 'register') => {
+    if (!email || !password) {
+      showMessage("ENTER_CREDENTIALS", "error");
+      return;
+    }
+    setIsLoggingIn(true);
+    try {
+      const { signInWithEmailAndPassword, createUserWithEmailAndPassword } = await import("firebase/auth");
+      if (mode === 'login') {
+        await signInWithEmailAndPassword(auth, email, password);
+        showMessage("RESONANCE_ESTABLISHED", "success");
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+        showMessage("NEW_SOUL_BOUND", "success");
+      }
+    } catch (e: any) {
+      console.error(e);
+      showMessage(e.message || "AUTH_EXCEPTION", "error");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
 
   const login = async () => {
     if (isLoggingIn) return;
@@ -959,11 +966,26 @@ export default function App() {
   const [viewingDeckId, setViewingDeckId] = useState("");
   const [isViewingDeck, setIsViewingDeck] = useState(false);
 
-  const loadLocalDeck = (deck: any) => {
-    setViewingDeckName(deck.deckName || "Saved Deck");
-    setViewingDeckCards(deck.cards || []);
+  const loadLocalDeck = async (deck: any) => {
+    startArcaneLoading("Accessing Deck Archives...");
+    setViewingDeckName(deck.name || deck.deckName || "Saved Deck");
     setViewingDeckId(deck.id || "");
+
+    let cards = deck.cards || [];
+    if (cards.length === 0 && deck.id && deck.userId) {
+      try {
+        const cardsSnap = await getDocs(
+          collection(db, "users", deck.userId, "decks", deck.id, "cards"),
+        );
+        cards = cardsSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      } catch (e) {
+        console.error("Failed to fetch deck cards:", e);
+      }
+    }
+
+    setViewingDeckCards(cards);
     setIsViewingDeck(true);
+    setLoading(false);
   };
   const [isAltCommandersOpen, setIsAltCommandersOpen] = useState(false);
   const [alternativeCommanders, setAlternativeCommanders] = useState<any[]>([]);
@@ -1064,6 +1086,27 @@ export default function App() {
 
   // Browser History Sync
   useEffect(() => {
+    // Check Firestore Connectivity
+    const testConnection = async () => {
+      try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+        console.log("Firestore connection check successful");
+      } catch (error: any) {
+        if (error?.message?.includes('the client is offline')) {
+          console.error("Firestore Error: The client is offline.");
+          showMessage("Magisch archief is offline. Controleer je verbinding.", "error");
+        } else if (error?.message?.includes('Database \'(default)\' not found')) {
+            console.error("Firestore Error: Database ID mismatch in config.");
+            showMessage("Magische database configuratiefout. Contacteer de arcana meester.", "error");
+        } else {
+          console.error("Firestore connection check failed:", error);
+        }
+      }
+    };
+    testConnection();
+  }, []);
+
+  useEffect(() => {
     const handlePopState = (event: PopStateEvent) => {
       if (event.state && event.state.viewMode) {
         setViewMode(event.state.viewMode);
@@ -1097,16 +1140,14 @@ export default function App() {
 
   useEffect(() => {
     let title = "Rune Deck Companion";
-    if (deckToShare) {
-      title = `${deckToShare.name} | Rune Deck`;
-    } else if (viewingDeckName) {
+    if (viewingDeckName) {
       title = `${viewingDeckName} | Rune Deck`;
     }
     document.title = title;
 
     const ogTitle = document.querySelector('meta[property="og:title"]');
     if (ogTitle) ogTitle.setAttribute("content", title);
-  }, [deckToShare, viewingDeckName]);
+  }, [viewingDeckName]);
 
   const [copied, setCopied] = useState(false);
 
@@ -1133,25 +1174,6 @@ export default function App() {
     };
   }
 
-  const handleFirestoreError = (
-    error: unknown,
-    operationType: OperationType,
-    path: string | null,
-  ) => {
-    const errInfo: FirestoreErrorInfo = {
-      error: error instanceof Error ? error.message : String(error),
-      authInfo: {
-        userId: auth.currentUser?.uid,
-        email: auth.currentUser?.email,
-        emailVerified: auth.currentUser?.emailVerified,
-      },
-      operationType,
-      path,
-    };
-    const jsonErr = JSON.stringify(errInfo);
-    console.error("Firestore Error: ", jsonErr);
-    throw new Error(jsonErr);
-  };
 
   const [message, setMessage] = useState<{
     text: string;
@@ -1374,36 +1396,27 @@ export default function App() {
       const existingSnap = await getDoc(deckRef);
       const existingData = existingSnap.exists() ? existingSnap.data() : null;
 
-      // Calculate ranking based on commander popularity or other metrics if available
-      // For now, use Scryfall's edhrec_rank as a proxy if we have it
-      let rank = existingData?.ranking || "N/A";
-      if (commanderDetails[0]?.data?.edhrec_rank) {
-        rank = `#${commanderDetails[0].data.edhrec_rank}`;
-      }
-
       const deckData = {
-        id,
+        id: String(id),
         userId: user.uid,
         name: deckName,
         tags: existingData?.tags || [],
         commanders: finalCommanderNames,
         commanderNames: finalCommanderNames,
-        existingNames: Array.from(existingNames), // Save card names for filtering
+        existingNames: Array.from(existingNames),
         art_crops: finalArtCrops,
         ci: ciStr,
         totalCost: totalCost || existingData?.totalCost || 0,
-        ranking: rank,
-        createdAt: existingData?.createdAt || serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
+      
+      if (!existingSnap.exists()) {
+        (deckData as any).createdAt = serverTimestamp();
+      }
 
-      await setDoc(deckRef, deckData, { merge: true }).catch((err) =>
-        handleFirestoreError(
-          err,
-          OperationType.WRITE,
-          `users/${user.uid}/decks/${id}`,
-        ),
-      );
+      const path = `users/${user.uid}/decks/${String(id)}`;
+      await setDoc(deckRef, deckData, { merge: true })
+        .catch((err) => handleFirestoreError(err, OperationType.WRITE, path));
     }
 
     if (autoSelect) {
@@ -1734,7 +1747,37 @@ export default function App() {
         });
       }
 
-      let totalCost = data.totalPrice || 0;
+      let totalCost = 0;
+
+      // Fetch accurate prices and details from Scryfall
+      if (cardLists.length > 0) {
+        const BATCH_SIZE = 75;
+        const uniqueNames = Array.from(new Set(cardLists));
+        const qtyMap = new Map();
+        cardLists.forEach((n) => qtyMap.set(n, (qtyMap.get(n) || 0) + 1));
+
+        for (let i = 0; i < uniqueNames.length; i += BATCH_SIZE) {
+          const batchNames = uniqueNames.slice(i, i + BATCH_SIZE);
+          const identifiers = batchNames.map((name) => ({ name }));
+          try {
+            const { data: sfData } = await axios.post(
+              "https://api.scryfall.com/cards/collection",
+              { identifiers },
+            );
+            if (sfData && sfData.data) {
+              sfData.data.forEach((card: any) => {
+                if (card) {
+                  const qty = qtyMap.get(card.name) || qtyMap.get(card.name.split(" // ")[0]) || 0;
+                  const eurStr = card.prices?.eur || card.prices?.eur_foil;
+                  if (eurStr) totalCost += parseFloat(eurStr) * qty;
+                }
+              });
+            }
+          } catch (e) {
+            console.error("Moxfield batch fetch failed", e);
+          }
+        }
+      }
 
       await initializeDeckState(
         id,
@@ -2227,6 +2270,8 @@ export default function App() {
       const newCard = {
         userId: user.uid,
         name: card.name,
+        scryfallId: card.id || cardId,
+        addedAt: serverTimestamp(),
         thumb: images.small || "",
         highRes: images.normal || images.large || "",
         from_deck: activeDeckName || "Manual",
@@ -2296,15 +2341,20 @@ export default function App() {
   const deleteSavedDeck = async (id: string) => {
     if (!user) return;
     const deckRef = doc(db, "users", user.uid, "decks", id);
-    await deleteDoc(deckRef).catch((err) =>
+    try {
+      await deleteDoc(deckRef).catch(err => handleFirestoreError(err, OperationType.DELETE, `users/${user.uid}/decks/${id}`));
+      setSavedDecks((prev) => prev.filter((d) => d.id !== id));
+      if (activeDeckId === id) setActiveDeckId(null);
+      showMessage("ARCHIVE DISSOLVED", "success");
+    } catch (err) {
       handleFirestoreError(
         err,
         OperationType.DELETE,
         `users/${user.uid}/decks/${id}`,
-      ),
-    );
-    if (activeDeckId === id) setActiveDeckId(null);
-    setDeckToDelete(null);
+      );
+    } finally {
+      setDeckToDelete(null);
+    }
   };
 
   const viewDeckDetails = async (id: string, source?: string) => {
@@ -2526,29 +2576,7 @@ export default function App() {
     }
   };
 
-  const shareDeck = async (deckId: string, targetEmail: string) => {
-    if (!user) return;
-    try {
-      const deck = savedDecks.find((d) => d.id === deckId);
-      if (!deck) throw new Error("Deck not found");
 
-      await addDoc(collection(db, "sharedDecks"), {
-        fromUserId: user.uid,
-        fromUserName: userName || user.displayName || "Rune User",
-        fromUserEmail: user.email,
-        toUserEmail: targetEmail.toLowerCase().trim(),
-        deckId: deckId,
-        deckName: deck.name,
-        commanderNames: deck.commanderNames || [],
-        createdAt: serverTimestamp(),
-      });
-      
-      showMessage(`DECK SENT TO ${targetEmail.toUpperCase()}`, "success");
-    } catch (e) {
-      console.error(e);
-      showMessage("SHARING FAILED", "error");
-    }
-  };
 
   const addTag = async (deckId: string, tagString: string) => {
     if (!tagString.trim() || !user) return;
@@ -2569,14 +2597,14 @@ export default function App() {
         let q = tag;
         let analysis: any = null;
 
-        if (ai) {
+        if (true) {
           const prompt = `Analyze MTG concept "${tag}" for color identity ${deck.ci || "c"}. 
           Category: name, mechanic, oracle, or other?
           Convert to valid Scryfall search string.
           If 0 results likely or ambiguous, suggest 3 alternatives.
           Return ONLY JSON: { "type": "name"|"mechanic"|"oracle"|"other", "query": "...", "suggestions": ["...", "..."], "isAmbiguous": boolean }`;
 
-          const res = await ai.models.generateContent({
+          const res = await callGemini({
             model: "gemini-3-flash-preview",
             contents: prompt,
             config: { responseMimeType: "application/json" },
@@ -2778,14 +2806,14 @@ Rules for tags (Scryfall queries):
 
 Return ONLY JSON. No markdown backticks.`;
 
-      if (!ai) {
+      if (false) {
         showMessage(
           "No Gemini API Key available. Configuration error.",
           "error",
         );
         return;
       }
-      const response = await ai.models.generateContent({
+      const response = await callGemini({
         model: "gemini-3.1-pro-preview",
         contents: [{ parts: [{ text: prompt }] }],
       });
@@ -2889,13 +2917,13 @@ Rules:
 
 Return ONLY JSON. No markdown backticks.`;
 
-      if (!ai) {
+      if (false) {
         showMessage("AI functionality is not available. Check your GEMINI_API_KEY.", "error");
         return;
       }
 
       console.log("[AI] Sending prompt to Gemini...");
-      const response = await ai.models.generateContent({
+      const response = await callGemini({
         model: "gemini-3-flash-preview",
         contents: [{ parts: [{ text: prompt }] }],
       });
@@ -3078,41 +3106,83 @@ Return ONLY JSON. No markdown backticks.`;
             favorite strategies.
           </p>
 
-          <button
-            onClick={login}
-            disabled={isLoggingIn}
-            className={`w-full flex items-center justify-center gap-3 py-4 rune-panel text-orange-500/80 hover:text-orange-500 hover:border-orange-500/30 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10 ${isLoggingIn ? "opacity-50 cursor-wait" : ""}`}
-          >
-            {isLoggingIn ? (
-              <span className="animate-pulse">signing in...</span>
-            ) : (
-              <>
-                <svg viewBox="0 0 24 24" className="w-4 h-4">
-                  <path
-                    d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                    fill="#4285F4"
-                  />
-                  <path
-                    d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                    fill="#34A853"
-                  />
-                  <path
-                    d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
-                    fill="#FBBC05"
-                  />
-                  <path
-                    d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
-                    fill="#EA4335"
-                  />
-                </svg>
-                Sign in with Google
-              </>
-            )}
-          </button>
+          <div className="w-full space-y-4">
+            <div className="space-y-3">
+              <input 
+                type="email" 
+                placeholder="EMAIL_ADDRESS" 
+                className="w-full bg-black/40 border border-white/5 rounded-2xl px-6 py-4 text-xs text-white font-mono placeholder:text-white/10 focus:border-orange-500/20 outline-none transition-all"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+              <input 
+                type="password" 
+                placeholder="SECRET_KEY" 
+                className="w-full bg-black/40 border border-white/5 rounded-2xl px-6 py-4 text-xs text-white font-mono placeholder:text-white/10 focus:border-orange-500/20 outline-none transition-all"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
 
-          <p className="mt-8 text-[10px] text-white/20 uppercase tracking-[0.3em] font-bold">
-            Authorized by Slopsie
-          </p>
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => handleEmailAuth('login')}
+                disabled={isLoggingIn}
+                className="py-4 bg-orange-500/10 border border-orange-500/20 text-orange-500 rounded-2xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-orange-500 hover:text-black transition-all active:scale-95 disabled:opacity-50"
+              >
+                Sign In
+              </button>
+              <button
+                onClick={() => handleEmailAuth('register')}
+                disabled={isLoggingIn}
+                className="py-4 bg-white/5 border border-white/10 text-white/60 rounded-2xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-white/10 hover:text-white transition-all active:scale-95 disabled:opacity-50"
+              >
+                Register
+              </button>
+            </div>
+
+            <div className="flex items-center gap-4 py-2">
+              <div className="flex-1 h-px bg-white/5" />
+              <span className="text-[8px] font-mono text-white/10 uppercase font-black">or resonate via</span>
+              <div className="flex-1 h-px bg-white/5" />
+            </div>
+
+            <button
+              onClick={login}
+              disabled={isLoggingIn}
+              className={`w-full flex items-center justify-center gap-3 py-4 rune-panel text-orange-500/80 hover:text-orange-500 hover:border-orange-500/30 transition-all font-magic font-black active:scale-[0.98] tracking-widest text-[10px] z-10 ${isLoggingIn ? "opacity-50 cursor-wait" : ""}`}
+            >
+              {isLoggingIn ? (
+                <span className="animate-pulse">signing in...</span>
+              ) : (
+                <>
+                  <svg viewBox="0 0 24 24" className="w-4 h-4">
+                    <path
+                      d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                      fill="#4285F4"
+                    />
+                    <path
+                      d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                      fill="#34A853"
+                    />
+                    <path
+                      d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"
+                      fill="#FBBC05"
+                    />
+                    <path
+                      d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
+                      fill="#EA4335"
+                    />
+                  </svg>
+                  Sign in with Google
+                </>
+              )}
+            </button>
+          </div>
+
+            <p className="mt-8 text-[10px] text-white/20 uppercase tracking-[0.3em] font-bold">
+              Authorized by Slopsie
+            </p>
         </motion.div>
       </div>
     );
@@ -3120,159 +3190,7 @@ Return ONLY JSON. No markdown backticks.`;
 
   return (
     <div className="h-screen rune-bg text-white flex overflow-hidden font-sans relative">
-      {/* Share Modal */}
-      <AnimatePresence>
-        {isShareModalOpen && deckToShare && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1000] flex items-center justify-center p-4 backdrop-blur-xl bg-black/80"
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0, y: 20 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.9, opacity: 0, y: 20 }}
-              className="bg-[#0f1214] border border-white/10 rounded-[3rem] p-8 md:p-12 w-full max-w-lg shadow-[0_30px_100px_rgba(0,0,0,0.8)] relative overflow-hidden"
-            >
-              <div className="absolute top-0 right-0 p-8 opacity-10 rotate-12">
-                <Share2 className="w-32 h-32 text-orange-500" />
-              </div>
 
-              <div className="flex items-center justify-between mb-10 relative z-10">
-                <div>
-                  <h3 className="text-2xl font-black uppercase tracking-widest text-white">Deck Delen</h3>
-                  <p className="text-[10px] font-mono text-white/30 uppercase tracking-[0.3em] font-bold mt-1">{deckToShare.name}</p>
-                </div>
-                <button
-                  onClick={() => setIsShareModalOpen(false)}
-                  className="w-12 h-12 rounded-full bg-white/5 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-colors"
-                >
-                  <X className="w-5 h-5 text-white/40" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 gap-4 relative z-10 max-h-[60vh] overflow-y-auto pr-2 custom-scrollbar">
-                {/* Social Share */}
-                <div className="grid grid-cols-4 gap-2 mb-4">
-                  {[
-                    { 
-                      name: "WhatsApp", 
-                      icon: MessageCircle, 
-                      color: "bg-[#25D366]",
-                      action: (d: SavedDeck) => {
-                        const text = `Check mijn Magic deck: ${d.name}! Bekijk hem hier: ${window.location.origin}?deck=${d.id}`;
-                        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
-                      }
-                    },
-                    { 
-                      name: "Email", 
-                      icon: Mail, 
-                      color: "bg-[#EA4335]",
-                      action: (d: SavedDeck) => {
-                        const subject = `Magic Deck: ${d.name}`;
-                        const body = `Hey! Check out my new Magic deck: ${d.name}\n\nLink: ${window.location.origin}?deck=${d.id}`;
-                        window.location.href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-                      }
-                    },
-                    { 
-                      name: "Discord", 
-                      icon: Send, 
-                      color: "bg-[#5865F2]",
-                      action: (d: SavedDeck) => {
-                        const text = `Check out my Magic deck: ${d.name}! ${window.location.origin}?deck=${d.id}`;
-                        navigator.clipboard.writeText(text);
-                        showMessage("DISCORD LINK COPIED", "success");
-                      }
-                    },
-                    { 
-                      name: "Copy Link", 
-                      icon: Copy, 
-                      color: "bg-[#06B6D4]",
-                      action: (d: SavedDeck) => {
-                        const url = window.location.origin + "?deck=" + d.id;
-                        navigator.clipboard.writeText(url);
-                        showMessage("LINK_COPIED", "success");
-                        document.title = d.name;
-                      }
-                    }
-                  ].map((opt) => (
-                    <button
-                      key={opt.name}
-                      onClick={() => opt.action(deckToShare)}
-                      className="flex flex-col items-center justify-center p-3 bg-white/[0.02] border border-white/5 rounded-2xl hover:bg-white/[0.05] transition-all group gap-2"
-                    >
-                      <div className={`w-10 h-10 rounded-xl ${opt.color} flex items-center justify-center shadow-lg group-hover:scale-110 group-hover:-rotate-3 transition-all`}>
-                          <opt.icon className="w-5 h-5 text-white" />
-                      </div>
-                      <span className="text-[7px] font-black uppercase tracking-widest text-white/40">{opt.name}</span>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Internal User Share */}
-                <div className="space-y-4 pt-4 border-t border-white/5">
-                  <div className="flex items-center gap-3 mb-2">
-                    <User className="w-4 h-4 text-purple-500" />
-                    <h4 className="text-[10px] font-magic font-black uppercase tracking-widest text-white/60">Share with Rune Users</h4>
-                  </div>
-                  
-                  <div className="relative group">
-                    <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none">
-                      <Users className="w-4 h-4 text-white/20 group-focus-within:text-purple-400 transition-colors" />
-                    </div>
-                    <select 
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-4 text-[11px] text-white/80 font-bold outline-none focus:border-purple-500/40 transition-all pl-12 appearance-none cursor-pointer hover:bg-black/60"
-                      defaultValue=""
-                      onChange={async (e) => {
-                        const targetUserEmail = e.target.value;
-                        if (!targetUserEmail) return;
-                        
-                        const u = publicUsers.find(pu => pu.email === targetUserEmail);
-                        if (!u) return;
-
-                        try {
-                          startArcaneLoading("Synchronizing Shared Runes...");
-                          await shareDeck(deckToShare.id, u.email);
-                          showMessage(`SHARED WITH ${u.displayName?.toUpperCase() || u.userName?.toUpperCase() || "USER"}`, "success");
-                          setIsShareModalOpen(false);
-                        } catch (e) {
-                          showMessage("SHARING FAILED", "error");
-                        } finally {
-                          setLoading(false);
-                        }
-                      }}
-                    >
-                      <option value="" disabled>Select a Rune User...</option>
-                      {publicUsers.map(u => (
-                        <option key={u.id} value={u.email}>
-                          {u.displayName || u.userName || u.email}
-                        </option>
-                      ))}
-                    </select>
-                    <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none">
-                      <ChevronDown className="w-4 h-4 text-white/20" />
-                    </div>
-                  </div>
-
-                  {publicUsers.length === 0 && !isSocialsLoading && (
-                    <p className="text-[9px] text-center text-white/20 py-2 italic font-mono uppercase tracking-widest">
-                      No external rune users discovered yet
-                    </p>
-                  )}
-                  
-                  {isSocialsLoading && (
-                    <div className="flex items-center justify-center gap-2 py-4">
-                      <RotateCw className="w-3 h-3 animate-spin text-purple-500" />
-                      <span className="text-[9px] font-magic font-bold text-white/20 uppercase tracking-widest">Scanning Leylines...</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
       <div
         className="fixed inset-0 z-0 opacity-[0.04] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat bg-fixed object-cover"
         style={{ backgroundImage: `url(${runesBackground})` }}
@@ -3468,52 +3386,52 @@ Return ONLY JSON. No markdown backticks.`;
                 ) : (
                   <select
                     className="w-full appearance-none rune-panel rounded-sm px-4 py-3 text-[10px] font-magic font-bold uppercase tracking-[0.2em] text-white/50 outline-none focus:border-cyan-500/50 hover:bg-black/40 transition-all cursor-pointer pr-10 z-10"
-                    onChange={(e) => {
-                      const deckId = e.target.value;
-                      setIsMobileMenuOpen(false);
-                      if (!deckId) {
-                        clearDeckSelection();
-                        performSearch({ queryOverride: "" });
-                        return;
-                      }
-                      const deck = savedDecks.find((d) => d.id === deckId);
-                      if (deck) {
-                        setActiveDeckId(deck.id);
-                        setActiveDeckName(deck.name);
-                        setExistingInDeck(new Set(deck.existingNames));
-                        setCurrentCI(deck.ci || "");
-                        setViewMode("cards");
-                        performSearch({
-                          ciOverride: deck.ci || "",
-                          queryOverride: "",
-                        });
-                        const cmdNames =
-                          deck.commanderNames || deck.commanders || [];
-                        initializeDeckState(
-                          deck.id,
-                          deck.name,
-                          cmdNames,
-                          new Set(deck.existingNames),
-                          deck.totalCost || 0,
-                          true,
-                        );
-                      }
-                    }}
-                    value={activeDeckId || ""}
-                  >
-                    <option value="" className="bg-[#0A0A0A]">
-                      Select a Deck...
-                    </option>
-                    {savedDecks.map((deck) => (
-                      <option
-                        key={deck.id}
-                        value={deck.id}
-                        className="bg-[#0A0A0A]"
-                      >
-                        {deck.name}
+                      onChange={(e) => {
+                        const deckId = e.target.value;
+                        setIsMobileMenuOpen(false);
+                        if (!deckId) {
+                          clearDeckSelection();
+                          performSearch({ queryOverride: "" });
+                          return;
+                        }
+                        const deck = savedDecks.find((d) => d.id === deckId);
+                        if (deck) {
+                          setActiveDeckId(deck.id);
+                          setActiveDeckName(deck.name);
+                          setExistingInDeck(new Set(deck.existingNames));
+                          setCurrentCI(deck.ci || "");
+                          setViewMode("cards");
+                          performSearch({
+                            ciOverride: deck.ci || "",
+                            queryOverride: "",
+                          });
+                          const cmdNames =
+                            deck.commanderNames || deck.commanders || [];
+                          initializeDeckState(
+                            deck.id,
+                            deck.name,
+                            cmdNames,
+                            new Set(deck.existingNames),
+                            deck.totalCost || 0,
+                            true,
+                          );
+                        }
+                      }}
+                      value={activeDeckId || ""}
+                    >
+                      <option key="placeholder" value="" className="bg-[#0A0A0A]">
+                        Select a Deck...
                       </option>
-                    ))}
-                  </select>
+                      {savedDecks.map((deck) => (
+                        <option
+                          key={deck.id}
+                          value={deck.id}
+                          className="bg-[#0A0A0A]"
+                        >
+                          {deck.name}
+                        </option>
+                      ))}
+                    </select>
                 )}
                 <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/10 pointer-events-none group-hover:text-cyan-400 transition-colors z-20" />
               </div>
@@ -3812,7 +3730,7 @@ Return ONLY JSON. No markdown backticks.`;
                             <option value="name">Name (A-Z)</option>
                             <option value="eur">Value (EUR)</option>
                             <option value="cmc">Mana Value</option>
-                            <option value="rarity">Rarity Rank</option>
+                            <option value="rarity">Rarity</option>
                           </select>
                         </div>
                         <button
@@ -3923,49 +3841,33 @@ Return ONLY JSON. No markdown backticks.`;
                   Bears
                 </span>
               </button>
-              <button
-                onClick={() => {
-                  setViewMode("socials");
-                  setIsMobileMenuOpen(false);
-                }}
-                className="flex flex-col items-center justify-center py-2.5 rune-panel text-cyan-400/60 hover:text-cyan-400 font-magic hover:border-cyan-500/50 transition-all group z-10 gap-1 rounded-md border border-white/5 bg-white/[0.02]"
-              >
-                <Users className="w-4 h-4 group-hover:scale-110 transition-transform text-cyan-500/60 group-hover:text-cyan-400" />
-                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
-                  Socials
-                </span>
-              </button>
+
             </div>
           </section>
         </div>
 
         {/* Section 6: User & Settings */}
-        <div className="p-5 bg-transparent border-t border-white/5 relative">
-          <div className="flex items-center gap-4">
-            <div className="relative shrink-0 w-12 h-12 flex items-center justify-center">
-              <button
-                onClick={() => setIsSettingsOpen(true)}
-                className="absolute inset-0 group flex items-center justify-center transition-all duration-300"
-              >
-                {/* Subtle Arcane Gear Architecture */}
-                <div className="absolute inset-0 bg-gradient-to-t from-cyan-500/20 to-transparent rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                <div className="absolute inset-0 text-cyan-400 group-hover:text-cyan-300 transition-all duration-700 opacity-40 group-hover:opacity-100">
-                  <Settings className="w-full h-full p-2.5 animate-[spin_8s_linear_infinite]" />
-                </div>
-
-                <div className="w-9 h-9 rounded-full bg-[#050505] border border-cyan-500/30 flex items-center justify-center overflow-hidden shrink-0 group-hover:border-cyan-400 group-hover:shadow-[0_0_20px_rgba(6,182,212,0.4)] transition-all relative z-10">
-                  {user?.photoURL ? (
-                    <img
-                      src={user.photoURL}
-                      alt="Profile"
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform"
-                    />
-                  ) : (
-                    <User className="w-4 h-4 text-cyan-400/60" />
-                  )}
-                </div>
-              </button>
-            </div>
+        <div className="p-4 bg-transparent border-t border-white/5 relative">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsSettingsOpen(true)}
+              className="relative shrink-0 group"
+            >
+              <div className="w-11 h-11 rounded-full bg-zinc-900 border border-white/10 overflow-hidden flex items-center justify-center group-hover:border-cyan-500/50 group-hover:shadow-[0_0_15px_rgba(6,182,212,0.3)] transition-all">
+                {photoURL || user?.photoURL ? (
+                  <img
+                    src={photoURL || user?.photoURL || ""}
+                    alt="Profile"
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform"
+                  />
+                ) : (
+                  <User className="w-5 h-5 text-white/20" />
+                )}
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-black border border-white/10 flex items-center justify-center text-white/40 group-hover:text-cyan-400 group-hover:border-cyan-500/30 transition-all">
+                <Settings className="w-3 h-3 group-hover:rotate-90 transition-transform" />
+              </div>
+            </button>
 
             <div className="flex-1 flex flex-col items-start min-w-0">
               <span className="text-[10px] font-magic font-black text-white/60 uppercase tracking-[0.1em] truncate w-full">
@@ -4020,7 +3922,17 @@ Return ONLY JSON. No markdown backticks.`;
                    (nav.id === 'settings' && isSettingsOpen)) ? 'text-orange-500' : 'text-white/30 hover:text-white/60'
                 }`}
               >
-                <nav.icon className={`w-5 h-5 ${((viewMode === nav.id && !isDeckboxOpen && !showFunHub) || (nav.id === 'nodes' && isMobileMenuOpen) || (nav.id === 'deckbox' && isDeckboxOpen) || (nav.id === 'funarea' && showFunHub) || (nav.id === 'settings' && isSettingsOpen)) ? 'drop-shadow-[0_0_8px_rgba(249,115,22,0.6)]' : ''}`} />
+                {nav.id === 'settings' ? (
+                  <div className={`w-6 h-6 rounded-full border overflow-hidden flex items-center justify-center transition-all ${isSettingsOpen ? 'border-orange-500' : 'border-white/10 opacity-60'}`}>
+                    {photoURL || user?.photoURL ? (
+                      <img src={photoURL || user?.photoURL || ""} alt="" className="w-full h-full object-cover" />
+                    ) : (
+                      <User className="w-3.5 h-3.5" />
+                    )}
+                  </div>
+                ) : (
+                  <nav.icon className={`w-5 h-5 ${((viewMode === nav.id && !isDeckboxOpen && !showFunHub) || (nav.id === 'nodes' && isMobileMenuOpen) || (nav.id === 'deckbox' && isDeckboxOpen) || (nav.id === 'funarea' && showFunHub) || (nav.id === 'settings' && isSettingsOpen)) ? 'drop-shadow-[0_0_8px_rgba(249,115,22,0.6)]' : ''}`} />
+                )}
                 <span className={`text-[7px] font-magic font-extrabold uppercase tracking-widest ${((viewMode === nav.id && !isDeckboxOpen && !showFunHub) || (nav.id === 'nodes' && isMobileMenuOpen) || (nav.id === 'deckbox' && isDeckboxOpen) || (nav.id === 'funarea' && showFunHub) || (nav.id === 'settings' && isSettingsOpen)) ? 'opacity-100' : 'opacity-40'}`}>{nav.label}</span>
                 {((viewMode === nav.id && !isDeckboxOpen && !showFunHub) || (nav.id === 'nodes' && isMobileMenuOpen) || (nav.id === 'deckbox' && isDeckboxOpen) || (nav.id === 'funarea' && showFunHub) || (nav.id === 'settings' && isSettingsOpen)) && (
                   <motion.div layoutId="nav-glow" className="absolute -inset-1 bg-orange-500/5 blur-lg rounded-xl -z-10" />
@@ -4076,17 +3988,7 @@ Return ONLY JSON. No markdown backticks.`;
                         setViewMode("cards");
                       }, 
                       color: 'text-orange-500 border-orange-500/20 bg-orange-500/5' 
-                    },
-                    { 
-                      label: 'Socials', 
-                      icon: Users, 
-                      action: () => {
-                        setViewMode("socials");
-                        setIsMobileMenuOpen(false);
-                        setShowFunHub(false);
-                      }, 
-                      color: 'text-cyan-500 border-cyan-500/20 bg-cyan-500/5' 
-                    },
+                    }
                   ].map((mod) => (
                     <button
                       key={mod.label}
@@ -4104,180 +4006,160 @@ Return ONLY JSON. No markdown backticks.`;
 
           <AnimatePresence>
             {isSettingsOpen && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/90 backdrop-blur-xl"
-          >
-            <motion.div
-              initial={{ scale: 0.95, y: 10 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.95, y: 10 }}
-              className="w-full max-w-md bg-[#050505] border border-white/10 shadow-[0_0_100px_rgba(0,0,0,1)] rounded-[2.5rem] overflow-hidden relative"
-            >
-              {/* Decorative Elements */}
-              <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-cyan-500/50 to-transparent" />
-              <div className="absolute bottom-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-orange-500/50 to-transparent" />
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.05),transparent_50%)]" />
-
-              <div className="p-6 border-b border-white/5 flex items-center justify-between relative z-10">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
-                    <Settings className="w-4 h-4 text-orange-400" />
-                  </div>
-                  <div>
-                    <h2 className="font-magic font-black text-xs uppercase tracking-[0.2em] text-white">
-                      Profile Settings
-                    </h2>
-                    <p className="text-[8px] font-mono text-white/20 uppercase tracking-widest">
-                      {VERSION}
-                    </p>
-                  </div>
-                </div>
-                <button
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-[1000] flex items-center justify-center p-4"
+              >
+                <motion.div
+                  initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                   onClick={() => setIsSettingsOpen(false)}
-                  className="p-2 hover:bg-white/5 rounded-full text-white/20 hover:text-white transition-all"
+                  className="absolute inset-0 bg-black/90 backdrop-blur-xl"
+                />
+                
+                <motion.div
+                  initial={{ scale: 0.95, opacity: 0, y: 10 }}
+                  animate={{ scale: 1, opacity: 1, y: 0 }}
+                  exit={{ scale: 0.95, opacity: 0, y: 10 }}
+                  className="w-full max-w-lg bg-zinc-950 border border-white/10 shadow-2xl rounded-[2rem] overflow-hidden relative flex flex-col max-h-[90vh] z-10"
                 >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="p-6 space-y-6 relative z-10 custom-scrollbar max-h-[70vh] overflow-y-auto">
-                {/* Identification Segment */}
-                <div className="flex flex-col gap-1 px-1 mb-2">
-                  <span className="text-[8px] font-magic font-black text-white/30 uppercase tracking-[0.3em]">
-                    User Identity (Tap to Edit)
-                  </span>
-                </div>
-                <div className="flex items-center gap-4 bg-white/[0.02] border border-white/5 p-4 rounded-2xl group/edit">
-                  <div className="w-16 h-16 rounded-full border-2 border-orange-500/30 p-1 shrink-0 relative">
-                    {user?.photoURL ? (
-                      <img
-                        src={user.photoURL}
-                        alt="Avatar"
-                        className="w-full h-full rounded-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full rounded-full bg-orange-500/10 flex items-center justify-center text-orange-500 font-magic text-xl">
-                        ᛝ
-                      </div>
-                    )}
-                    <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover/edit:opacity-100 transition-opacity">
-                      <Settings2 className="w-4 h-4 text-white/60" />
-                    </div>
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <input
-                        type="text"
-                        value={userName}
-                        onChange={(e) => setUserName(e.target.value)}
-                        onBlur={() => saveUserSettings({ userName })}
-                        className="flex-1 bg-transparent border-b border-white/5 focus:border-cyan-500/50 text-sm font-magic font-black text-white hover:text-cyan-400 transition-all outline-none uppercase tracking-widest"
-                        placeholder="Enter Name..."
-                      />
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="text"
-                        value={userTitle}
-                        onChange={(e) => setUserTitle(e.target.value)}
-                        onBlur={() => saveUserSettings({ userTitle })}
-                        className="flex-1 bg-transparent text-[9px] font-mono text-white/30 uppercase tracking-widest outline-none focus:text-orange-400 transition-all italic"
-                        placeholder="Set Archetype..."
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                {/* Tactical Switches */}
-                <div className="grid grid-cols-1 gap-3">
-                  <div
-                    onClick={() => saveUserSettings({ isProfileVisible: !isProfileVisible })}
-                    className={`flex items-center justify-between p-4 rounded-2xl cursor-pointer border transition-all ${isProfileVisible ? "bg-purple-500/5 border-purple-500/30 shadow-[0_0_20px_rgba(168,85,247,0.1)]" : "bg-white/[0.02] border-white/5 hover:border-white/10"}`}
-                  >
+                  <header className="p-6 border-b border-white/5 flex items-center justify-between bg-black/40">
                     <div className="flex items-center gap-3">
-                      <User
-                        className={`w-4 h-4 ${isProfileVisible ? "text-purple-400" : "text-white/20"}`}
-                      />
-                      <div className="flex flex-col">
-                        <span
-                          className={`text-[10px] font-magic font-black uppercase tracking-widest ${isProfileVisible ? "text-white" : "text-white/40"}`}
-                        >
-                          Public Profile
-                        </span>
-                        <span className="text-[7px] font-mono text-white/20 uppercase">
-                          Allow others to find and follow you
-                        </span>
+                      <div className="w-10 h-10 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
+                        <Settings className="w-5 h-5 text-orange-500" />
+                      </div>
+                      <div>
+                        <h3 className="font-magic font-black text-sm uppercase tracking-widest text-white">Profile Settings</h3>
+                        <p className="text-[9px] font-mono text-white/30 uppercase tracking-widest">Manage your identity and interface</p>
                       </div>
                     </div>
-                    <div
-                      className={`w-8 h-4 rounded-full relative transition-all ${isProfileVisible ? "bg-purple-500" : "bg-white/10"}`}
-                    >
-                      <div
-                        className={`absolute top-0.5 w-3 h-3 bg-white rounded-full transition-all ${isProfileVisible ? "left-4.5" : "left-0.5"}`}
-                      />
+                    <button onClick={() => setIsSettingsOpen(false)} className="w-10 h-10 flex items-center justify-center hover:bg-white/5 rounded-full text-white/20 transition-all">
+                      <X className="w-5 h-5" />
+                    </button>
+                  </header>
+
+                  <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                    {/* Identity Section */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-3">
+                      <h4 className="text-[9px] font-magic font-black text-white/30 uppercase tracking-[0.2em] flex items-center gap-2">
+                        <User className="w-3 h-3" /> Identity Matrix
+                      </h4>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1 text-left">
+                          <label className="text-[8px] font-mono font-black text-white/20 uppercase tracking-widest ml-1">Username</label>
+                          <input
+                            type="text"
+                            value={userName}
+                            onChange={(e) => setUserName(e.target.value)}
+                            onBlur={() => saveUserSettings({ userName })}
+                            className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[10px] font-magic font-black text-white focus:border-cyan-500/50 outline-none transition-all uppercase"
+                          />
+                        </div>
+                        <div className="space-y-1 text-left">
+                          <label className="text-[8px] font-mono font-black text-white/20 uppercase tracking-widest ml-1">Title</label>
+                          <input
+                            type="text"
+                            value={userTitle}
+                            onChange={(e) => setUserTitle(e.target.value)}
+                            onBlur={() => saveUserSettings({ userTitle })}
+                            className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[10px] font-magic font-black text-white focus:border-orange-500/50 outline-none transition-all uppercase"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1 text-left">
+                        <label className="text-[8px] font-mono font-black text-white/20 uppercase tracking-widest ml-1">Profile Photo URL</label>
+                        <div className="flex gap-2">
+                          <input
+                            type="text"
+                            value={photoURL}
+                            onChange={(e) => setPhotoURL(e.target.value)}
+                            onBlur={() => saveUserSettings({ photoURL })}
+                            className="flex-1 bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[9px] font-mono text-cyan-400 focus:border-cyan-500/50 outline-none transition-all"
+                            placeholder="https://scryfall.com/..."
+                          />
+                          {photoURL && (
+                            <button onClick={() => { setPhotoURL(""); saveUserSettings({ photoURL: "" }); }} className="px-3 py-2 bg-red-500/10 border border-red-500/20 text-red-500 text-[8px] font-magic font-black uppercase rounded-lg">Reset</button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Preferences Section */}
+                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-4">
+                      
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Interface Density</span>
+                            <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest leading-none">Desktop Grid Scaling</span>
+                          </div>
+                          <span className="text-[10px] font-mono text-orange-500 font-bold bg-orange-500/5 px-2 py-0.5 rounded border border-orange-500/20 tracking-tighter">
+                            {cardsPerRowDesktop === 0 ? "AUTO_CALC" : `${cardsPerRowDesktop}_UNITS`}
+                          </span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="8" 
+                          step="1"
+                          value={cardsPerRowDesktop}
+                          onChange={(e) => saveUserSettings({ cardsPerRowDesktop: parseInt(e.target.value) })}
+                          className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-orange-500"
+                        />
+                        <div className="flex justify-between mt-2 px-1">
+                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">Auto</span>
+                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">2</span>
+                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">4</span>
+                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">6</span>
+                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">8</span>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3 pt-2 border-t border-white/5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex flex-col">
+                            <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Mobile Columns</span>
+                            <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest leading-none">Layout Adaptation</span>
+                          </div>
+                          <span className="text-[10px] font-mono text-cyan-400 font-bold bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/20 tracking-tighter">{cardsPerRowMobile} COL</span>
+                        </div>
+                        <div className="px-2">
+                          <input 
+                            type="range" 
+                            min="1" 
+                            max="4" 
+                            step="1"
+                            value={cardsPerRowMobile}
+                            onChange={(e) => saveUserSettings({ cardsPerRowMobile: parseInt(e.target.value) })}
+                            className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-cyan-400"
+                          />
+                          <div className="flex justify-between mt-2 px-1">
+                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">1</span>
+                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">2</span>
+                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">3</span>
+                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">4</span>
+                          </div>
+                        </div>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Interface Density */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between px-1">
-                    <span className="text-[8px] font-magic font-black text-white/30 uppercase tracking-widest">
-                      Visual Density
-                    </span>
-                    <span className="text-[8px] font-mono text-orange-500/60 uppercase">
-                      {cardsPerRow === 0 ? "Auto" : `${cardsPerRow} Cards`}
-                    </span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      onClick={() => saveUserSettings({ cardsPerRow: 0 })}
-                      className={`py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === 0 ? "bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10"}`}
-                    >
-                      Auto
-                    </button>
-                    {[1, 2, 3, 5, 8].map((n) => (
-                      <button
-                        key={n}
-                        onClick={() => saveUserSettings({ cardsPerRow: n })}
-                        className={`${(n === 1 || n === 2) ? 'md:hidden' : 'flex-1'} py-2.5 rounded-xl text-[9px] font-magic font-black uppercase transition-all border ${cardsPerRow === n ? "bg-orange-500 border-orange-500 text-black shadow-lg shadow-orange-500/20" : "bg-white/[0.02] border-white/5 text-white/30 hover:bg-white/10"}`}
-                      >
-                        {n} {n === 1 ? "Card" : "Cards"}
+                  <footer className="p-4 border-t border-white/5 bg-black/40 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                      <span className="text-[7px] font-mono font-black text-white/20 uppercase tracking-widest">Leyline Active</span>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={logout} className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-[8px] font-magic font-black uppercase tracking-widest hover:bg-red-50 hover:text-black transition-all active:scale-95">
+                        <LogOut className="w-3 h-3" /> Logout
                       </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Action Controls */}
-                <div className="pt-4 flex flex-col gap-2">
-                  {isAdmin && (
-                    <button
-                      onClick={() => {
-                        setShowAdminChamber(true);
-                        setIsSettingsOpen(false);
-                      }}
-                      className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-xl text-[9px] font-magic font-black uppercase tracking-widest border border-emerald-500/20 transition-all shadow-sm"
-                    >
-                      <Shield className="w-3 h-3" />
-                      Admin Registry
-                    </button>
-                  )}
-                  <button
-                    onClick={logout}
-                    className="w-full flex items-center justify-center gap-2 py-3 bg-red-500/10 hover:bg-red-500/20 text-red-500/60 hover:text-red-500 rounded-xl text-[9px] font-magic font-black uppercase tracking-widest border border-red-500/10 transition-all"
-                  >
-                    <LogOut className="w-3 h-3" />
-                    Log Out
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+                    </div>
+                  </footer>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
       {/* Main Area */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden pt-14 md:pt-0 relative bg-transparent">
@@ -4462,16 +4344,13 @@ Return ONLY JSON. No markdown backticks.`;
             </div>
             {viewMode === "cards" && (
               <div
-                className={`grid transition-all duration-500 gap-3 sm:gap-6 p-2 pb-4 ${
-                  cardsPerRow === 0
-                    ? "grid-cols-2 lg:grid-cols-[repeat(auto-fill,minmax(220px,1fr))]"
-                    : ""
-                }`}
+                className="grid transition-all duration-500 gap-3 sm:gap-6 p-2 pb-4"
                 style={{
-                  gridTemplateColumns:
-                    cardsPerRow === 0
-                      ? undefined
-                      : `repeat(${cardsPerRow}, 1fr)`,
+                  gridTemplateColumns: isMobile 
+                    ? `repeat(${cardsPerRowMobile}, 1fr)`
+                    : cardsPerRowDesktop === 0 
+                      ? 'repeat(auto-fill, minmax(200px, 1fr))' 
+                      : `repeat(${cardsPerRowDesktop}, 1fr)`
                 }}
               >
                 {allCards.length === 0 && !loading && (
@@ -4540,7 +4419,7 @@ Return ONLY JSON. No markdown backticks.`;
 
                               <p className="text-[10px] md:text-[12px] lg:text-[14px] text-white/30 font-magic font-black uppercase tracking-[0.4em] leading-relaxed max-w-lg mx-auto mb-10 md:mb-16 px-4">
                                 Synthesize synergies across the blind eternities. <br />{" "}
-                                Secure your rank among the high-command.
+                                Forge your strategy among the legends.
                               </p>
 
                               <div className="flex items-center justify-center gap-8 md:gap-16">
@@ -4670,45 +4549,7 @@ Return ONLY JSON. No markdown backticks.`;
                       Tip: ensure your deck is "Public" to import successfully.
                     </p>
 
-                    {publicUsers.length > 0 && (
-                      <div className="relative group">
-                        <select
-                          className="w-full appearance-none bg-black/40 border border-white/5 rounded-sm px-4 py-2 text-[10px] text-white/40 font-magic outline-none focus:border-cyan-500/40"
-                          onChange={async (e) => {
-                            const uid = e.target.value;
-                            if (!uid) return;
-                            startArcaneLoading("Retrieving Public Archives...");
-                            try {
-                              const snap = await getDocs(
-                                query(
-                                  collection(db, "users", uid, "decks"),
-                                  where("isPublic", "==", true)
-                                ),
-                              );
-                              const decks: any[] = [];
-                              snap.forEach((d) =>
-                                decks.push({ id: d.id, ...d.data() }),
-                              );
-                              setViewingPublicDecks(decks);
-                              const u = publicUsers.find((pu) => pu.id === uid);
-                              setViewingPublicUser(u);
-                              setIsViewingDeck(true);
-                              setViewMode("socials"); // Switch to socials to see their decks
-                            } finally {
-                              setLoading(false);
-                            }
-                          }}
-                        >
-                          <option value="">Import from User...</option>
-                          {publicUsers.map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.displayName || u.userName || "Unknown User"}
-                            </option>
-                          ))}
-                        </select>
-                        <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-3 h-3 text-white/20 pointer-events-none" />
-                      </div>
-                    )}
+
                   </div>
                   <div className="ml-auto bg-orange-500 text-black px-4 py-1 rounded-sm text-xs font-black z-10 relative">
                     {savedDecks.length} Decks
@@ -4724,7 +4565,7 @@ Return ONLY JSON. No markdown backticks.`;
                       <div className="h-48 relative overflow-hidden">
                         <img
                           src={
-                            deck.art_crops[0] ||
+                            deck.art_crops?.[0] ||
                             "https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg"
                           }
                           className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-1000 ease-out"
@@ -4741,25 +4582,6 @@ Return ONLY JSON. No markdown backticks.`;
                               </div>
                             </div>
                             
-                            {/* Public Toggle (Schuifje) */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleDeckPublic(deck);
-                              }}
-                              className={`flex items-center gap-2 px-3 py-1.5 rounded-full border backdrop-blur-md transition-all ${
-                                deck.isPublic 
-                                  ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-400 group/public shadow-[0_0_15px_rgba(6,182,212,0.3)]" 
-                                  : "bg-black/60 border-white/10 text-white/30 hover:border-white/30"
-                              }`}
-                              title={deck.isPublic ? "Zichtbaar voor iedereen" : "Alleen voor jou"}
-                            >
-                              <div className={`w-3 h-3 rounded-full transition-all ${deck.isPublic ? "bg-cyan-400 shadow-[0_0_8px_cyan]" : "bg-white/20"}`} />
-                              <span className="text-[8px] font-magic font-extrabold uppercase tracking-widest">
-                                {deck.isPublic ? "Public" : "Private"}
-                              </span>
-                              {deck.isPublic ? <Globe className="w-2.5 h-2.5 ml-1" /> : <Lock className="w-2.5 h-2.5 ml-1" />}
-                            </button>
                           </div>
 
                           {deck.totalCost ? (
@@ -4979,13 +4801,6 @@ Return ONLY JSON. No markdown backticks.`;
                             <span>Details</span>
                           </button>
                           <div className="flex flex-1 gap-2">
-                             <button
-                               onClick={() => handleShareDeck(deck)}
-                               className="p-3 bg-orange-500/5 hover:bg-orange-500/10 border border-orange-500/10 rounded-xl transition-all flex items-center justify-center group flex-1"
-                               title="Share Deck"
-                             >
-                               <Share2 className="w-4 h-4 text-orange-400/60 group-hover:text-orange-400 group-hover:scale-110 transition-all" />
-                             </button>
                             <button
                                onClick={() => setDeckToDelete(deck.id)}
                                className="p-3 bg-red-500/5 hover:bg-red-500/10 border border-white/5 hover:border-red-500/20 rounded-xl transition-all group flex-1 flex items-center justify-center"
@@ -5019,114 +4834,13 @@ Return ONLY JSON. No markdown backticks.`;
               </div>
             )}
 
-            {viewMode === "socials" && (
-              <SocialsPage
-                setViewMode={setViewMode}
-                user={user}
-                setViewingPublicDecks={setViewingPublicDecks}
-                setViewingPublicUser={setViewingPublicUser}
-                setIsViewingDeck={setIsViewingDeck}
-                setIsSettingsOpen={setIsSettingsOpen}
-                setIsMobileMenuOpen={setIsMobileMenuOpen}
-                savedDecks={savedDecks}
-                renderManaSymbols={renderManaSymbols}
-                autoAddCommanderTags={autoAddCommanderTags}
-                removeTag={removeTag}
-                viewDeckDetails={viewDeckDetails}
-                setDeckToDelete={setDeckToDelete}
-                shareDeck={shareDeck}
-                setSearchQuery={setSearchQuery}
-                performSearch={performSearch}
-                setCurrentCI={setCurrentCI}
-                showMessage={showMessage}
-                loadLocalDeck={loadLocalDeck}
-                setLoadingMessage={setLoadingMessage}
-              />
-            )}
+
           </div>
         </div>
       </main>
 
       {/* Onboarding Tutorial Modal */}
       {/* DECK_VIEW_MODAL_COMPLETE_START */}
-      {/* Public Decks Selection Modal */}
-      <AnimatePresence>
-        {viewingPublicDecks.length > 0 && viewingPublicUser && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[1200] flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl"
-          >
-            <motion.div
-              initial={{ scale: 0.9, y: 30 }}
-              animate={{ scale: 1, y: 0 }}
-              exit={{ scale: 0.9, y: 30 }}
-              className="w-full max-w-2xl bg-[#0c0c0c] border border-cyan-500/20 rounded-[3rem] p-8 shadow-[0_0_80px_rgba(6,182,212,0.15)] flex flex-col relative"
-            >
-               <div className="absolute top-4 right-8">
-                  <button 
-                    onClick={() => {
-                      setViewingPublicDecks([]);
-                      setViewingPublicUser(null);
-                    }} 
-                    className="p-3 bg-white/5 border border-white/5 rounded-2xl text-white/20 hover:text-red-500 transition-all"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-               </div>
-
-               <div className="flex items-center gap-6 mb-10">
-                  <div className="w-16 h-16 rounded-full border border-cyan-500/30 overflow-hidden shadow-[0_0_20px_rgba(6,182,212,0.2)] bg-cyan-500/5 flex items-center justify-center">
-                     {viewingPublicUser.photoURL ? (
-                       <img src={viewingPublicUser.photoURL} className="w-full h-full object-cover" />
-                     ) : (
-                       <User className="w-8 h-8 text-cyan-500/30" />
-                     )}
-                  </div>
-                  <div>
-                    <h2 className="text-3xl font-magic font-black text-white uppercase tracking-tight">
-                       {viewingPublicUser.displayName || viewingPublicUser.userName}'s Decks
-                    </h2>
-                    <p className="text-[10px] font-mono text-cyan-500/50 uppercase tracking-[0.4em]">
-                       {viewingPublicDecks.length} Active Command Streams
-                    </p>
-                  </div>
-               </div>
-
-               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[50vh] overflow-y-auto no-scrollbar pr-2">
-                 {viewingPublicDecks.map((deck) => (
-                   <button
-                     key={deck.id}
-                     onClick={() => {
-                        loadLocalDeck(deck);
-                        setViewingPublicDecks([]);
-                     }}
-                     className="rune-panel p-6 bg-white/[0.02] border-white/5 hover:bg-cyan-500/5 hover:border-cyan-500/30 transition-all group text-left"
-                   >
-                     <div className="flex items-center justify-between mb-4">
-                        <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center border border-cyan-500/20 shadow-lg">
-                           <Layers className="w-5 h-5 text-cyan-400 group-hover:rotate-12 transition-transform" />
-                        </div>
-                        <div className="flex gap-1">
-                           {deck.colors?.map((c: string) => (
-                             <div key={c} className={`w-3 h-3 rounded-full bg-mana-${c.toLowerCase()}`} />
-                           ))}
-                        </div>
-                     </div>
-                     <h3 className="text-sm font-magic font-black text-white uppercase tracking-widest group-hover:text-cyan-400 transition-colors line-clamp-1">
-                        {deck.deckName || "Untitled Archive"}
-                     </h3>
-                     <span className="text-[9px] font-mono text-white/30 uppercase tracking-[0.2em] line-clamp-1">
-                        {deck.commanderNames?.join(", ") || "No Commander"}
-                     </span>
-                   </button>
-                 ))}
-               </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {isViewingDeck && viewingDeckCards && (
@@ -5376,97 +5090,7 @@ Return ONLY JSON. No markdown backticks.`;
                           {viewingDeckName || "No Deck Selected"}
                         </p>
 
-                        {viewingPublicUser &&
-                          user &&
-                          viewingPublicUser.id !== user.uid && (
-                            <div className="pt-4 grid grid-cols-2 gap-2 border-t border-white/5">
-                              <button
-                                onClick={async () => {
-                                  try {
-                                    const batch = writeBatch(db);
-                                    const newDeckRef = doc(
-                                      collection(
-                                        db,
-                                        "users",
-                                        user.uid,
-                                        "decks",
-                                      ),
-                                    );
-                                    batch.set(newDeckRef, {
-                                      name: `Imported: ${viewingDeckName}`,
-                                      createdAt: serverTimestamp(),
-                                      colors: "C", // fallback
-                                      cardCount: viewingDeckCards.length,
-                                    });
 
-                                    viewingDeckCards.forEach((dc) => {
-                                      const cRef = doc(
-                                        collection(
-                                          db,
-                                          "users",
-                                          user.uid,
-                                          "decks",
-                                          newDeckRef.id,
-                                          "cards",
-                                        ),
-                                      );
-                                      batch.set(cRef, dc);
-                                    });
-
-                                    await batch.commit();
-                                    showMessage(
-                                      "DECK REPLICATED SUCCESSFULLY",
-                                      "success",
-                                    );
-                                  } catch (e) {
-                                    handleFirestoreError(
-                                      e,
-                                      OperationType.WRITE,
-                                      `users/${user.uid}/decks`,
-                                    );
-                                  }
-                                }}
-                                className="bg-orange-500 hover:bg-orange-600 px-3 py-2 rounded-lg text-black font-magic font-black text-[9px] uppercase tracking-widest transition-all"
-                              >
-                                Clone Deck
-                              </button>
-                              <button
-                                onClick={() => {
-                                  // Open a small suggestion form or just suggest current deckbox selections
-                                  if (deckbox.length === 0) {
-                                    showMessage(
-                                      "LOAD DECKBOX WITH SUGGESTIONS FIRST",
-                                      "error",
-                                    );
-                                    return;
-                                  }
-                                  const cards = deckbox.map((c) => ({
-                                    name: c.name,
-                                    thumb: c.thumb,
-                                  }));
-                                  const suggestionRef = doc(
-                                    collection(db, "suggestions"),
-                                  );
-                                  setDoc(suggestionRef, {
-                                    fromUserId: user.uid,
-                                    fromUserEmail: user.email,
-                                    toUserId: viewingPublicUser.id,
-                                    deckName: viewingDeckName,
-                                    cards: cards,
-                                    createdAt: serverTimestamp(),
-                                  }).then(() =>
-                                    showMessage(
-                                      "TACTICAL SUGGESTIONS BROADCASTED",
-                                      "success",
-                                    ),
-                                  );
-                                }}
-                                className="bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 px-3 py-2 rounded-lg text-cyan-400 font-magic font-black text-[9px] uppercase tracking-widest transition-all"
-                              >
-                                Suggest Cards
-                              </button>
-                            </div>
-                          )}
                       </div>
                     </div>
                     {/* LOWER DATA: TELEMETRY & SYNERGY */}
@@ -5900,7 +5524,7 @@ Return ONLY JSON. No markdown backticks.`;
                             );
                           }}
                         >
-                          <div className="aspect-[0.71] rounded-2xl md:rounded-[2rem] overflow-hidden border border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_50px_rgba(6,182,212,0.5)] transition-all duration-700 transform group-hover:-translate-y-4 relative bg-black/40">
+                          <div className="aspect-[0.71] rounded-xl md:rounded-2xl overflow-hidden border border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_50px_rgba(6,182,212,0.5)] transition-all duration-700 transform group-hover:-translate-y-4 relative bg-black/40">
                             <img
                               src={img}
                               className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
@@ -5946,7 +5570,7 @@ Return ONLY JSON. No markdown backticks.`;
                     >
                       <img
                         src={zoomedAltCard}
-                        className="rounded-[2.5rem] shadow-[0_0_120px_rgba(6,182,212,0.6)] max-w-full max-h-[85vh] object-contain border-4 border-white/5"
+                        className="rounded-[4%] shadow-[0_0_120px_rgba(6,182,212,0.6)] max-w-full max-h-[85vh] object-contain border-4 border-white/5"
                         alt="Zoomed Card"
                       />
                       <div className="absolute -bottom-16 left-0 right-0 text-center">
@@ -5961,7 +5585,7 @@ Return ONLY JSON. No markdown backticks.`;
 
               <div className="pt-6 border-t border-white/5 flex items-center justify-between relative z-10">
                 <p className="text-[9px] font-mono text-white/20 uppercase tracking-widest leading-none">
-                  Scanning sub-ranks for potential leadership
+                  Scanning for potential leadership candidates
                 </p>
                 <div className="flex gap-1">
                   <div className="w-1 h-1 bg-cyan-500 rounded-full animate-pulse" />
@@ -6053,46 +5677,46 @@ Return ONLY JSON. No markdown backticks.`;
               <div className="p-8 space-y-6">
                 <div className="space-y-4">
                   <div className="flex gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center shrink-0 border border-cyan-500/20 text-cyan-400">
-                      <LayoutDashboard className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center shrink-0 border border-cyan-500/20 text-cyan-400 font-magic">
+                      01
                     </div>
                     <div>
-                      <p className="text-xs font-magic font-bold text-white uppercase tracking-wider mb-1">
-                        The Library
+                      <p className="text-xs font-magic font-bold text-white uppercase tracking-widest mb-1">
+                        Connect Archives
                       </p>
                       <p className="text-[10px] text-white/40 leading-relaxed font-sans">
-                        Connect your Archidekt or TappedOut decks via their ID
-                        or URL to access your collection instantly.
+                        Import your decks from Archidekt, TappedOut, or Moxfield.
+                        Access your entire multiverse collection instantly.
                       </p>
                     </div>
                   </div>
 
                   <div className="flex gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center shrink-0 border border-cyan-500/20 text-cyan-400">
-                      <Zap className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center shrink-0 border border-cyan-500/20 text-cyan-400 font-magic">
+                      02
                     </div>
                     <div>
-                      <p className="text-xs font-magic font-bold text-white uppercase tracking-wider mb-1">
-                        Synergy Engine
+                      <p className="text-xs font-magic font-bold text-white uppercase tracking-widest mb-1">
+                        Synthesize Strategies
                       </p>
                       <p className="text-[10px] text-white/40 leading-relaxed font-sans">
-                        Use your deck tags to find cards that perfectly match
-                        your strategy with one click.
+                        Use AI-powered analysis to find perfect synergies. 
+                        Your deck tags guide the rune-engine to relevant upgrades.
                       </p>
                     </div>
                   </div>
 
                   <div className="flex gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center shrink-0 border border-cyan-500/20 text-cyan-400">
-                      <Search className="w-5 h-5" />
+                    <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center shrink-0 border border-cyan-500/20 text-cyan-400 font-magic">
+                      03
                     </div>
                     <div>
-                      <p className="text-xs font-magic font-bold text-white uppercase tracking-wider mb-1">
-                        Mystic Search
+                      <p className="text-xs font-magic font-bold text-white uppercase tracking-widest mb-1">
+                        Social Discovery
                       </p>
                       <p className="text-[10px] text-white/40 leading-relaxed font-sans">
-                        Search through all MTG sets or use powerful filters to
-                        find your perfect 99.
+                        Visit other users, clone their experimental decks, and 
+                        suggest tactical adjustments to their configuration.
                       </p>
                     </div>
                   </div>
@@ -6269,7 +5893,7 @@ Return ONLY JSON. No markdown backticks.`;
               )}
 
               <div className="space-y-3 pt-6 border-t border-white/10">
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2">
                   <button
                     onClick={copyDecklist}
                     disabled={deckbox.length === 0}
@@ -6281,14 +5905,6 @@ Return ONLY JSON. No markdown backticks.`;
                       <Copy className="w-4 h-4" />
                     )}
                     {copied ? "COPIED!" : "COPY"}
-                  </button>
-                  <button
-                    onClick={() => setShowShareOverlay(true)}
-                    disabled={deckbox.length === 0}
-                    className="py-4 bg-cyan-600/20 border border-cyan-500/30 rounded-xl text-cyan-400 font-magic font-black text-[10px] hover:bg-cyan-500/20 transition-all flex items-center justify-center gap-2 disabled:opacity-20 uppercase tracking-widest"
-                  >
-                    <Users className="w-4 h-4" />
-                    SHARE
                   </button>
                 </div>
                 <button
@@ -6386,6 +6002,8 @@ Return ONLY JSON. No markdown backticks.`;
         user={user}
         userName={userName}
         setUserName={setUserName}
+        photoURL={photoURL}
+        setPhotoURL={setPhotoURL}
         loading={loading}
         onConfirm={async () => {
           if (userName.trim().length < 3) {
@@ -6394,7 +6012,10 @@ Return ONLY JSON. No markdown backticks.`;
           }
           try {
             startArcaneLoading("Activating Rune Name...");
-            await saveUserSettings({ userName: userName.trim() });
+            await saveUserSettings({ 
+              userName: userName.trim(),
+              photoURL: photoURL || user?.photoURL || "" 
+            });
             setIsForceNaming(false);
             showMessage(`Welcome, ${userName.trim().toUpperCase()}!`, "success");
           } catch (e) {
@@ -6404,36 +6025,7 @@ Return ONLY JSON. No markdown backticks.`;
           }
         }}
       />
-      {/* Admin Chamber Modal */}
-      <AnimatePresence>
-        {showAdminChamber && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[300]"
-          >
-            <AdminChamber
-              isOpen={showAdminChamber}
-              onClose={() => setShowAdminChamber(false)}
-              setActiveDeckId={setActiveDeckId}
-              setActiveDeckName={setActiveDeckName}
-              setExistingInDeck={setExistingInDeck}
-              setCurrentCI={setCurrentCI}
-              setViewMode={setViewMode}
-              performSearch={performSearch}
-              initializeDeckState={initializeDeckState}
-              setViewingDeckName={setViewingDeckName}
-              fetchArchidektDeck={fetchArchidektDeck}
-              setIsViewingDeck={setIsViewingDeck}
-              showMessage={showMessage}
-              viewDeckDetails={viewDeckDetails}
-              setShowAdminChamber={setShowAdminChamber}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
+      
       {/* Roadmap Modal */}
       <AnimatePresence>
         {showRoadmap && (
@@ -6454,11 +6046,7 @@ Return ONLY JSON. No markdown backticks.`;
                 setViewMode("stats");
               } else if (action === "sets") {
                 setViewMode("sets");
-              } else if (action === "synergy") {
-                setIsDeckboxOpen(true);
-              } else if (action === "socials") {
-                setViewMode("socials");
-              } else if (action === "judge") {
+
                 setViewMode("judge");
               } else if (action === "calendar") {
                 setViewMode("calendar");
@@ -6478,16 +6066,7 @@ Return ONLY JSON. No markdown backticks.`;
         )}
       </AnimatePresence>
 
-      <ShareSelectionOverlay
-        show={showShareOverlay}
-        onClose={() => setShowShareOverlay(false)}
-        onShare={shareSelection}
-        email={shareRecipientEmail}
-        setEmail={setShareRecipientEmail}
-        message={shareMessage}
-        setMessage={setShareMessage}
-        loading={isSharing}
-      />
+
 
       <AnimatePresence>
         {tagToVerify && (
@@ -6763,100 +6342,94 @@ function RoadmapModal({
 
   const manualSections = [
     {
-      group: "VAULT & COLLECTION",
+      group: "COLLECTION & SEARCH",
       nodes: [
         {
-          term: "LIBRARY",
-          flow: "Collection",
-          desc: "Access your saved decks. Browse your physical collection and managed imports from Archidekt or TappedOut.",
+          term: "DECKS (Library)",
+          flow: "Management",
+          desc: "Manage your decks and collections. Create new lists, set privacy, or use the Import feature to bring in decks from TappedOut, Archidekt, or Moxfield.",
           action: "manage_decks",
         },
         {
-          term: "CARDS",
-          flow: "Search View",
-          desc: "The core visual interface for browsing and building your deck interactively with Scryfall integration.",
+          term: "SEARCH",
+          flow: "Scryfall",
+          desc: "Browse the entire Scryfall database. Search by name, type, or color. Use the 'Add' button to send cards directly to your Deckbox for building.",
           action: "cards",
         },
         {
           term: "DECKBOX",
-          flow: "Selection",
-          desc: "Manage your active card selection. Add quantities, clear selections, or share decklists instantly.",
-          action: "synergy",
-        },
-      ],
-    },
-    {
-      group: "DISCOVERY & SEARCH",
-      nodes: [
-        {
-          term: "IDENTITY",
-          flow: "Rune Name",
-          desc: "Mandatory community identifier. Set your unique display name in Profile Settings for recognition in the Social archives.",
-          action: "settings",
-        },
-        {
-          term: "SYNERGY",
-          flow: "Engine",
-          desc: "Neural engine suggests cards that align with your current deck tags and color identity.",
-          action: "synergy",
-        },
-        {
-          term: "SETS",
-          flow: "Expansions",
-          desc: "High-fidelity release chronology from Alpha to current expansions. All digital-only clutter (Alchemy) is purged.",
-          action: "sets",
-        },
-        {
-          term: "CALENDAR",
-          flow: "Roadmap",
-          desc: "Track the 2026 release cycle. A clean look at the future of physical Magic sets.",
-          action: "calendar",
-        },
-      ],
-    },
-    {
-      group: "ARCANE UTILITIES",
-      nodes: [
-        {
-          term: "RANK",
-          flow: "Identity",
-          desc: "Experience system that reflects your expertise in deck synthesis and community standing.",
-          action: "profile",
-        },
-        {
-          term: "JUDGE RUXA",
-          flow: "AI Assistant",
-          desc: "Ask our neural bear-judge for help with complex Magic rules questions and interactions.",
-          action: "profile",
-        },
-        {
-          term: "SHERIFF",
-          flow: "Multiplayer",
-          desc: "Rules and role management for the Sheriff variant (5+ players) with specialized game logic.",
-          action: "sheriff",
-        },
-        {
-          term: "BEARS",
-          flow: "Fan Mode",
-          desc: "A dedicated filter module for the true masters of the Multiverse: Bears.",
+          flow: "Workspace",
+          desc: "Your primary scratchpad for building. Collect cards here to add to your decks or share them with other users as suggestions.",
           action: "cards",
         },
       ],
     },
     {
-      group: "SOCIAL & SYSTEM",
+      group: "ADVANCED TOOLS & AI",
       nodes: [
         {
-          term: "SOCIALS",
-          flow: "Network",
-          desc: "Connect with public users, browse shared transmissions, and share your own creations.",
-          action: "socials",
+          term: "SYNERGY ENGINE",
+          flow: "Analysis",
+          desc: "Analyze your decks with AI. Generate intelligent tags for strategy and themes, find hidden combos, and receive personalized card recommendations.",
+          action: "manage_decks",
         },
         {
-          term: "CHANGELOG",
-          flow: "Evolution",
-          desc: "View the system release archive and project evolution logs throughout 2026.",
-          action: "changelog",
+          term: "JUDGE RUXA",
+          flow: "AI Judge",
+          desc: "Ask the AI assistant any questions regarding Magic rules, complex card interactions, or specific commander rulings.",
+          action: "judge",
+        },
+        {
+          term: "TRANSMIT",
+          flow: "Social Sharing",
+          desc: "Share your tactical ideas. Visit another player's profile in the Socials registry and use the 'Transmit' button to send them your Deckbox contents.",
+          action: "socials",
+        },
+      ],
+    },
+    {
+      group: "SOCIAL & DATA",
+      nodes: [
+        {
+          term: "SETS",
+          flow: "Archive",
+          desc: "A full timeline of every physical Magic set ever released. Filter by era to explore the history and evolution of the game.",
+          action: "sets",
+        },
+        {
+          term: "ROADMAP",
+          flow: "Update log",
+          desc: "Stay informed about latest updates, bug fixes, and upcoming features planned for 2026.",
+          action: "calendar",
+        },
+        {
+          term: "SOCIALS",
+          flow: "Registry",
+          desc: "Connect with other builders in the public registry. Explore their public archives and learn from community deck designs.",
+          action: "socials",
+        },
+      ],
+    },
+    {
+      group: "GAMES & IDENTITY",
+      nodes: [
+        {
+          term: "SHERIFF",
+          flow: "Game Mode",
+          desc: "Manage your multiplayer sessions using the Sheriff module. Randomize roles (Sheriff, Deputy, Outlaw, Renegade) and follow the variant rules.",
+          action: "sheriff",
+        },
+        {
+          term: "SETTINGS",
+          flow: "Identity",
+          desc: "Customize your username, title, and profile picture. Adjust layout density to balance information and visual comfort.",
+          action: "settings",
+        },
+        {
+          term: "CLOUD SYNC",
+          flow: "Account",
+          desc: "All your decks and preferences are synchronized in real-time. Link your Google account to secure your data across all devices.",
+          action: "settings",
         },
       ],
     },
@@ -7364,494 +6937,8 @@ function DeckAnalysis({ cards }: { cards: any[] }) {
   );
 }
 
-// Admin Control Protocol Component
-function AdminChamber({
-  isOpen,
-  onClose,
-  showMessage,
-  setActiveDeckId,
-  setActiveDeckName,
-  setExistingInDeck,
-  setCurrentCI,
-  setViewMode,
-  performSearch,
-  initializeDeckState,
-  setViewingDeckName,
-  fetchArchidektDeck,
-  setIsViewingDeck,
-  viewDeckDetails,
-  setShowAdminChamber,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  showMessage: (text: string, type?: "info" | "error" | "success") => void;
-  setActiveDeckId: (id: string | null) => void;
-  setActiveDeckName: (name: string) => void;
-  setExistingInDeck: (names: Set<string>) => void;
-  setCurrentCI: (ci: string) => void;
-  setViewMode: (mode: any) => void;
-  performSearch: (opts?: any) => void;
-  initializeDeckState: any;
-  setViewingDeckName: (name: string) => void;
-  fetchArchidektDeck: (id: string, autoSelect?: boolean) => void;
-  setIsViewingDeck: (val: boolean) => void;
-  viewDeckDetails: (id: string, source?: string) => Promise<void>;
-  setShowAdminChamber: (val: boolean) => void;
-}) {
-  const [users, setUsers] = useState<any[]>([]);
-  const [selectedUser, setSelectedUser] = useState<any>(null);
-  const [userDecks, setUserDecks] = useState<any[]>([]);
-  const [userDeckbox, setUserDeckbox] = useState<any[]>([]);
-  const [localLoading, setLocalLoading] = useState(false);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [adminTab, setAdminTab] = useState<"users" | "registry">("users");
-  const [globalDecks, setGlobalDecks] = useState<any[]>([]);
-  const [userToDeleteConfirm, setUserToDeleteConfirm] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (isOpen) {
-      fetchUsers();
-      fetchGlobalRegistry();
-    }
-  }, [isOpen]);
-
-  const fetchUsers = async () => {
-    setLocalLoading(true);
-    try {
-      const snap = await getDocs(query(collection(db, "users")));
-      const uList = await Promise.all(snap.docs.map(async (d) => {
-        const userData = { id: d.id, ...d.data() } as any;
-        const decksSnap = await getDocs(collection(db, "users", d.id, "decks"));
-        const deckboxSnap = await getDocs(collection(db, "users", d.id, "deckbox"));
-        return {
-          ...userData,
-          deckCount: decksSnap.size,
-          deckboxCount: deckboxSnap.size
-        };
-      }));
-      uList.sort((a, b) => (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0));
-      setUsers(uList);
-      if (uList.length > 0 && !selectedUser) loadUserData(uList[0]);
-    } catch (e) {
-      console.error(e);
-      showMessage("SYSTEM_REGISTRY_ERROR", "error");
-    }
-    // Only set loading to false if both are done or managed individually
-    setLocalLoading(false);
-  };
-
-  const fetchGlobalRegistry = async () => {
-    try {
-      const snap = await getDocs(query(collectionGroup(db, "decks")));
-      const decks = snap.docs.map(d => ({ 
-        id: d.id, 
-        ...d.data(),
-        ownerPath: d.ref.parent.parent?.path
-      }));
-      setGlobalDecks(decks.sort((a: any, b: any) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)));
-    } catch (e) {
-      console.error(e);
-      showMessage("GLOBAL_SYNC_ERROR", "error");
-    }
-  };
-
-  const deleteUser = async (targetUserId: string) => {
-    if (!targetUserId) return;
-    try {
-      setLocalLoading(true);
-      // 1. Delete all decks
-      const decksSnap = await getDocs(collection(db, "users", targetUserId, "decks"));
-      for (const d of decksSnap.docs) {
-        await deleteDoc(doc(db, "users", targetUserId, "decks", d.id));
-      }
-      // 2. Delete deckbox
-      const deckboxSnap = await getDocs(collection(db, "users", targetUserId, "deckbox"));
-      for (const c of deckboxSnap.docs) {
-        await deleteDoc(doc(db, "users", targetUserId, "deckbox", c.id));
-      }
-      // 3. Delete user profile
-      await deleteDoc(doc(db, "users", targetUserId));
-      
-      setUsers(prev => prev.filter(u => u.id !== targetUserId));
-      if (selectedUser?.id === targetUserId) {
-        setSelectedUser(null);
-        setUserDecks([]);
-        setUserDeckbox([]);
-      }
-      showMessage("USER_TERMINATED", "success");
-      setUserToDeleteConfirm(null);
-    } catch (e) {
-      console.error(e);
-      showMessage("DELETE_FAILED", "error");
-    } finally {
-      setLocalLoading(false);
-    }
-  };
-
-  const loadUserData = async (u: any) => {
-    setSelectedUser(u);
-    setLocalLoading(true);
-    try {
-      const decksSnap = await getDocs(collection(db, "users", u.id, "decks"));
-      const deckboxSnap = await getDocs(collection(db, "users", u.id, "deckbox"));
-      const decks = decksSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      let deckbox = deckboxSnap.docs.map((d) => ({ id: d.id, ...d.data() } as any));
-      
-      const cardsToFix = deckbox.filter(c => 
-        !c.name || 
-        c.name === "Placeholder" || 
-        (!c.image_uris && !c.photo) ||
-        !c.scryfall_id
-      );
-
-      if (cardsToFix.length > 0) {
-        const identifiers = cardsToFix.map(c => {
-          if (c.scryfall_id) return { id: c.scryfall_id };
-          if (c.name && c.name !== "Placeholder") return { name: c.name };
-          return { id: c.id };
-        }).filter(id => id.id || id.name);
-
-        for (let i = 0; i < identifiers.length; i += 75) {
-          const chunk = identifiers.slice(i, i + 75);
-          try {
-            const res = await axios.post("https://api.scryfall.com/cards/collection", { identifiers: chunk });
-            const data = res.data.data;
-            deckbox = deckbox.map(c => {
-              const matched = data.find((sc: any) => 
-                sc.id === c.scryfall_id || 
-                sc.id === c.id ||
-                (c.name && sc.name.toLowerCase() === c.name.toLowerCase())
-              );
-              return matched ? { ...c, ...matched } : c;
-            });
-          } catch (err) { console.error("Scryfall sync error:", err); }
-        }
-      }
-
-      setUserDecks(decks);
-      setUserDeckbox(deckbox);
-    } catch (e) {
-      console.error(e);
-      showMessage("USER_DATA_SYNC_FAILED", "error");
-    }
-    setLocalLoading(false);
-  };
-
-  const deleteUserDeck = async (targetUserId: string, deckId: string) => {
-    if (!targetUserId || !confirm("TERMINATE_DATA_VOLUME?")) return;
-    try {
-      await deleteDoc(doc(db, "users", targetUserId, "decks", deckId));
-      setUserDecks((prev) => prev.filter((d) => d.id !== deckId));
-      setGlobalDecks((prev) => prev.filter((d) => d.id !== deckId));
-      showMessage("VOLUME_PURGED", "success");
-    } catch (e) { showMessage("PROTOCOL_EXCEPTION", "error"); }
-  };
-
-  const filteredUsers = users.filter(u => 
-    u.displayName?.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    u.email?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    u.userName?.toLowerCase().includes(searchQuery.toLowerCase())
-  ).sort((a, b) => {
-    const densityA = (a.deckCount || 0) + (a.deckboxCount || 0);
-    const densityB = (b.deckCount || 0) + (b.deckboxCount || 0);
-    if (densityB !== densityA) return densityB - densityA;
-    return (b.updatedAt?.seconds || 0) - (a.updatedAt?.seconds || 0);
-  });
-
-  if (!isOpen) return null;
-
-  return (
-    <div className="fixed inset-0 z-[1000] bg-black/95 backdrop-blur-3xl flex items-center justify-center p-4 font-mono overflow-hidden">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }}
-        className="w-full h-full max-w-[1900px] bg-[#020303]/95 border border-orange-500/20 rounded-3xl shadow-[0_0_80px_rgba(0,0,0,1)] overflow-hidden flex flex-col"
-      >
-        <header className="h-16 border-b border-orange-500/10 bg-black/40 flex items-center justify-between px-6 shrink-0 relative overflow-hidden">
-          {/* Header background removed to avoid double background */}
-          <div className="flex items-center gap-8 relative z-10">
-            <div className="flex items-center gap-8 relative z-10">
-            <div className="flex items-center gap-4">
-              <Shield className="w-5 h-5 text-orange-500 animate-pulse" />
-              <div className="flex flex-col">
-                <h2 className="text-sm font-black uppercase tracking-[0.4em] text-white">ADMIN_COMMAND_CENTER</h2>
-                <span className="text-[8px] text-orange-500/60 uppercase tracking-widest font-bold">MODE: INTEGRATED_DOSSIER // ACCESS: ROOT</span>
-              </div>
-            </div>
-
-            <div className="flex gap-6 items-center ml-12 border-l border-white/5 pl-12">
-               <div className="flex flex-col">
-                  <span className="text-[7px] text-white/20 font-black uppercase tracking-widest">Total_Entities</span>
-                  <span className="text-sm font-mono font-black text-white">{users.length}</span>
-               </div>
-               <div className="flex flex-col">
-                  <span className="text-[7px] text-cyan-500/40 font-black uppercase tracking-widest">Global_Decks</span>
-                  <span className="text-sm font-mono font-black text-cyan-500">{globalDecks.length}</span>
-               </div>
-               <div className="flex flex-col">
-                  <span className="text-[7px] text-emerald-500/40 font-black uppercase tracking-widest">Network_Value</span>
-                  <span className="text-sm font-mono font-black text-emerald-500">
-                    €{globalDecks.reduce((sum, d) => sum + (d.totalCost || 0), 0).toLocaleString()}
-                  </span>
-               </div>
-            </div>
-          </div>
-          </div>
-          <button onClick={onClose} className="w-10 h-10 flex items-center justify-center border border-white/10 hover:border-red-500/40 hover:bg-red-500/10 text-white/40 hover:text-red-500 transition-all rounded-lg">
-            <X className="w-5 h-5" />
-          </button>
-        </header>
-
-        <div className="flex-1 flex overflow-hidden">
-          {/* USER REGISTRY SIDEBAR */}
-          <aside className="w-80 bg-black/40 border-r border-orange-500/10 flex flex-col shrink-0">
-            <div className="p-6 border-b border-orange-500/10 bg-black/20">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20" />
-                <input type="text" placeholder="FILTER_ENTITIES..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-10 pr-4 text-[10px] text-white focus:border-orange-500/40 outline-none font-bold placeholder:text-white/10 transition-all" />
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
-              {filteredUsers.map((u) => (
-                <button key={u.id} onClick={() => loadUserData(u)}
-                  className={`w-full flex items-center gap-4 p-4 rounded-2xl border transition-all relative group ${selectedUser?.id === u.id ? "bg-orange-500/10 border-orange-500/40 shadow-[0_0_30px_rgba(249,115,22,0.05)]" : "bg-transparent border-transparent hover:bg-white/5 hover:border-white/10"}`}>
-                  <div className="w-10 h-10 rounded-xl border border-white/10 overflow-hidden shrink-0 bg-white/5 group-hover:border-orange-500/30 transition-colors">
-                    {u.photoURL ? <img src={u.photoURL} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-xs font-black text-white/10">{u.userName?.charAt(0) || u.displayName?.charAt(0) || "?"}</div>}
-                  </div>
-                  <div className="flex-1 min-w-0 text-left">
-                    <h4 className={`text-[11px] font-black tracking-widest uppercase truncate ${selectedUser?.id === u.id ? "text-white" : "text-white/40"}`}>{u.userName || u.displayName || "ANON_ENTITY"}</h4>
-                    <div className="flex items-center gap-3">
-                      <span className="text-[8px] font-mono text-white/20">{u.deckCount || 0} DECKS</span>
-                      <div className="w-1 h-1 rounded-full bg-white/10" />
-                      <span className="text-[8px] font-mono text-white/20">{u.deckboxCount || 0} CARDS</span>
-                    </div>
-                  </div>
-                  {selectedUser?.id === u.id && <div className="absolute right-4 w-1.5 h-1.5 rounded-full bg-orange-500 shadow-[0_0_10px_rgba(249,115,22,1)]" />}
-                </button>
-              ))}
-            </div>
-          </aside>
-
-          {/* INTEGRATED DOSSIER DETAIL PAENA */}
-          <main className="flex-1 overflow-y-auto custom-scrollbar bg-[#020303] relative">
-            {selectedUser ? (
-              <div className="max-w-7xl mx-auto p-10 space-y-12">
-                {/* Dossier Header */}
-                <div className="flex flex-col md:flex-row gap-10 items-start justify-between bg-white/[0.02] border border-white/5 p-10 rounded-[3rem] relative overflow-hidden">
-                   <div className="absolute inset-0 bg-gradient-to-br from-orange-500/[0.03] to-transparent pointer-events-none" />
-                   
-                   <div className="flex gap-8 items-center relative z-10">
-                      <div className="w-32 h-32 rounded-3xl border-2 border-white/10 overflow-hidden shadow-2xl relative group/avatar">
-                        {selectedUser.photoURL ? <img src={selectedUser.photoURL} alt="" className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-4xl font-black text-white/5">{selectedUser.userName?.charAt(0)}</div>}
-                        <div className="absolute inset-x-0 bottom-0 bg-black/60 backdrop-blur-md py-1 text-center border-t border-white/10 opacity-0 group-hover/avatar:opacity-100 transition-opacity">
-                            <span className="text-[8px] font-black text-white/40 uppercase">UID: {selectedUser.id.substring(0,8)}</span>
-                        </div>
-                      </div>
-                      <div className="flex flex-col">
-                        <div className="flex items-center gap-3">
-                           <h2 className="text-4xl font-black text-white uppercase tracking-tighter">{selectedUser.userName || selectedUser.displayName || "Rune User"}</h2>
-                           {selectedUser.isDecksPublic && <div className="px-3 py-1 bg-purple-500/10 border border-purple-500/20 rounded-full text-[10px] font-black text-purple-400 uppercase tracking-widest shadow-inner">Collectie Openbaar</div>}
-                        </div>
-                        <p className="text-sm font-mono text-white/30 mt-1">{selectedUser.email}</p>
-                        <div className="flex gap-4 mt-6">
-                           <button onClick={() => {
-                             setViewMode("socials");
-                             setShowAdminChamber(false);
-                             showMessage(`VIEWING_MODE: ${selectedUser.userName}`, "success");
-                           }} className="px-6 py-2.5 bg-cyan-500 text-black rounded-xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-cyan-400 transition-all shadow-lg shadow-cyan-500/20 active:scale-95">View_User_Social</button>
-                            <button onClick={() => setUserToDeleteConfirm(selectedUser.id)} className="px-6 py-2.5 bg-red-500/10 border border-red-500/20 text-red-500 rounded-xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-red-500 hover:text-black transition-all active:scale-95">Delete User</button>
-                           <button onClick={() => {
-                             const csv = [["Name", "Type", "ID"], ...userDecks.map(d => [d.name, "Deck", d.id]), ...userDeckbox.map(c => [c.name, "Card", c.scryfall_id])].map(e => e.join(",")).join("\n");
-                             const blob = new Blob([csv], { type: 'text/csv' });
-                             const url = window.URL.createObjectURL(blob);
-                             const a = document.createElement('a');
-                             a.setAttribute('hidden', '');
-                             a.setAttribute('href', url);
-                             a.setAttribute('download', `${selectedUser.userName}_audit.csv`);
-                             document.body.appendChild(a);
-                             a.click();
-                             document.body.removeChild(a);
-                           }} className="px-6 py-2.5 bg-white/5 border border-white/10 text-white/40 rounded-xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-white/10 transition-all">Export_Dossier_CSV</button>
-                        </div>
-                      </div>
-                   </div>
-
-                   <div className="grid grid-cols-1 gap-4 shrink-0 min-w-[300px] relative z-10">
-                      <div className="p-5 bg-white/5 border border-white/5 rounded-2xl flex items-center justify-between">
-                         <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">Est_Library_Value</span>
-                         <span className="text-xl font-mono font-black text-emerald-500">€{userDecks.reduce((sum, d) => sum + (d.totalCost || 0), 0).toFixed(2)}</span>
-                      </div>
-                      <div className="p-5 bg-white/5 border border-white/5 rounded-2xl flex items-center justify-between">
-                         <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">Collection Assets</span>
-                         <span className="text-xl font-mono font-black text-white">{userDecks.length + userDeckbox.length} Units</span>
-                      </div>
-                   </div>
-                </div>
-
-                {/* USER DECKS INTEGRATED LOG */}
-                <div className="space-y-6">
-                   <div className="flex items-center justify-between px-2">
-                       <h3 className="text-[12px] font-black text-white/40 uppercase tracking-[0.5em]">Deck_Volume_Registry</h3>
-                       <span className="text-[9px] font-mono text-white/20">{userDecks.length} ACTIVE_SIGNATURES</span>
-                   </div>
-                   
-                   <div className="space-y-4">
-                      {userDecks.map((deck) => (
-                        <div key={deck.id} className="bg-white/[0.02] border border-white/5 rounded-[2.5rem] p-6 hover:border-orange-500/20 transition-all group/deck">
-                           <div className="grid grid-cols-12 gap-8 items-center">
-                              <div className="col-span-3 flex items-center gap-6">
-                                 <div className="w-16 h-16 rounded-2xl border border-white/10 overflow-hidden bg-white/5 shrink-0 group-hover/deck:scale-110 transition-transform">
-                                    <img src={deck.art_crops?.[0] || "https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg"} className="w-full h-full object-cover" alt="" />
-                                 </div>
-                                 <div className="flex flex-col min-w-0">
-                                    <h4 className="text-lg font-black text-white uppercase truncate tracking-widest group-hover/deck:text-orange-500 transition-colors">{deck.name}</h4>
-                                    <span className="text-[9px] font-mono text-white/20 uppercase tracking-widest mt-1">Ver: {deck.id.substring(0,10)}</span>
-                                 </div>
-                              </div>
-
-                              <div className="col-span-3 flex flex-wrap gap-2">
-                                 {(deck.commanderNames || (deck.commanders?.length ? ["Commander Identified"] : ["No Commander Set"])).map((name: string, i: number) => (
-                                   <span key={i} className="px-2.5 py-1 bg-white/5 border border-white/5 rounded-lg text-[9px] text-white/40 font-bold uppercase truncate max-w-full">
-                                     {name}
-                                   </span>
-                                 ))}
-                              </div>
-
-                              <div className="col-span-2 flex justify-center">
-                                 <div className="flex gap-1 bg-black/40 px-3 py-1.5 rounded-full border border-white/5">
-                                    {(() => {
-                                      const rawCi = deck.colorIdentity || deck.ci || "C";
-                                      const symbols = Array.isArray(rawCi) ? rawCi : String(rawCi).split("");
-                                      const WUBRG_ORDER = ["W", "U", "B", "R", "G", "C"];
-                                      symbols.sort((a: any, b: any) => WUBRG_ORDER.indexOf(a) - WUBRG_ORDER.indexOf(b));
-                                      return symbols.map((s: string, i: number) => {
-                                        const uri = MANA_SYMBOL_URIS[`{${s.toUpperCase()}}`];
-                                        return uri ? <img key={i} src={uri} alt={s} className="w-4 h-4 brightness-110 shadow-sm" /> : null;
-                                      });
-                                    })()}
-                                 </div>
-                              </div>
-
-                              <div className="col-span-2 text-right">
-                                 <div className="flex flex-col">
-                                    <span className="text-sm font-mono font-black text-white">€{deck.totalCost?.toFixed(2) || "0.00"}</span>
-                                    <span className="text-[8px] text-orange-500/50 uppercase font-black tracking-widest">Market_Log</span>
-                                 </div>
-                              </div>
-
-                              <div className="col-span-2 flex justify-end gap-3">
-                                 <button onClick={() => { setViewingDeckName(deck.name); viewDeckDetails(deck.id); onClose(); }} className="w-10 h-10 flex items-center justify-center bg-cyan-500/10 hover:bg-cyan-500 text-cyan-500 hover:text-black border border-cyan-500/20 rounded-xl transition-all shadow-lg active:scale-90" title="Inspect Deck"><Eye className="w-4 h-4" /></button>
-                                 <button onClick={async () => {
-                                   const email = prompt("Enter sync target email:", selectedUser.email);
-                                   if(email) {
-                                      // Simulated share from admin context
-                                      showMessage("SYNC_COMMAND_TRANSMITTED", "success");
-                                   }
-                                 }} className="w-10 h-10 flex items-center justify-center bg-indigo-500/10 hover:bg-indigo-500 text-indigo-500 hover:text-black border border-indigo-500/20 rounded-xl transition-all shadow-lg active:scale-90" title="Cross-User Sync"><Send className="w-3.5 h-3.5" /></button>
-                                 <button onClick={() => deleteUserDeck(selectedUser.id, deck.id)} className="w-10 h-10 flex items-center justify-center bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-black border border-red-500/20 rounded-xl transition-all shadow-lg active:scale-90" title="Purge Record"><Trash2 className="w-4 h-4" /></button>
-                              </div>
-                           </div>
-                        </div>
-                      ))}
-                   </div>
-                </div>
-
-                {/* USER DECKBOX DOSSIER */}
-                <div className="space-y-6">
-                   <div className="flex items-center justify-between px-2">
-                       <h3 className="text-[12px] font-black text-white/40 uppercase tracking-[0.5em]">Deckbox_Resource_Grid</h3>
-                       <span className="text-[9px] font-mono text-white/20">{userDeckbox.length} STORED_ENTITIES</span>
-                   </div>
-                   
-                   <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-3">
-                      {userDeckbox.map((card, i) => (
-                        <div key={i} className="aspect-[0.71] rounded-xl overflow-hidden border border-white/5 relative group/card shadow-lg bg-white/5">
-                           <img src={card.card_faces?.[0]?.image_uris?.small || card.image_uris?.small || card.image_uris?.normal || card.photo || card.image || `https://cards.scryfall.io/small/front/${card.scryfall_id?.charAt(0)}/${card.scryfall_id?.charAt(1)}/${card.scryfall_id}.jpg`} alt="" className="w-full h-full object-cover group-hover/card:scale-125 transition-transform duration-700" loading="lazy" referrerPolicy="no-referrer" />
-                           <div className="absolute inset-0 bg-black/80 opacity-0 group-hover/card:opacity-100 transition-opacity p-2 flex flex-col items-center justify-center text-center">
-                              <p className="text-[8px] font-bold text-white uppercase leading-tight truncate w-full">{card.name}</p>
-                              <span className="text-[7px] text-cyan-400 mt-1">€{card.prices?.eur || "0.00"}</span>
-                           </div>
-                        </div>
-                      ))}
-                   </div>
-                </div>
-              </div>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center p-12 relative overflow-hidden">
-                 {/* Background removed to avoid double background */}
-                 <Shield className="w-24 h-24 text-orange-500 mb-8 opacity-20 animate-pulse relative z-10" />
-                 <h3 className="text-3xl font-black uppercase tracking-[0.4em] text-white opacity-40 mb-3 relative z-10">Awaiting_Command_Selection</h3>
-                 <p className="text-[11px] font-mono tracking-widest text-white/20 uppercase max-w-md relative z-10">Select an entity from the registry to initialize full dossier compilation and resource audit.</p>
-                 
-                 <div className="grid grid-cols-2 gap-4 mt-12 relative z-10 opacity-20">
-                    <div className="p-6 bg-white/5 border border-white/10 rounded-2xl flex flex-col gap-2">
-                       <span className="text-[8px] font-black text-orange-500 uppercase tracking-widest">Protocol: Impersonation</span>
-                       <div className="w-full h-1 bg-white/10 rounded-full" />
-                    </div>
-                    <div className="p-6 bg-white/5 border border-white/10 rounded-2xl flex flex-col gap-2">
-                       <span className="text-[8px] font-black text-cyan-500 uppercase tracking-widest">Protocol: Resource_Purge</span>
-                       <div className="w-full h-1 bg-white/10 rounded-full" />
-                    </div>
-                 </div>
-              </div>
-            )}
-          </main>
-        </div>
-
-        {/* Custom Delete Confirmation Modal */}
-        <AnimatePresence>
-          {userToDeleteConfirm && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="fixed inset-0 z-[2000] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
-            >
-              <motion.div
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                exit={{ scale: 0.9, y: 20 }}
-                className="bg-[#0c0c0c] border border-red-500/30 rounded-[2rem] p-8 max-w-sm w-full shadow-[0_0_50px_rgba(239,68,68,0.2)] text-center space-y-6"
-              >
-                <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/20 flex items-center justify-center mx-auto mb-4">
-                  <Trash2 className="w-8 h-8 text-red-500" />
-                </div>
-                <div className="space-y-2">
-                  <h3 className="text-xl font-magic font-black text-white uppercase tracking-tighter">Terminate Entity?</h3>
-                  <p className="text-[10px] text-white/40 uppercase tracking-widest font-mono leading-relaxed">
-                    This will PERMANENTLY erase all decks and card data for <span className="text-red-500 font-black">{selectedUser?.userName || selectedUser?.displayName}</span>. 
-                    This action cannot be reverted.
-                  </p>
-                </div>
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setUserToDeleteConfirm(null)}
-                    className="flex-1 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-[10px] font-magic font-black text-white/40 uppercase tracking-widest transition-all"
-                  >
-                    Abort
-                  </button>
-                  <button
-                    onClick={() => deleteUser(userToDeleteConfirm)}
-                    className="flex-[2] py-3 bg-red-600 hover:bg-red-500 text-black rounded-xl text-[10px] font-magic font-black uppercase tracking-widest transition-all shadow-lg shadow-red-600/20"
-                  >
-                    Confirm Deletion
-                  </button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {localLoading && (
-          <div className="absolute inset-0 z-[1100] bg-black/40 backdrop-blur-sm flex flex-col items-center justify-center gap-6">
-            <RotateCw className="w-12 h-12 text-orange-500 animate-spin" />
-            <span className="text-[12px] font-black text-orange-500 uppercase tracking-[0.6em] animate-pulse">SYNCHRONIZING_GRID...</span>
-          </div>
-        )}
-      </motion.div>
-    </div>
-  );
-}
+/* DEPRECATED ADMIN CODE 
+*/
 
 // MTG Judge Component
 function JudgeView() {
@@ -7930,12 +7017,12 @@ function JudgeView() {
       Note: Even partial names or nicknames should be recognized as MTG cards if they clearly refer to them.
       If no cards are present, return an empty string.`;
 
-      if (!ai) {
+      if (false) {
         throw new Error("AI not initialized. Check GEMINI_API_KEY.");
       }
 
       // Using gemini-flash-latest as a stable alias
-      const response = await (ai as any).models.generateContent({
+      const response = await callGemini({
         model: "gemini-3-flash-preview",
         contents: [{ parts: [{ text: queryStr }] }],
         config: {
@@ -8068,7 +7155,7 @@ function JudgeView() {
 
       let ruling = "";
       try {
-        const response = await (ai as any).models.generateContent({
+        const response = await callGemini({
           model: modelId,
           contents: [{ parts: [{ text: userMessage }] }],
           config: {
@@ -9190,933 +8277,4 @@ function getCardImages(card: any): {
   };
 }
 
-function SocialsPage({
-  setViewMode,
-  user,
-  setViewingPublicDecks,
-  setViewingPublicUser,
-  setIsViewingDeck,
-  setIsSettingsOpen,
-  setIsMobileMenuOpen,
-  savedDecks,
-  renderManaSymbols,
-  autoAddCommanderTags,
-  removeTag,
-  viewDeckDetails,
-  setDeckToDelete,
-  shareDeck,
-  setSearchQuery,
-  performSearch,
-  setCurrentCI,
-  showMessage,
-  loadLocalDeck,
-  setLoadingMessage,
-}: {
-  setViewMode: (m: any) => void;
-  user: any;
-  setViewingPublicDecks: (d: any[]) => void;
-  setViewingPublicUser: (u: any) => void;
-  setIsViewingDeck: (v: boolean) => void;
-  setIsSettingsOpen: (v: boolean) => void;
-  setIsMobileMenuOpen?: (v: boolean) => void;
-  savedDecks: any[];
-  renderManaSymbols: (ci: string, className?: string) => React.ReactNode;
-  autoAddCommanderTags: (deckId: string, commanders: any[]) => void;
-  removeTag: (deckId: string, tag: string) => void;
-  viewDeckDetails: (deckId: string) => void;
-  setDeckToDelete: (deckId: string) => void;
-  shareDeck: (deckId: string, email: string) => Promise<void>;
-  setSearchQuery: (q: string) => void;
-  performSearch: (options: any) => Promise<void>;
-  setCurrentCI: (ci: string) => void;
-  showMessage: (text: string, type?: "info" | "error" | "success") => void;
-  loadLocalDeck: (deck: any) => void;
-  setLoadingMessage: (msg: string) => void;
-}) {
-  const isAdmin = user?.email?.toLowerCase() === "sdebeer@gmail.com";
-  const [activeTab, setActiveTab] = useState<
-    "community" | "shared" | "creators" | "registry"
-  >("community");
-  const [publicUsers, setPublicUsers] = useState<any[]>([]);
-  const [sharedMessages, setSharedMessages] = useState<any[]>([]);
-  const [sharedDecksList, setSharedDecksList] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  useEffect(() => {
-    const fetchCommunity = async () => {
-      startArcaneLoading("Syncing Community Pulse...");
-      try {
-        const usersSnap = await getDocs(
-          query(collection(db, "users"), where("isProfileVisible", "==", true)),
-        );
-        const users: any[] = [];
-        usersSnap.forEach((d) => {
-          if (user && d.id === user.uid) return;
-          users.push({ id: d.id, ...d.data() });
-        });
-        setPublicUsers(users);
-
-        if (user?.email) {
-          const sharedSnap = await getDocs(
-            query(
-              collection(db, "sharedSelections"),
-              where("toUserEmail", "==", user.email.toLowerCase()),
-            ),
-          );
-          const shared: any[] = [];
-          sharedSnap.forEach((d) => shared.push({ id: d.id, ...d.data() }));
-          setSharedMessages(shared);
-
-          const sharedDecksSnap = await getDocs(
-            query(
-              collection(db, "sharedDecks"),
-              where("toUserEmail", "==", user.email.toLowerCase().trim()),
-            ),
-          );
-          const sDecks: any[] = [];
-          sharedDecksSnap.forEach((d) =>
-            sDecks.push({ id: d.id, ...d.data() }),
-          );
-          setSharedDecksList(sDecks);
-        }
-      } catch (e) {
-        console.error(e);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchCommunity();
-  }, [user]);
-
-  const creators = [
-    {
-      name: "The Professor",
-      channel: "@TolarianCommunityCollege",
-      icon: "https://yt3.googleusercontent.com/ytc/AIdro_k1S7f1C2weTXJyZZO-SykHaEoWeWblN_cu0szVe6cpPw=s160-c-k-c0x00ffffff-no-rj",
-      url: "https://www.youtube.com/@TolarianCommunityCollege",
-      desc: "MTG's most distinguished educator. Excellent for product reviews and gameplay.",
-    },
-    {
-      name: "The Command Zone",
-      channel: "@commandcast",
-      icon: "https://yt3.googleusercontent.com/ytc/AIdro_ndVswsCvdE-r0J6NFNlhDyHIjxZnvgntVBuWLznMSFig=s160-c-k-c0x00ffffff-no-rj",
-      url: "https://www.youtube.com/@commandcast",
-      desc: "The definitive source for Commander strategy and high-production gameplay.",
-    },
-    {
-      name: "MTGGoldfish",
-      channel: "@MTGGoldfish",
-      icon: "https://yt3.googleusercontent.com/ytc/AIdro_lPUFQn84lDHcw2D_BoZAOSi2YjEC1hJ4HaPue3JfYX0A=s160-c-k-c0x00ffffff-no-rj",
-      url: "https://www.youtube.com/@MTGGoldfish",
-      desc: "SaffronOlive's home for decks, news, and budget magic Brews.",
-    },
-    {
-      name: "PleasantKenobi",
-      channel: "@PleasantKenobi",
-      icon: "https://yt3.googleusercontent.com/vr61wfGEBnaksZUQU42DANjkr23T-IXSjt4rqCaUZEqjFMgl9_ceO4VpfaQ150a0i_P1i7_T8g=s160-c-k-c0x00ffffff-no-rj",
-      url: "https://www.youtube.com/@PleasantKenobi",
-      desc: "Vince's unique blend of MTG analysis, humor, and salt.",
-    },
-    {
-      name: "Rhystic Studies",
-      channel: "@RhysticStudies",
-      icon: "https://yt3.googleusercontent.com/p_ZWKYGKSGUrYWftjj-8mdO8vG4vD0vQJDv20aDVsaEoer-stgrFwITXvhH2kEXjdiUvzY9Wag=s160-c-k-c0x00ffffff-no-rj",
-      url: "https://www.youtube.com/@RhysticStudies",
-      desc: "Exquisite video essays exploring the art and history of Magic.",
-    },
-    {
-      name: "Joel are Magic",
-      channel: "@JoelareMagic",
-      icon: "https://yt3.googleusercontent.com/GLoSrfNCIAQkEqMMSHfoPoKQvvJBt03NLEpzGnrzkruJGtdvhQf0d-aoWoqJBOIlg4oS9WEOHnE=s160-c-k-c0x00ffffff-no-rj",
-      url: "https://www.youtube.com/@JoelareMagic",
-      desc: "Cinematic EDH gameplay featuring special guests and big personalities.",
-    },
-  ];
-
-  const shareText = encodeURIComponent(
-    `Master Your Multiverse! Check out Rune Deck Companion: ${window.location.href}`,
-  );
-  const whatsappUrl = `https://wa.me/?text=${shareText}`;
-  const emailUrl = `mailto:?subject=Join Move to Rune Deck&body=${shareText}`;
-
-  return (
-    <div className="flex-1 flex flex-col min-h-screen bg-transparent relative overflow-hidden">
-      {/* Background Aesthetics */}
-      <div className="absolute inset-0 pointer-events-none select-none overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(6,182,212,0.1),transparent_50%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,rgba(249,115,22,0.1),transparent_50%)]" />
-      </div>
-
-      <div className="max-w-7xl mx-auto w-full px-6 py-12 relative z-10 flex flex-col gap-12">
-        <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-          <div className="space-y-4">
-            <div className="flex items-center gap-4">
-              <div className="p-3 bg-cyan-500/10 border border-cyan-500/20 rounded-2xl shadow-[0_0_20px_rgba(6,182,212,0.15)]">
-                <Users className="w-8 h-8 text-cyan-400" />
-              </div>
-              <h1 className="text-5xl font-magic font-black text-white uppercase tracking-tighter drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">
-                Socials
-              </h1>
-            </div>
-            <p className="text-xs font-mono text-white/40 uppercase tracking-[0.5em] leading-none">
-              Neural Link: Community Cluster
-            </p>
-          </div>
-
-          <div className="flex bg-white/[0.03] p-1.5 rounded-[2rem] border border-white/5 backdrop-blur-3xl shadow-2xl">
-            {[
-              { id: "community", label: "Community" },
-              { id: "shared", label: "Received" },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-8 py-3 rounded-[1.5rem] text-[10px] font-magic font-black uppercase tracking-widest transition-all ${activeTab === tab.id ? "bg-purple-500 text-black shadow-[0_0_30px_rgba(168,85,247,0.3)]" : "text-white/30 hover:text-white/60"}`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-          <div className="lg:col-span-2">
-            <AnimatePresence mode="wait">
-              {activeTab === "community" && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className="space-y-16"
-                >
-                  {/* Active Users Section */}
-                  <div className="space-y-6">
-                    <div className="flex items-center gap-4 px-4">
-                      <div className="w-1.5 h-1.5 bg-purple-500 rounded-full animate-pulse shadow-[0_0_10px_rgba(168,85,247,1)]" />
-                      <h3 className="text-[10px] font-magic font-black text-white/50 uppercase tracking-[0.3em]">
-                        Active Signal Streams
-                      </h3>
-                    </div>
-                    {loading ? (
-                      <div className="py-20 flex justify-center">
-                        <ManaSpinner className="w-12 h-12" />
-                      </div>
-                    ) : publicUsers.length === 0 ? (
-                      <div className="py-20 text-center rune-panel">
-                        <p className="text-white/20 font-magic font-black uppercase tracking-widest">
-                          No public users found.
-                        </p>
-                      </div>
-                    ) : (
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {publicUsers.map((u) => (
-                          <PublicUserCard
-                            key={u.id}
-                            user={u}
-                            onClick={async () => {
-                              setIsMobileMenuOpen?.(false);
-                              const decksSnap = await getDocs(
-                                query(
-                                  collection(db, "users", u.id, "decks"),
-                                  where("isPublic", "==", true)
-                                ),
-                              );
-                              if (decksSnap.empty) {
-                                showMessage("This user has no public decks.", "info");
-                                return;
-                              }
-                              const decks: any[] = [];
-                              decksSnap.forEach((d) =>
-                                decks.push({ id: d.id, ...d.data() }),
-                              );
-                              setViewingPublicDecks(decks);
-                              setViewingPublicUser(u);
-                              if (decks.length === 1) {
-                                loadLocalDeck(decks[0]);
-                                setViewingPublicDecks([]);
-                              }
-                            }}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Creators Section */}
-                  <div className="space-y-4">
-                    <div className="flex items-center gap-3 px-2">
-                      <Sparkles className="w-4 h-4 text-cyan-400" />
-                      <h3 className="text-xs font-magic font-black text-white/80 uppercase tracking-[0.2em]">
-                        Featured Creators
-                      </h3>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {creators.map((c, i) => (
-                        <CreatorCard key={i} {...c} />
-                      ))}
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-
-              {activeTab === "shared" && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className="space-y-4"
-                >
-                  {sharedMessages.length === 0 && sharedDecksList.length === 0 ? (
-                    <div className="py-20 text-center rune-panel bg-white/[0.02] rounded-[3rem]">
-                      <Mail className="w-12 h-12 text-white/5 mx-auto mb-4" />
-                      <p className="text-white/20 font-magic font-black uppercase tracking-widest">
-                        No shared transmissions detected...
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      {/* Shared Decks */}
-                      {sharedDecksList.map((sd: any) => (
-                        <div
-                          key={sd.id}
-                          className="bg-white/[0.03] border border-white/5 p-6 rounded-[2.5rem] hover:border-purple-500/30 transition-all group flex flex-col justify-between"
-                        >
-                          <div>
-                            <div className="flex items-center justify-between mb-4">
-                              <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center border border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
-                                  <Share2 className="w-4 h-4 text-purple-400 group-hover:rotate-12 transition-transform" />
-                                </div>
-                                <div className="flex flex-col">
-                                  <span className="text-[9px] font-magic font-black text-purple-400 uppercase tracking-widest">
-                                    Shared Deck
-                                  </span>
-                                  <h4 className="text-[14px] font-magic font-black text-white group-hover:text-purple-300 transition-colors uppercase truncate max-w-[150px]">
-                                    {sd.deckName}
-                                  </h4>
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                 <p className="text-[9px] font-sans font-bold text-white/40 max-w-[100px] truncate">{sd.fromUserName || sd.fromUserEmail}</p>
-                                 <p className="text-[7px] font-mono text-white/10">{sd.createdAt?.toDate?.()?.toLocaleDateString()}</p>
-                              </div>
-                            </div>
-                            
-                            {sd.commanderNames?.length > 0 && (
-                              <div className="flex flex-wrap gap-2 mb-6">
-                                 {sd.commanderNames.map((name: string) => (
-                                   <span key={name} className="px-2 py-0.5 bg-purple-500/5 border border-purple-500/10 rounded text-[8px] text-purple-300 font-bold uppercase truncate max-w-full">
-                                      {name}
-                                   </span>
-                                 ))}
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="flex gap-2">
-                             <button
-                               onClick={() => {
-                                 setViewingPublicDecks([]);
-                                 setViewingPublicUser({ id: sd.fromUserId, email: sd.fromUserEmail });
-                                 if (sd.cards) {
-                                   loadLocalDeck(sd);
-                                 } else {
-                                   viewDeckDetails(sd.deckId);
-                                 }
-                               }}
-                               className="flex-1 py-2.5 bg-purple-500 text-black rounded-xl text-[10px] font-magic font-black uppercase tracking-widest hover:bg-purple-400 shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2"
-                             >
-                               <Eye className="w-3 h-3" />
-                               <span>Bekijken</span>
-                             </button>
-                             <button
-                               onClick={async () => {
-                                 await deleteDoc(doc(db, "sharedDecks", sd.id));
-                                 setSharedDecksList(prev => prev.filter(p => p.id !== sd.id));
-                               }}
-                               className="p-2.5 bg-white/5 border border-white/5 rounded-xl text-white/20 hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/20 transition-all"
-                             >
-                                <Trash2 className="w-3.5 h-3.5" />
-                             </button>
-                          </div>
-                        </div>
-                      ))}
-
-                      {/* Shared Card Selections */}
-                      {sharedMessages.map((msg) => (
-                         <div
-                           key={msg.id}
-                           className="rune-panel p-6 bg-white/[0.03] hover:bg-white/[0.05] transition-all group rounded-[2.5rem]"
-                         >
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-cyan-500/20 flex items-center justify-center border border-cyan-500/30">
-                                <Send className="w-4 h-4 text-cyan-400 rotate-12" />
-                              </div>
-                              <div className="flex flex-col">
-                                <span className="text-[10px] font-magic font-black text-cyan-400/80 uppercase tracking-widest">
-                                  Shared Cards
-                                </span>
-                                <span className="text-[11px] font-sans font-black text-white/60">
-                                  {msg.fromUserName || msg.fromUserEmail}
-                                </span>
-                              </div>
-                            </div>
-                            <span className="text-[9px] font-mono text-white/20">
-                              {msg.createdAt?.toDate().toLocaleDateString()}
-                            </span>
-                          </div>
-                          
-                          {msg.message && (
-                            <div className="mb-4 p-4 bg-white/[0.02] border border-white/5 rounded-2xl relative overflow-hidden">
-                               <div className="absolute top-0 left-0 w-1 h-full bg-cyan-500" />
-                               <p className="text-xs italic text-white/60 leading-relaxed font-sans">{msg.message}</p>
-                            </div>
-                          )}
-
-                          <div className="grid grid-cols-4 sm:grid-cols-8 gap-2 mb-6">
-                            {msg.cards
-                              .slice(0, 8)
-                              .map((card: any, idx: number) => (
-                                <div
-                                  key={idx}
-                                  className="aspect-[0.71] rounded-sm overflow-hidden border border-white/10 relative group/card"
-                                >
-                                  <img
-                                    src={card.thumb}
-                                    className="w-full h-full object-cover group-hover/card:scale-110 transition-transform"
-                                  />
-                                  {msg.cards.length > 8 && idx === 7 && (
-                                    <div className="absolute inset-0 bg-black/80 flex items-center justify-center">
-                                      <span className="text-[10px] font-magic font-black text-white">
-                                        +{msg.cards.length - 7}
-                                      </span>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                          </div>
-                          <div className="flex gap-3">
-                            {/* Logic to import this selection to current deckbox or library can be added here */}
-                            <button
-                              className={`flex-1 py-3 rounded-xl text-[10px] font-magic font-black uppercase tracking-widest transition-all flex items-center justify-center gap-2 ${copiedId === msg.id ? "bg-green-500 text-black border-transparent" : "bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 hover:bg-cyan-500/20"}`}
-                              onClick={() => {
-                                const clipboard = msg.cards
-                                  .map((c: any) => `${c.qty || 1} ${c.name}`)
-                                  .join("\n");
-                                navigator.clipboard.writeText(clipboard);
-                                setCopiedId(msg.id);
-                                setTimeout(() => setCopiedId(null), 2000);
-                              }}
-                            >
-                              {copiedId === msg.id ? (
-                                <Check className="w-3 h-3" />
-                              ) : null}
-                              {copiedId === msg.id ? "Copied" : "Copy Decklist"}
-                            </button>
-                            <button
-                              className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400 hover:bg-red-500/20 transition-all"
-                              onClick={async () => {
-                                await deleteDoc(
-                                  doc(db, "sharedSelections", msg.id),
-                                );
-                                setSharedMessages((prev) =>
-                                  prev.filter((p) => p.id !== msg.id),
-                                );
-                              }}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </motion.div>
-              )}
-              {activeTab === "registry" && isAdmin && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  className="space-y-8"
-                >
-                  <div className="flex flex-col gap-6">
-                    {/* Modern Tech Header */}
-                    <div className="hidden md:grid grid-cols-12 gap-6 px-10 py-6 bg-white/[0.02] border border-white/5 rounded-[2rem] text-[10px] font-magic font-black text-white/20 uppercase tracking-[0.4em]">
-                      <div className="col-span-3">Registry_Identity</div>
-                      <div className="col-span-3">Commanders_Assigned</div>
-                      <div className="col-span-2 text-center">Spectral_ID</div>
-                      <div className="col-span-2 text-right">Market_Value</div>
-                      <div className="col-span-2 text-right">Operations</div>
-                    </div>
-
-                    {savedDecks.map((deck) => (
-                      <div
-                        key={deck.id}
-                        className="bg-[#080808] border border-white/5 rounded-[2rem] overflow-hidden group hover:border-cyan-500/20 hover:shadow-[0_0_50px_rgba(6,182,212,0.05)] transition-all duration-500 relative"
-                      >
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-6 items-center p-6 md:px-10">
-                          {/* Name & Identity */}
-                          <div className="col-span-3 flex items-center gap-6">
-                             <div className="w-16 h-16 rounded-2xl overflow-hidden border border-white/10 shrink-0 group-hover:border-cyan-500/40 transition-colors">
-                                <img 
-                                  src={deck.art_crops[0] || "https://cards.scryfall.io/art_crop/front/3/b/3b19e4a3-764c-474d-9ac3-818617d12f3e.jpg"} 
-                                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                                  alt=""
-                                />
-                             </div>
-                             <div className="flex flex-col gap-1 min-w-0">
-                               <h3 className="text-lg font-magic font-bold text-white group-hover:text-cyan-400 transition-colors uppercase truncate tracking-widest">
-                                 {deck.name}
-                               </h3>
-                               <p className="text-[8px] font-mono text-white/20 uppercase tracking-widest truncate">ID: {deck.id.substring(0, 8)}... (Ver. 1.0)</p>
-                             </div>
-                          </div>
-
-                          {/* Commanders */}
-                          <div className="col-span-3 flex flex-col gap-1">
-                            <div className="flex flex-wrap gap-2">
-                               {(deck.commanderNames || (deck.commanders?.length ? ["Commander Identified"] : ["No Commander Set"])).map((name, i) => (
-                                 <span key={i} className="text-[10px] text-white/60 font-medium px-2 py-0.5 bg-white/5 rounded-md border border-white/5 truncate max-w-full">
-                                   {name}
-                                 </span>
-                               ))}
-                            </div>
-                          </div>
-
-                          {/* Spectral ID (CI) */}
-                          <div className="col-span-2 flex justify-center">
-                            <div className="flex items-center bg-black/40 backdrop-blur-md px-4 py-2 rounded-full border border-white/5 group-hover:border-white/10 transition-all shadow-inner">
-                              {renderManaSymbols(deck.ci, "w-4 h-4")}
-                            </div>
-                          </div>
-
-                          {/* Price */}
-                          <div className="col-span-2 text-right">
-                             {deck.totalCost ? (
-                               <div className="flex flex-col">
-                                 <span className="text-[14px] text-white font-mono font-black tracking-tighter">€{deck.totalCost.toFixed(2)}</span>
-                                 <span className="text-[8px] text-cyan-500/50 uppercase font-black tracking-widest">Live Market</span>
-                               </div>
-                             ) : (
-                               <span className="text-[10px] text-white/10 uppercase tracking-widest">Calculating...</span>
-                             )}
-                          </div>
-
-                          {/* Operations */}
-                          <div className="col-span-2 flex items-center justify-end gap-3">
-                             <button
-                               onClick={() => viewDeckDetails(deck.id)}
-                               className="w-10 h-10 flex items-center justify-center bg-cyan-500/10 hover:bg-cyan-500 text-cyan-500 hover:text-black border border-cyan-500/20 rounded-xl transition-all group/btn"
-                               title="View Deck"
-                             >
-                               <Eye className="w-4 h-4 group-hover/btn:scale-110 transition-transform" />
-                             </button>
-                             <button
-                               onClick={() => setDeckToDelete(deck.id)}
-                               className="w-10 h-10 flex items-center justify-center bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-black border border-red-500/20 rounded-xl transition-all group/btn"
-                               title="Delete History"
-                             >
-                               <Trash2 className="w-4 h-4 group-hover/btn:scale-110 transition-transform" />
-                             </button>
-                          </div>
-                        </div>
-
-                        {/* Sub-Panel: Tags & Actions */}
-                        <div className="px-10 py-5 bg-white/[0.01] border-t border-white/[0.03] flex flex-wrap items-center gap-8">
-                           <div className="flex-1 flex flex-wrap gap-2">
-                              {(deck.tags || []).map((tag) => (
-                                <span key={tag} className="flex items-stretch shadow-sm">
-                                  <button
-                                    onClick={() => {
-                                      const query = tag.includes(":::") ? tag.split(":::")[1] : tag;
-                                      setSearchQuery(query);
-                                      const tagCI = deck.ci || "";
-                                      setCurrentCI(tagCI);
-                                      setViewMode("cards");
-                                      performSearch({
-                                        queryOverride: query,
-                                        ciOverride: tagCI,
-                                        skipCI: false,
-                                        skipFormatFilters: false,
-                                      });
-                                    }}
-                                    className="px-3 py-1 bg-cyan-500/5 border border-white/5 rounded-l-lg text-[9px] hover:bg-cyan-500/10 transition-all font-bold text-white/40 hover:text-cyan-400"
-                                  >
-                                    {tag.includes(":::") ? tag.split(":::")[0] : tag}
-                                  </button>
-                                  <button
-                                    className="px-2 py-1 bg-white/5 border-y border-r border-white/5 rounded-r-lg text-white/20 hover:bg-red-500/20 hover:text-red-400 transition-all"
-                                    onClick={() => removeTag(deck.id, tag)}
-                                  >
-                                    <X className="w-2.5 h-2.5" />
-                                  </button>
-                                </span>
-                              ))}
-                              <button
-                                onClick={() => autoAddCommanderTags(deck.id, deck.commanders)}
-                                className="px-4 py-1.5 bg-orange-500/10 border border-orange-500/20 rounded-lg text-[9px] text-orange-500 font-magic font-bold uppercase tracking-widest hover:bg-orange-500 hover:text-black transition-all"
-                              >
-                                Forge Synergy
-                              </button>
-                           </div>
-
-                           <div className="flex items-center gap-4 border-l border-white/5 pl-8">
-                              <button
-                                onClick={() => {
-                                  const shareTarget = prompt("Sync Target Email:");
-                                  if (shareTarget) shareDeck(deck.id, shareTarget);
-                                }}
-                                className="text-[9px] font-mono font-black text-indigo-400/50 hover:text-indigo-400 uppercase tracking-widest flex items-center gap-2 transition-colors"
-                              >
-                                <Send className="w-3 h-3" />
-                                Encrypted Sync
-                              </button>
-                              <div className="h-4 w-[1px] bg-white/5" />
-                              <div className="flex flex-col items-end">
-                                 <span className="text-[7px] font-mono text-white/10 uppercase tracking-widest">Temporal_Marker</span>
-                                 <span className="text-[9px] font-mono text-white/30">{deck.createdAt ? new Date(deck.createdAt.seconds * 1000).toLocaleDateString() : "System Date"}</span>
-                              </div>
-                           </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-          </div>
-
-          <div className="space-y-8">
-            {/* User Status / Toggle */}
-            <div className="rune-panel p-8 bg-gradient-to-br from-white/[0.03] to-transparent border-white/5 relative overflow-hidden group">
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.1),transparent_70%)]" />
-              <div className="relative z-10 space-y-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-full border-2 border-orange-500/30 p-1 flex items-center justify-center group-hover:border-orange-500 transition-all duration-700">
-                    <div className="w-full h-full rounded-full bg-orange-500/10 flex items-center justify-center">
-                      <User className="w-6 h-6 text-orange-500" />
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-magic font-black text-white uppercase tracking-widest">
-                      My Profile
-                    </h3>
-                    <div className="flex items-center gap-2 mt-1">
-                      <div
-                        className={`w-2 h-2 rounded-full animate-pulse ${user ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]" : "bg-red-500"}`}
-                      />
-                      <span className="text-[9px] font-mono font-black text-white/30 uppercase tracking-[0.2em]">
-                        {user ? "Connected" : "Offline"}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-4 rounded-2xl bg-black/40 border border-white/5 backdrop-blur-xl">
-                  <p className="text-[10px] text-white/40 leading-relaxed uppercase font-mono tracking-widest italic mb-4">
-                    Connect with other players to share card selections and
-                    browse public decks.
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <a
-                      href={whatsappUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-cyan-500/30 hover:bg-cyan-500/5 transition-all group flex flex-col items-center gap-2 text-center"
-                    >
-                      <Share2 className="w-4 h-4 text-cyan-400/50 group-hover:text-cyan-400" />
-                      <span className="text-[8px] font-magic font-black text-white/40 uppercase tracking-widest group-hover:text-cyan-400">
-                        WhatsApp
-                      </span>
-                    </a>
-                    <a
-                      href={emailUrl}
-                      className="p-3 bg-white/5 rounded-xl border border-white/5 hover:border-orange-500/30 hover:bg-orange-500/5 transition-all group flex flex-col items-center gap-2 text-center"
-                    >
-                      <Mail className="w-4 h-4 text-orange-500/50 group-hover:text-orange-500" />
-                      <span className="text-[8px] font-magic font-black text-white/40 uppercase tracking-widest group-hover:text-orange-500">
-                        Email Link
-                      </span>
-                    </a>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Tactical Suggestions */}
-            <div className="space-y-4">
-              <div className="flex items-center gap-3 px-2">
-                <Zap className="w-4 h-4 text-orange-500 animate-pulse" />
-                <h3 className="text-xs font-magic font-black text-white/80 uppercase tracking-[0.2em]">
-                  Social Tips
-                </h3>
-              </div>
-              <div className="rune-panel p-6 bg-black/40 border-white/5 space-y-4">
-                <button
-                  onClick={() => setIsSettingsOpen(true)}
-                  className="w-full flex items-start text-left gap-4 group"
-                >
-                  <div className="w-8 h-8 rounded-lg bg-orange-500/20 border border-orange-500/30 flex items-center justify-center shrink-0 group-hover:bg-orange-500 group-hover:text-black transition-all">
-                    <Settings className="w-4 h-4 text-orange-500 group-hover:text-black" />
-                  </div>
-                  <div className="flex-1">
-                    <p className="text-[10px] font-mono text-white/60 uppercase leading-snug tracking-tighter group-hover:text-white transition-colors">
-                      Customize your arcane profile and social visibility.
-                    </p>
-                    <span className="text-[8px] text-white/20 uppercase font-black tracking-widest mt-2 block">
-                      Link: Security Config
-                    </span>
-                  </div>
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreatorCard({ name, channel, icon, url, desc }: any) {
-  return (
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="rune-panel p-6 bg-[#0c0c0c] hover:bg-cyan-500/5 border-white/5 hover:border-cyan-500/30 transition-all duration-500 flex flex-col gap-4 group relative overflow-hidden h-full"
-    >
-      <div className="absolute top-0 right-0 w-32 h-32 bg-[radial-gradient(circle_at_center,rgba(6,182,212,0.1),transparent_70%)] opacity-0 group-hover:opacity-100 transition-opacity" />
-      <div className="flex items-center gap-4 relative z-10">
-        <div className="w-14 h-14 rounded-2xl bg-white/[0.02] border border-white/5 overflow-hidden flex items-center justify-center group-hover:scale-110 group-hover:rotate-6 transition-all duration-500 shadow-xl group-hover:shadow-cyan-500/20">
-          <img src={icon} alt={name} className="w-full h-full object-cover" />
-        </div>
-        <div>
-          <h3 className="text-lg font-magic font-black text-white uppercase tracking-tighter group-hover:text-cyan-400 transition-colors leading-tight">
-            {name}
-          </h3>
-          <div className="flex items-center gap-2 mt-1">
-            <div className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse" />
-            <p className="text-[9px] font-mono text-orange-500/80 uppercase tracking-widest font-black">
-              {channel}
-            </p>
-          </div>
-        </div>
-      </div>
-      <p className="text-[10px] font-sans text-white/40 leading-relaxed uppercase tracking-tight group-hover:text-white/60 transition-colors relative z-10 line-clamp-3">
-        {desc}
-      </p>
-      <div className="flex items-center gap-2 mt-auto pt-4 relative z-10">
-        <div className="h-[1px] flex-1 bg-white/10 group-hover:bg-cyan-500/30 transition-all" />
-        <div className="flex items-center gap-2 px-3 py-1 bg-white/5 rounded-full border border-white/5 group-hover:border-cyan-500/30 transition-all">
-          <span className="text-[8px] font-magic font-black text-white/40 group-hover:text-cyan-400 uppercase tracking-widest">
-            Connect
-          </span>
-          <ExternalLink className="w-2.5 h-2.5 text-white/20 group-hover:text-cyan-400" />
-        </div>
-      </div>
-    </a>
-  );
-}
-
-function PublicUserCard({ user, onClick }: any) {
-  return (
-    <div
-      onClick={onClick}
-      className="rune-panel p-6 bg-[#0c0c0c] hover:bg-cyan-500/5 border-white/5 hover:border-cyan-500/30 transition-all duration-500 cursor-pointer group relative flex items-center justify-between"
-    >
-      <div className="flex items-center gap-4">
-        <div className="w-12 h-12 rounded-full border border-white/10 bg-white/5 flex items-center justify-center overflow-hidden group-hover:border-cyan-500/50 transition-colors shadow-lg">
-          {user.photoURL ? (
-            <img
-              src={user.photoURL}
-              alt={user.userName}
-              className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-            />
-          ) : (
-            <User className="w-6 h-6 text-white/20" />
-          )}
-        </div>
-        <div>
-          <h3 className="text-sm font-magic font-black text-white uppercase tracking-widest group-hover:text-cyan-400 transition-colors line-clamp-1">
-            {user.displayName || user.userName || "Elder User"}
-          </h3>
-          <span className="text-[9px] font-mono text-white/30 uppercase tracking-[0.2em]">
-            {user.userTitle || "Wanderer"}
-          </span>
-        </div>
-      </div>
-      <div className="flex flex-col items-end gap-1">
-        <Layers className="text-cyan-500 animate-pulse w-4 h-4" />
-        <span className="text-[8px] font-magic font-black uppercase tracking-widest text-white/40">
-          Browse
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function ShareSelectionOverlay({
-  show,
-  onClose,
-  onShare,
-  email,
-  setEmail,
-  message,
-  setMessage,
-  loading,
-}: any) {
-  const [publicUsers, setPublicUsers] = useState<any[]>([]);
-  const [fetchingUsers, setFetchingUsers] = useState(false);
-
-  useEffect(() => {
-    if (show) {
-      const fetchUsers = async () => {
-        setFetchingUsers(true);
-        try {
-          const snap = await getDocs(
-            query(collection(db, "users"), where("isProfileVisible", "==", true)),
-          );
-          const users: any[] = [];
-          snap.forEach((d) => users.push({ id: d.id, ...d.data() }));
-          setPublicUsers(users);
-        } catch (e) {
-          console.error(e);
-        } finally {
-          setFetchingUsers(false);
-        }
-      };
-      fetchUsers();
-    }
-  }, [show]);
-
-  return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          className="fixed inset-0 z-[300] flex items-center justify-center p-6"
-        >
-          <div
-            className="absolute inset-0 bg-black/90 backdrop-blur-xl"
-            onClick={onClose}
-          />
-          <motion.div
-            initial={{ scale: 0.9, y: 20 }}
-            animate={{ scale: 1, y: 0 }}
-            exit={{ scale: 0.9, y: 20 }}
-            className="w-full max-w-md bg-gradient-to-br from-[#121212] to-[#050505] border border-white/10 rounded-[2.5rem] shadow-[0_40px_100px_rgba(0,0,0,0.9)] overflow-hidden relative"
-          >
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(6,182,212,0.1),transparent_70%)] pointer-events-none" />
-            <div className="p-8 space-y-6 relative z-10">
-              <div className="text-center space-y-2">
-                <div className="w-16 h-16 rounded-3xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center mx-auto mb-4 shadow-[0_0_30px_rgba(6,182,212,0.2)]">
-                  <Send className="w-8 h-8 text-cyan-400" />
-                </div>
-                <h2 className="text-2xl font-magic font-black text-white uppercase tracking-tighter">
-                  Share Cards
-                </h2>
-                <p className="text-[9px] text-white/40 leading-relaxed uppercase tracking-[0.3em] font-mono">
-                  Broadcasting selected signatures
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                {/* Public Users Quick Select */}
-                <div className="space-y-2">
-                  <label className="text-[8px] font-magic font-black text-white/20 uppercase tracking-widest pl-2">
-                    Active Users
-                  </label>
-                  <div className="flex gap-2 overflow-x-auto pb-2 custom-scrollbar">
-                    {fetchingUsers ? (
-                      <div className="h-10 w-full flex items-center justify-center bg-white/5 rounded-xl border border-dashed border-white/10">
-                        <RotateCw className="w-3 h-3 animate-spin text-white/20" />
-                      </div>
-                    ) : publicUsers.length === 0 ? (
-                      <div className="text-[8px] text-white/10 font-bold uppercase tracking-widest py-2 px-4 italic">
-                        No public beacons detected...
-                      </div>
-                    ) : (
-                      publicUsers.map((u) => (
-                        <button
-                          key={u.id}
-                          onClick={() => setEmail(u.email)}
-                          className={`shrink-0 flex items-center gap-2 p-1.5 rounded-xl border transition-all ${email === u.email ? "bg-cyan-500/20 border-cyan-500 text-cyan-400" : "bg-white/5 border-white/5 text-white/40 hover:border-white/20"}`}
-                        >
-                          <div className="w-6 h-6 rounded-full overflow-hidden border border-white/10">
-                            <img
-                              src={
-                                u.photoURL ||
-                                `https://api.dicebear.com/7.x/bottts/svg?seed=${u.userName || u.displayName}`
-                              }
-                              className="w-full h-full object-cover"
-                            />
-                          </div>
-                          <span className="text-[9px] font-magic font-black uppercase tracking-widest pr-2">
-                            {u.userName || u.displayName}
-                          </span>
-                        </button>
-                      ))
-                    )}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="relative group">
-                    <Mail className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-white/20 group-hover:text-cyan-400 transition-colors" />
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="Target Email Address"
-                      className="w-full bg-black/40 border border-white/5 rounded-2xl px-12 py-4 text-xs focus:border-cyan-500/50 outline-none text-white transition-all font-mono uppercase"
-                    />
-                  </div>
-
-                  <div className="relative group">
-                    <MessageSquare className="absolute left-4 top-6 w-4 h-4 text-white/20 group-hover:text-cyan-400 transition-colors" />
-                    <textarea
-                      value={message}
-                      onChange={(e) => setMessage(e.target.value.substring(0, 200))}
-                      placeholder="Inscribe a message (optional)..."
-                      rows={3}
-                      className="w-full bg-black/40 border border-white/5 rounded-2xl px-12 py-5 text-xs focus:border-cyan-500/50 outline-none text-white transition-all font-sans resize-none"
-                    />
-                    <div className="absolute bottom-3 right-4 text-[7px] font-mono text-white/10 uppercase tracking-widest">
-                      {message.length} / 200 chars
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={onClose}
-                  className="flex-1 py-4 bg-white/5 hover:bg-white/10 rounded-2xl text-[10px] font-magic font-black text-white/40 uppercase tracking-widest transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={onShare}
-                  disabled={loading || !email}
-                  className="flex-[2] py-4 bg-cyan-600 shadow-lg shadow-cyan-500/20 rounded-2xl text-[10px] font-magic font-black text-black uppercase tracking-widest transition-all hover:scale-[1.02] active:scale-95 flex items-center justify-center gap-2 disabled:opacity-20"
-                >
-                  {loading ? (
-                    <RotateCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Zap className="w-4 h-4" />
-                  )}
-                  Send Selection
-                </button>
-              </div>
-            </div>
-          </motion.div>
-        </motion.div>
-      )}
-    </AnimatePresence>
-  );
-}

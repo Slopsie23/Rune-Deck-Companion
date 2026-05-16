@@ -2,5 +2,5 @@
   "name": "Rune Deck Companion",
   "description": "Een magische deck-building partner voor Magic: The Gathering. Beheer je verzameling met runen en kracht. (Versie 2.6.16)",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }
