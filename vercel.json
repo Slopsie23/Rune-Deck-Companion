@@ -1,11 +1,13 @@
 {
+  "version": 2,
+  "framework": "vite",
   "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "/api/index.ts"
     },
     {
-      "source": "/((?!api/).*)",
+      "source": "/(.*)",
       "destination": "/index.html"
     }
   ]

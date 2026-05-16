@@ -3,23 +3,22 @@ import { createServer as createViteServer } from "vite";
 import path from "path";
 import axios from "axios";
 
+import decks from "./my_decks.json" assert { type: "json" };
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json());
 
-  // Get saved decks from local file
-  app.get("/api/decks", async (req, res) => {
-    try {
-      const dataPath = path.join(process.cwd(), "my_decks.json");
-      const { readFile } = await import("fs/promises");
-      const data = await readFile(dataPath, "utf-8");
-      res.json(JSON.parse(data));
-    } catch (error) {
-      console.error("Error reading my_decks.json:", error);
-      res.status(500).json({ error: "Failed to load decks from file" });
-    }
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", version: "V2.6.20" });
+  });
+
+  // Get saved decks from imported JSON
+  app.get("/api/decks", (req, res) => {
+    res.json(decks);
   });
 
   // Proxy for Scryfall to avoid CORS and ad-blocker issues
