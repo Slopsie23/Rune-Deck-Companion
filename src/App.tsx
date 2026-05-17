@@ -111,7 +111,7 @@ const VERSION = "V2.6.19";
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
   if (cachedScryfallSets) return cachedScryfallSets;
-  const res = await axios.get("https://api.scryfall.com/sets");
+  const res = await axios.get("/api/sf/sets");
   cachedScryfallSets = res.data;
   return cachedScryfallSets;
 }
@@ -801,7 +801,7 @@ export default function App() {
           for (const card of placeholders) {
             try {
               const res = await axios.get(
-                `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(card.name)}`,
+                `/api/sf/cards/named?exact=${encodeURIComponent(card.name)}`,
               );
               const sf = res.data;
               const cardId = card.name.replace(/[^a-zA-Z0-9]/g, "_");
@@ -1239,7 +1239,7 @@ export default function App() {
       try {
         const identifiers = candidates.map((name) => ({ name }));
         const { data: sfData } = await axios.post(
-          "https://api.scryfall.com/cards/collection",
+          "/api/sf/cards/collection",
           { identifiers },
         );
 
@@ -1313,7 +1313,7 @@ export default function App() {
       finalCommanderNames.map((name) =>
         axios
           .get(
-            `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(name)}`,
+            `/api/sf/cards/named?fuzzy=${encodeURIComponent(name)}`,
           )
           .catch((err) => {
             console.error(`Commander ${name} not found on Scryfall`, err);
@@ -1370,7 +1370,7 @@ export default function App() {
       const firstCard = Array.from(existingNames)[0];
       try {
         const { data: cData } = await axios.get(
-          `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(firstCard)}`,
+          `/api/sf/cards/named?fuzzy=${encodeURIComponent(firstCard)}`,
         );
         const imgs = getCardImages(cData);
         if (imgs.art_crop) finalArtCrops = [imgs.art_crop];
@@ -1491,7 +1491,7 @@ export default function App() {
           const identifiers = batchNames.map((name) => ({ name }));
           try {
             const { data: sfData } = await axios.post(
-              "https://api.scryfall.com/cards/collection",
+              "/api/sf/cards/collection",
               { identifiers },
             );
             if (sfData && sfData.data) {
@@ -1641,7 +1641,7 @@ export default function App() {
             const batchNames = uniqueNames.slice(i, i + BATCH_SIZE);
             const identifiers = batchNames.map((name) => ({ name }));
             const { data: sfData } = await axios.post(
-              "https://api.scryfall.com/cards/collection",
+              "/api/sf/cards/collection",
               { identifiers },
             );
             if (sfData && sfData.data) {
@@ -1750,7 +1750,7 @@ export default function App() {
           const identifiers = batchNames.map((name) => ({ name }));
           try {
             const { data: sfData } = await axios.post(
-              "https://api.scryfall.com/cards/collection",
+              "/api/sf/cards/collection",
               { identifiers },
             );
             if (sfData && sfData.data) {
@@ -1905,7 +1905,7 @@ export default function App() {
       // - Partners and Backgrounds CAN have smaller CI (id<=ciString) because they only form the CI when paired
       const query = `f:commander ((t:legendary t:creature id=${ciString}) or ((is:partner or is:background) id<=${ciString}))`;
       const response = await fetch(
-        `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=edhrec`,
+        `/api/sf/cards/search?q=${encodeURIComponent(query)}&order=edhrec`,
       );
       const data = await response.json();
 
@@ -2206,7 +2206,7 @@ export default function App() {
       const query = queryParts.join(" ");
 
       // Use unique=cards to get distinct cards, or unique=prints if we want variants
-      const url = `https://api.scryfall.com/cards/search?q=${encodeURIComponent(query)}&order=${order}&dir=${dir}&unique=cards`;
+      const url = `/api/sf/cards/search?q=${encodeURIComponent(query)}&order=${order}&dir=${dir}&unique=cards`;
       console.log("Searching Scryfall:", url);
       const { data } = await axios.get(url);
       setAllCards(data.data || []);
@@ -2509,7 +2509,7 @@ export default function App() {
             const batch = namesToFetch.slice(i, i + BATCH_SIZE);
             const identifiers = batch.map((name) => ({ name }));
             const { data: sfData } = await axios.post(
-              "https://api.scryfall.com/cards/collection",
+              "/api/sf/cards/collection",
               { identifiers },
             );
             if (sfData && sfData.data) {
@@ -2606,7 +2606,7 @@ export default function App() {
         let resultsCount = 0;
         try {
           const scryRes = await axios.get(
-            `https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`,
+            `/api/sf/cards/search?q=${encodeURIComponent(testQuery)}`,
           );
           resultsCount = scryRes.data.total_cards;
         } catch (e) {}
@@ -2753,7 +2753,7 @@ export default function App() {
         validNames.map((name) =>
           axios
             .get(
-              `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
+              `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
             )
             .then((r) => r.data)
             .catch(() => null),
@@ -2831,7 +2831,7 @@ Return ONLY JSON. No markdown backticks.`;
           // Delay to prevent rate limiting
           await new Promise((r) => setTimeout(r, 100));
           const res = await axios.get(
-            `https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`,
+            `/api/sf/cards/search?q=${encodeURIComponent(testQuery)}`,
           );
           if (res.data.total_cards > 0) {
             validTags.push(`${item.label}:::${item.query}`);
@@ -2943,7 +2943,7 @@ Return ONLY JSON. No markdown backticks.`;
         if (!item.label || !item.query) return;
         const testQuery = `(${item.query}) id:${deck?.ci || "c"}`;
         try {
-          const res = await axios.get(`https://api.scryfall.com/cards/search?q=${encodeURIComponent(testQuery)}`);
+          const res = await axios.get(`/api/sf/cards/search?q=${encodeURIComponent(testQuery)}`);
           if (res.data.total_cards > 0) {
             console.log(`[AI] Valid tag found: ${item.label}`);
             return `${item.label}:::${item.query}`;
@@ -6961,7 +6961,7 @@ function JudgeView() {
   const fetchCardSuggestions = async (query: string): Promise<string[]> => {
     try {
       const res = await axios.get(
-        `https://api.scryfall.com/cards/autocomplete?q=${encodeURIComponent(query)}`,
+        `/api/sf/cards/autocomplete?q=${encodeURIComponent(query)}`,
       );
       return res.data.data.slice(0, 5);
     } catch (e) {
@@ -6972,7 +6972,7 @@ function JudgeView() {
   const fetchCardContext = async (name: string): Promise<string> => {
     try {
       const res = await axios.get(
-        `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
+        `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
       );
       const data = res.data;
       const typeLine = data.type_line || "Type: Unknown";
@@ -7032,7 +7032,7 @@ function JudgeView() {
       for (const name of extracted) {
         try {
           const scryRes = await axios.get(
-            `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
+            `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
           );
           validNames.push(scryRes.data.name);
         } catch (err) {
@@ -7112,7 +7112,7 @@ function JudgeView() {
       for (const name of confirmedNames) {
         try {
           const res = await axios.get(
-            `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(name)}`,
+            `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
           );
           cardsData.push(res.data);
           context += `**Kaart: ${res.data.name}**\n**Metadata:** ${res.data.type_line} | Mana Value: ${res.data.cmc} | P/T: ${res.data.power}/${res.data.toughness}\n**Color Identity:** ${res.data.color_identity?.join(", ")}\n**Regeltekst:** ${res.data.oracle_text}\n`;

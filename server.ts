@@ -1,12 +1,29 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import cors from "cors";
 import axios from "axios";
+import fs from "fs";
+import * as cheerio from "cheerio";
 
-import decks from "./my_decks.json" assert { type: "json" };
+// Load saved decks from local file (robust)
+const getDecks = () => {
+  try {
+    const dataPath = path.join(process.cwd(), "my_decks.json");
+    if (fs.existsSync(dataPath)) {
+      return JSON.parse(fs.readFileSync(dataPath, "utf-8"));
+    }
+  } catch (error) {
+    console.error("Error reading my_decks.json:", error);
+  }
+  return [];
+};
+
+const decks = getDecks();
 
 async function startServer() {
   const app = express();
+  app.use(cors());
   const PORT = 3000;
 
   app.use(express.json());
@@ -22,18 +39,25 @@ async function startServer() {
   });
 
   // Proxy for Scryfall to avoid CORS and ad-blocker issues
-  app.get("/api/sf/*", async (req, res) => {
+  app.all("/api/sf/*", async (req, res) => {
     try {
       const endpoint = req.params[0];
       const queryParams = new URLSearchParams(req.query as Record<string, string>).toString();
       const url = `https://api.scryfall.com/${endpoint}${queryParams ? '?' + queryParams : ''}`;
       
-      const response = await axios.get(url, {
+      const config: any = {
         headers: {
           "User-Agent": "RuneDeck/2.0",
           "Accept": "application/json"
         }
-      });
+      };
+
+      let response;
+      if (req.method === "POST") {
+        response = await axios.post(url, req.body, config);
+      } else {
+        response = await axios.get(url, config);
+      }
       res.json(response.data);
     } catch (error: any) {
       if (error.response) {
@@ -112,7 +136,6 @@ async function startServer() {
         });
         const html = htmlResponse.data;
         
-        const cheerio = await import('cheerio');
         const $ = cheerio.load(html);
         
         deckName = $('.h1-name').text().trim();
@@ -257,22 +280,54 @@ async function startServer() {
 
   // Proxy for Moxfield to avoid CORS
   app.get("/api/mf/:id", async (req, res) => {
+    const deckId = req.params.id;
+    console.log(`[Local Proxy] Fetching Moxfield via URL: ${deckId}`);
     try {
-      const deckId = req.params.id;
-      const response = await axios.get(`https://api2.moxfield.com/v2/decks/all/${deckId}`, {
+      // Try scraping first as it's more reliable for bypassing blocks
+      const response = await axios.get(`https://www.moxfield.com/decks/${deckId}`, {
         headers: {
-          "User-Agent": "RuneDeck/2.0",
-          "Accept": "application/json"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Referer": "https://www.moxfield.com/"
         },
         timeout: 10000
       });
-      res.json(response.data);
+
+      const html = response.data;
+      const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+      
+      if (match && match[1]) {
+        const jsonData = JSON.parse(match[1]);
+        const deckData = jsonData.props?.pageProps?.deck;
+        if (deckData) {
+          return res.json({
+            name: deckData.name,
+            commanders: deckData.commanders,
+            commandersPartner: deckData.commandersPartner,
+            mainboard: deckData.mainboard,
+            sideboard: deckData.sideboard
+          });
+        }
+      }
+
+      // Fallback
+      const apiResponse = await axios.get(`https://api2.moxfield.com/v2/decks/all/${deckId}`, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+          "Referer": "https://www.moxfield.com/"
+        },
+        timeout: 10000
+      });
+      res.json(apiResponse.data);
     } catch (error: any) {
-      console.error(`Moxfield Proxy Error for ${req.params.id}:`, error.message);
+      console.error(`Moxfield Proxy Error for ${deckId}:`, error.message);
       const status = error.response?.status || 500;
+      const errorMsg = error.response?.data?.error || error.message;
       res.status(status).json({ 
-        error: `Moxfield Proxy Error: ${error.message}`, 
-        status: status 
+        error: `Moxfield Proxy Error: ${errorMsg}`, 
+        status: status,
+        deckId: deckId
       });
     }
   });

@@ -1,35 +1,69 @@
 import express from "express";
+import cors from "cors";
 import path from "path";
 import axios from "axios";
+import fs from "fs";
+import * as cheerio from "cheerio";
 
-import decks from "../my_decks.json" assert { type: "json" };
+// Load saved decks from local file (robust for serverless)
+const getDecks = () => {
+  try {
+    const dataPath = path.resolve(process.cwd(), "my_decks.json");
+    if (fs.existsSync(dataPath)) {
+      const content = fs.readFileSync(dataPath, "utf-8");
+      if (content.trim()) {
+        return JSON.parse(content);
+      }
+    }
+  } catch (error) {
+    console.error("Error reading my_decks.json:", error);
+  }
+  return [];
+};
+
+const decks = getDecks();
 
 const app = express();
+app.use(cors());
 app.use(express.json());
 
+// Router to handle both /api/foo and /foo (for Vercel flexibility)
+const router = express.Router();
+
 // Health check
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", version: "V2.6.20" });
+router.get("/health", (req, res) => {
+  res.json({ status: "ok", version: "V2.6.21", env: process.env.NODE_ENV });
 });
 
-// Get saved decks from imported JSON
-app.get("/api/decks", (req, res) => {
+router.get("/", (req, res) => {
+  res.json({ message: "RuneDeck API is active", version: "V2.6.21" });
+});
+
+// Get saved decks
+router.get("/decks", (req, res) => {
   res.json(decks);
 });
 
-// Proxy for Scryfall to avoid CORS and ad-blocker issues
-app.get("/api/sf/*", async (req, res) => {
+// Proxy for Scryfall
+router.all("/sf/*", async (req, res) => {
   try {
     const endpoint = req.params[0];
     const queryParams = new URLSearchParams(req.query as Record<string, string>).toString();
     const url = `https://api.scryfall.com/${endpoint}${queryParams ? '?' + queryParams : ''}`;
     
-    const response = await axios.get(url, {
+    const config: any = {
       headers: {
         "User-Agent": "RuneDeck/2.0",
         "Accept": "application/json"
       }
-    });
+    };
+
+    let response;
+    if (req.method === "POST") {
+      response = await axios.post(url, req.body, config);
+    } else {
+      response = await axios.get(url, config);
+    }
     res.json(response.data);
   } catch (error: any) {
     if (error.response) {
@@ -41,7 +75,7 @@ app.get("/api/sf/*", async (req, res) => {
 });
 
 // Image redirect proxy
-app.get("/api/sfimg", async (req, res) => {
+router.get("/sfimg", async (req, res) => {
   try {
     const name = req.query.name as string;
     if (!name) return res.status(400).send("Name required");
@@ -61,8 +95,8 @@ app.get("/api/sfimg", async (req, res) => {
   }
 });
 
-// Proxy for TappedOut to avoid CORS and get txt format
-app.get("/api/to/:id", async (req, res) => {
+// Proxy for TappedOut
+router.get("/to/:id", async (req, res) => {
   const deckId = req.params.id;
   const commonHeaders = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
@@ -73,160 +107,40 @@ app.get("/api/to/:id", async (req, res) => {
     "Pragma": "no-cache"
   };
 
-  // 1. Try JSON API first
   try {
     const apiResponse = await axios.get(`https://tappedout.net/api/v1/decks/${deckId}/`, {
-      headers: {
-        ...commonHeaders,
-        "Accept": "application/json",
-      },
+      headers: { ...commonHeaders, "Accept": "application/json" },
       timeout: 6000
     });
-    if (apiResponse.data && apiResponse.data.inventory) {
-      return res.json(apiResponse.data);
-    }
-  } catch (e: any) {
-    console.log(`TappedOut JSON API failed for ${deckId}, status: ${e.response?.status || 'unknown'}, falling back to scraping`);
-  }
+    if (apiResponse.data && apiResponse.data.inventory) return res.json(apiResponse.data);
+  } catch (e) {}
 
   try {
-    // 2. Fetch HTML to extract name, commander and card list
-    let deckName = deckId;
-    let commanders: string[] = [];
-    let scrapedCards: any[] = [];
-
-    try {
-      const htmlResponse = await axios.get(`https://tappedout.net/mtg-decks/${deckId}/`, { 
-        headers: commonHeaders, 
-        responseType: 'text',
-        timeout: 12000
-      });
-      const html = htmlResponse.data;
-      
-      const cheerio = await import('cheerio');
-      const $ = cheerio.load(html);
-      
-      deckName = $('.h1-name').text().trim();
-      if (!deckName) {
-        const title = $('title').text().trim();
-        if (title) deckName = title.split('(')[0].replace('MTG Deck', '').trim();
-      }
-
-      // Commanders extraction
-      const cleanToName = (name: string) => {
-        if (!name) return "";
-        return name.replace(/\*CMDR\*/gi, '')
-                   .replace(/\*F\*/gi, '')
-                   .replace(/\*E\*/gi, '')
-                   .replace(/\*A\*/gi, '')
-                   .replace(/\*L\*/gi, '')
-                   .replace(/\*B\*/gi, '')
-                   .replace(/\*P\*/gi, '')
-                   .replace(/\*S\*/gi, '')
-                   .replace(/\*M\*/gi, '') // Maybeboard marker
-                   .replace(/ \(F\)$/i, '')
-                   .replace(/ \(V\.\d+\)$/i, '')
-                   .replace(/ #\d+$/, '')
-                   .replace(/ \d+x /, '') // Sometimes numbers are included
-                   .trim();
-      };
-
-      const commanderSelectors = [
-        '[id="board-commander"] a.board-link', 
-        '.board-commander a.board-link', 
-        '.board-col h3:contains("Commander") + ul a.board-link', 
-        '.board-col h3:contains("Commandand") + ul a.board-link',
-        '.board-link[data-board="commander"]',
-        'a.board-link[href*="commander"]'
-      ];
-
-      commanderSelectors.forEach(selector => {
-        $(selector).each((_, el) => {
-          const name = cleanToName($(el).text());
-          if (name && !commanders.includes(name)) commanders.push(name);
-        });
-      });
-      
-      // Fallback: Check for *CMDR* identifier in text of any board link
-      if (commanders.length === 0) {
-        $('a.board-link').each((_, el) => {
-          const text = $(el).text();
-          if (text.includes('*CMDR*')) {
-             const name = cleanToName(text);
-             if (name && !commanders.includes(name)) commanders.push(name);
-          }
-        });
-      }
-
-      if (commanders.length === 0) {
-        $('h3').each((_, el) => {
-          const h3Text = $(el).text().toLowerCase();
-          if (h3Text.includes('commander')) {
-             $(el).nextUntil('h3').find('a.board-link').each((__, link) => {
-               const name = cleanToName($(link).text());
-               if (name && !commanders.includes(name)) commanders.push(name);
-             });
-          }
-        });
-      }
-
-      // Card list extraction from HTML (backup if txt fails)
-      $('.board-col .boardlist a.board-link').each((_, el) => {
-        const name = $(el).text().trim();
-        const qtyText = $(el).parent().text().match(/^(\d+)x/);
-        const qty = qtyText ? parseInt(qtyText[1]) : 1;
-        const board = $(el).closest('.board-col').find('h3').text().toLowerCase();
-        
-        if (name && !board.includes('maybeboard')) {
-          scrapedCards.push({
-            card: { oracleCard: { name: name } },
-            quantity: qty,
-            categories: board.includes('sideboard') ? ['sideboard'] : (board.includes('commander') ? ['commander'] : [])
-          });
-        }
-      });
-
-    } catch (e: any) {
-      console.error("Failed to parse HTML for TappedOut deck info:", e.message);
-    }
-
-    // 3. TappedOut .txt download endpoint
-    let rawText = "";
-    try {
-      const response = await axios.get(`https://tappedout.net/mtg-decks/${deckId}/?fmt=txt`, {
-        headers: commonHeaders,
-        responseType: 'text',
-        timeout: 8000
-      });
-      rawText = response.data;
-    } catch (e: any) {
-      console.log(`TappedOut TXT format failed for ${deckId} (status: ${e.response?.status || 'unknown'}), using scraped cards if available`);
-    }
+    const htmlResponse = await axios.get(`https://tappedout.net/mtg-decks/${deckId}/`, { 
+      headers: commonHeaders, 
+      responseType: 'text',
+      timeout: 12000
+    });
+    const $ = cheerio.load(htmlResponse.data);
+    const deckName = $('.h1-name').text().trim() || deckId;
+    const commanders: string[] = [];
+    $('.board-commander a.board-link').each((_, el) => {
+      commanders.push($(el).text().replace(/\*CMDR\*/gi, '').trim());
+    });
     
-    if (!rawText && scrapedCards.length === 0) {
-      return res.status(404).json({ error: "Deck not found (might be private) on TappedOut" });
-    }
-
-    if (rawText && (rawText.includes("<html") || rawText.includes("<!DOCTYPE"))) {
-      if (scrapedCards.length > 0) {
-        return res.json({ inventory: scrapedCards, id: deckId, deckName, commanders });
-      }
-      return res.status(404).json({ error: "Deck not found or requires login on TappedOut" });
-    }
-
-    if (rawText) {
-      res.json({ rawText, id: deckId, deckName, commanders });
-    } else {
-      res.json({ inventory: scrapedCards, id: deckId, deckName, commanders });
-    }
+    const response = await axios.get(`https://tappedout.net/mtg-decks/${deckId}/?fmt=txt`, {
+      headers: commonHeaders,
+      responseType: 'text',
+      timeout: 8000
+    });
+    res.json({ rawText: response.data, id: deckId, deckName, commanders });
   } catch (error: any) {
-    console.error("TappedOut Proxy Critical Error:", error.message);
-    const status = error.response?.status || 500;
-    res.status(status).json({ error: `Failed to fetch from TappedOut: ${error.message}` });
+    res.status(500).json({ error: `Failed to fetch from TappedOut: ${error.message}` });
   }
 });
 
-app.get("/api/ad/:id", async (req, res) => {
+// Proxy for Archidekt
+router.get("/ad/:id", async (req, res) => {
   try {
     const response = await axios.get(`https://archidekt.com/api/decks/${req.params.id}/`, {
       headers: { "User-Agent": "RuneDeck/2.0" },
@@ -237,40 +151,48 @@ app.get("/api/ad/:id", async (req, res) => {
   }
 });
 
-app.get("/api/mf/:id", async (req, res) => {
+// Proxy for Moxfield
+router.get("/mf/:id", async (req, res) => {
+  const deckId = req.params.id;
   try {
-    const response = await axios.get(`https://api2.moxfield.com/v2/decks/all/${req.params.id}`, {
+    const response = await axios.get(`https://www.moxfield.com/decks/${deckId}`, {
       headers: {
-        "User-Agent": "RuneDeck/2.0",
-        "Accept": "application/json"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Referer": "https://www.moxfield.com/"
       },
+      timeout: 10000
     });
-    res.json(response.data);
+    const match = response.data.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+    if (match && match[1]) {
+      const deckData = JSON.parse(match[1]).props?.pageProps?.deck;
+      if (deckData) return res.json({
+        name: deckData.name,
+        commanders: deckData.commanders,
+        commandersPartner: deckData.commandersPartner,
+        mainboard: deckData.mainboard,
+        sideboard: deckData.sideboard,
+        maybeboard: deckData.maybeboard
+      });
+    }
+    const apiResponse = await axios.get(`https://api2.moxfield.com/v2/decks/all/${deckId}`, {
+      headers: { "User-Agent": "Mozilla/5.0", "Accept": "application/json", "Referer": "https://www.moxfield.com/" }
+    });
+    res.json(apiResponse.data);
   } catch (error: any) {
-    const status = error.response?.status || 500;
-    res.status(status).json({ error: `Failed to fetch from Moxfield: ${error.message}` });
+    res.status(500).json({ error: `Moxfield Proxy Error: ${error.message}` });
   }
 });
 
 // Gemini API Proxy
-app.post("/api/gemini", async (req, res) => {
+router.post("/gemini", async (req, res) => {
   try {
     const { model, contents, config, systemInstruction } = req.body;
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return res.status(500).json({ error: "GEMINI_API_KEY is not set on the server" });
-    }
+    if (!apiKey) return res.status(500).json({ error: "GEMINI_API_KEY is not set" });
 
-    const body: any = { 
-      contents,
-      generationConfig: config
-    };
-
-    if (systemInstruction) {
-      body.system_instruction = {
-        parts: [{ text: systemInstruction }]
-      };
-    }
+    const body: any = { contents, generationConfig: config };
+    if (systemInstruction) body.system_instruction = { parts: [{ text: systemInstruction }] };
 
     const response = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`,
@@ -279,10 +201,12 @@ app.post("/api/gemini", async (req, res) => {
     );
     res.json(response.data);
   } catch (error: any) {
-    console.error("Gemini Proxy Error:", error.response?.data || error.message);
-    const status = error.response?.status || 500;
-    res.status(status).json(error.response?.data || { error: error.message });
+    res.status(error.response?.status || 500).json(error.response?.data || { error: error.message });
   }
 });
+
+// Mount router on both /api and / to ensure compatibility with Vercel routing
+app.use("/api", router);
+app.use("/", router);
 
 export default app;
