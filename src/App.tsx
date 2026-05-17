@@ -694,20 +694,6 @@ export default function App() {
   };
 
 
-  useEffect(() => {
-    async function testConnection() {
-      try {
-        await getDocFromServer(doc(db, "test", "connection"));
-        console.log("Firestore connection verified");
-      } catch (error) {
-        if (error instanceof Error && error.message.includes("offline")) {
-          console.error("Firestore is offline. Check configuration.");
-        }
-      }
-    }
-    testConnection();
-  }, []);
-
   // --- Auth & Firestore Sync ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
@@ -1088,18 +1074,21 @@ export default function App() {
   useEffect(() => {
     // Check Firestore Connectivity
     const testConnection = async () => {
+      // Delay to ensure Firebase had a chance to start networking
+      await new Promise(resolve => setTimeout(resolve, 3000));
       try {
+        console.log("[Connectivity] Testing Firestore...");
         await getDocFromServer(doc(db, 'test', 'connection'));
-        console.log("Firestore connection check successful");
+        console.log("[Connectivity] Firestore verified online.");
       } catch (error: any) {
         if (error?.message?.includes('the client is offline')) {
-          console.error("Firestore Error: The client is offline.");
-          showMessage("Magisch archief is offline. Controleer je verbinding.", "error");
+          console.warn("[Connectivity] Firestore reports offline. This may happen in restricted environments or during initial boot.");
+          // We won't show the toast yet to avoid annoying the user if it's just a slow cold start
         } else if (error?.message?.includes('Database \'(default)\' not found')) {
-            console.error("Firestore Error: Database ID mismatch in config.");
+            console.error("[Connectivity] Firestore Error: Database ID mismatch in config.");
             showMessage("Magische database configuratiefout. Contacteer de arcana meester.", "error");
         } else {
-          console.error("Firestore connection check failed:", error);
+          console.error("[Connectivity] Firestore connection check failed:", error);
         }
       }
     };
