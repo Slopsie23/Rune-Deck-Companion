@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   X,
   PlusCircle,
+  List,
   SkipBack,
   SkipForward,
   Hash,
@@ -108,7 +109,7 @@ import {
 } from "recharts";
 // import runesBackground from './assets/images/runes_background_1777929551380.png';
 const runesBackground = "/runebg.png";
-const VERSION = "V2.8.0";
+const VERSION = "V2.9.0";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
@@ -462,6 +463,8 @@ export default function App() {
     | "sheriff"
     | "judge"
     | "admin"
+    | "stats"
+    | "search"
   >("cards");
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Searching the Multiverse...");
@@ -477,6 +480,7 @@ export default function App() {
   const isMobile = windowWidth < 768;
 
   const [showRoadmap, setShowRoadmap] = useState(false);
+  const [activeDeckDetailTab, setActiveDeckDetailTab] = useState<'list' | 'preview' | 'stats'>('list');
   const [roadmapInitialChangelog, setRoadmapInitialChangelog] = useState(false);
   
   const [cardsPerRowDesktop, setCardsPerRowDesktop] = useState<number>(0); 
@@ -1213,6 +1217,10 @@ export default function App() {
   const [hasSearched, setHasSearched] = useState(false);
 
   useEffect(() => {
+    // Clear card preview when switching views
+    setHoveredPreviewCard(null);
+    setHoveredPreviewPrice(null);
+    
     // If we switch views away from search, clear the bear tech box
     if (viewMode !== "search" && (viewMode as string) !== "cards") {
       setIsBearSearch(false);
@@ -4780,9 +4788,9 @@ Return ONLY JSON. No markdown backticks.`;
             {viewMode === "judge" && <JudgeView user={user} />}
 
             {viewMode === "manage_decks" && (
-              <div className="space-y-6 p-4 lg:p-8 relative">
-                <div className="flex flex-col sm:flex-row items-center gap-6 p-6 rune-panel rounded-xl relative z-0">
-                  <div className="flex flex-col z-10">
+              <div className="space-y-4 lg:space-y-6 lg:p-8 relative">
+                <div className="flex flex-col sm:flex-row items-center gap-4 p-4 lg:p-6 rune-panel rounded-xl relative z-0">
+                  <div className="flex flex-col z-10 text-center sm:text-left">
                     <h2 className="text-xl font-magic font-extrabold text-orange-500 uppercase tracking-tight">
                       Saved Decks
                     </h2>
@@ -4790,12 +4798,12 @@ Return ONLY JSON. No markdown backticks.`;
                       MY COLLECTION
                     </p>
                   </div>
-                  <div className="flex-1 max-w-sm z-10 flex flex-col gap-2">
+                  <div className="flex-1 w-full max-w-sm z-10 flex flex-col gap-2">
                     <div className="flex gap-2">
                       <input
                         type="text"
                         placeholder="Archidekt, TappedOut or Moxfield ID/URL..."
-                        className="bg-black/60 border border-[#2a2a2a] shadow-[inset_0_1px_5px_rgba(0,0,0,0.8)] rounded-sm px-4 py-3 text-[12px] flex-1 focus:border-cyan-500/50 outline-none placeholder:text-white/50 text-cyan-400 font-magic transition-colors"
+                        className="bg-black/60 border border-[#2a2a2a] shadow-[inset_0_1px_5px_rgba(0,0,0,0.8)] rounded-sm px-4 py-2.5 sm:py-3 text-[12px] flex-1 focus:border-cyan-500/50 outline-none placeholder:text-white/50 text-cyan-400 font-magic transition-colors"
                         value={newDeckIdInput}
                         onChange={(e) => setNewDeckIdInput(e.target.value)}
                         onKeyDown={(e) =>
@@ -4864,11 +4872,11 @@ Return ONLY JSON. No markdown backticks.`;
                           ) : null}
                         </div>
 
-                        <div className="absolute inset-x-6 bottom-4">
-                          <h3 className="font-magic font-bold text-2xl text-white group-hover:text-cyan-400 transition-colors uppercase leading-none drop-shadow-lg">
+                        <div className="absolute inset-x-4 sm:inset-x-6 bottom-4">
+                          <h3 className="font-magic font-bold text-xl sm:text-2xl text-white group-hover:text-cyan-400 transition-colors uppercase leading-none drop-shadow-lg">
                             {deck.name}
                           </h3>
-                          <div className="flex items-center gap-3 mt-2">
+                          <div className="flex flex-wrap items-center gap-3 mt-2">
                              <p className="text-[10px] text-white/40 uppercase font-black tracking-[0.2em] font-mono">
                                Commander Deck
                              </p>
@@ -4886,14 +4894,14 @@ Return ONLY JSON. No markdown backticks.`;
                         </div>
                       </div>
 
-                      <div className="p-6 flex-1 flex flex-col gap-6">
+                      <div className="p-4 sm:p-6 flex-1 flex flex-col gap-4 sm:gap-6">
                         {/* Tags Display */}
                         <div className="flex-1">
                           <div className="flex items-center justify-between mb-3 px-1">
-                            <span className="text-[11px] font-magic font-black text-white/60 uppercase tracking-[0.2em]">
+                            <span className="text-[10px] sm:text-[11px] font-magic font-black text-white/60 uppercase tracking-[0.2em]">
                               Active Runes
                             </span>
-                            <div className="h-[1px] flex-1 mx-4 bg-white/20" />
+                            <div className="h-[1px] flex-1 mx-2 sm:mx-4 bg-white/20" />
                           </div>
                           
                           <div className="flex flex-wrap gap-1.5 min-h-[40px]">
@@ -5146,20 +5154,20 @@ Return ONLY JSON. No markdown backticks.`;
               {/* Header Decoration */}
               <div className="absolute top-0 left-1/2 -translate-x-1/2 w-4/5 h-[1px] bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_rgba(34,211,238,0.5)] z-20" />
 
-              <div className="p-8 border-b border-white/5 flex items-center justify-between bg-[#081011] relative z-10">
-                <div className="flex items-center gap-6">
-                  <div className="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.2)]">
-                    <Database className="w-6 h-6 text-cyan-400" />
+              <div className="p-4 sm:p-8 border-b border-white/5 flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#081011] relative z-10 shrink-0">
+                <div className="flex items-center gap-4 sm:gap-6 w-full sm:w-auto">
+                  <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center shadow-[0_0_20px_rgba(6,182,212,0.2)] shrink-0">
+                    <Database className="w-5 h-5 sm:w-6 sm:h-6 text-cyan-400" />
                   </div>
-                  <div className="flex flex-col">
-                    <h2 className="text-2xl font-magic font-black text-cyan-400 uppercase tracking-[0.1em] truncate max-w-lg drop-shadow-[0_0_8px_rgba(34,211,238,0.3)]">
+                  <div className="flex flex-col min-w-0">
+                    <h2 className="text-lg sm:text-2xl font-magic font-black text-cyan-400 uppercase tracking-[0.1em] truncate max-w-[200px] sm:max-w-lg drop-shadow-[0_0_8px_rgba(34,211,238,0.3)]">
                       {viewingDeckName || "Deckinfo"}
                     </h2>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 sm:gap-4">
                       <div className="flex items-center gap-2">
                         <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
-                        <p className="text-[10px] text-white/40 uppercase font-mono tracking-[0.2em]">
-                          {viewingDeckCards.length} Cards Analyzed
+                        <p className="text-[9px] sm:text-[10px] text-white/40 uppercase font-mono tracking-[0.2em]">
+                          {viewingDeckCards.length} Cards
                         </p>
                       </div>
                       {viewingDeckId && (
@@ -5169,23 +5177,49 @@ Return ONLY JSON. No markdown backticks.`;
                             if (d) syncDeck(d);
                           }}
                           disabled={syncingDecks[viewingDeckId]}
-                          className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 transition-all text-cyan-400 group/sync-btn"
+                          className="flex items-center gap-1.5 px-2 py-0.5 sm:px-3 sm:py-1 rounded-xl bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 transition-all text-cyan-400 group/sync-btn"
                         >
-                          <RotateCw className={`w-3 h-3 ${syncingDecks[viewingDeckId] ? 'animate-spin' : ''}`} />
-                          <span className="text-[10px] font-magic font-bold uppercase tracking-widest">{syncingDecks[viewingDeckId] ? 'Synchronizing...' : 'Refresh Deck'}</span>
+                          <RotateCw className={`w-2.5 h-2.5 sm:w-3 sm:h-3 ${syncingDecks[viewingDeckId] ? 'animate-spin' : ''}`} />
+                          <span className="text-[8px] sm:text-[10px] font-magic font-bold uppercase tracking-widest">{syncingDecks[viewingDeckId] ? 'Sync...' : 'Refresh'}</span>
                         </button>
                       )}
                     </div>
                   </div>
                 </div>
+
+                {/* Mobile Tabs Switcher */}
+                <div className="lg:hidden flex bg-black/40 p-1 rounded-xl border border-white/10 w-full sm:w-auto">
+                  <button 
+                    onClick={() => setActiveDeckDetailTab('list')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[9px] font-magic font-bold uppercase transition-all ${activeDeckDetailTab === 'list' ? 'bg-cyan-500 text-black' : 'text-white/40'}`}
+                  >
+                    <List className="w-3.5 h-3.5" />
+                    List
+                  </button>
+                  <button 
+                    onClick={() => setActiveDeckDetailTab('preview')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[9px] font-magic font-bold uppercase transition-all ${activeDeckDetailTab === 'preview' ? 'bg-cyan-500 text-black' : 'text-white/40'}`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    Preview
+                  </button>
+                  <button 
+                    onClick={() => setActiveDeckDetailTab('stats')}
+                    className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[9px] font-magic font-bold uppercase transition-all ${activeDeckDetailTab === 'stats' ? 'bg-cyan-500 text-black' : 'text-white/40'}`}
+                  >
+                    <Activity className="w-3.5 h-3.5" />
+                    Stats
+                  </button>
+                </div>
+
                 <button
                   onClick={() => {
                     setIsViewingDeck(false);
                     setViewingDeckCards(null);
                   }}
-                  className="p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all group shadow-xl"
+                  className="p-3 sm:p-4 bg-white/5 border border-white/10 rounded-2xl hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 transition-all group shadow-xl ml-auto"
                 >
-                  <X className="w-8 h-8 opacity-40 group-hover:opacity-100 transition-opacity" />
+                  <X className="w-6 h-6 sm:w-8 sm:h-8 opacity-40 group-hover:opacity-100 transition-opacity" />
                 </button>
               </div>
 
@@ -5194,7 +5228,10 @@ Return ONLY JSON. No markdown backticks.`;
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/5 rounded-full blur-[120px] pointer-events-none" />
 
                 {/* LEFT COLUMN: TACTICAL LIST */}
-                <div className="w-full lg:w-[320px] xl:w-[420px] h-full overflow-y-auto p-6 relative z-10 border-r border-white/5 bg-black/60 custom-scrollbar">
+                <div className={`
+                  ${activeDeckDetailTab === 'list' ? 'block' : 'hidden lg:block'}
+                  w-full lg:w-[320px] xl:w-[420px] h-full overflow-y-auto p-4 sm:p-6 relative z-10 border-r border-white/5 bg-black/60 custom-scrollbar
+                `}>
                   <div className="space-y-8 pb-20">
                     {Object.entries(groupedDeckCards)
                       .filter(([_, cards]) => (cards as any[]).length > 0)
@@ -5265,7 +5302,10 @@ Return ONLY JSON. No markdown backticks.`;
                 </div>
 
                 {/* IMAGE DISPLAY COLUMN */}
-                <div className="hidden lg:flex flex-1 bg-[#020404] items-center justify-center p-8 relative z-20 overflow-hidden border-r border-white/5">
+                <div className={`
+                  ${activeDeckDetailTab === 'preview' ? 'flex' : 'hidden lg:flex'}
+                  flex-1 bg-[#020404] items-center justify-center p-4 sm:p-8 relative z-20 overflow-hidden border-r border-white/5 h-full
+                `}>
                   {/* Specific background removed to avoid double background */}
 
                   {/* Scrying Rings (Removed as requested) */}
@@ -5292,7 +5332,7 @@ Return ONLY JSON. No markdown backticks.`;
                           <img
                             src={hoveredPreviewCard}
                             alt="Optic Focus"
-                            className="w-[32vh] xl:w-[38vh] max-w-full h-auto object-contain rounded-[1.8rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
+                            className="w-[32vh] xl:w-[38vh] max-w-[80vw] h-auto object-contain rounded-[1.8rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
                             referrerPolicy="no-referrer"
                           />
 
@@ -5333,7 +5373,10 @@ Return ONLY JSON. No markdown backticks.`;
                 </div>
 
                 {/* RIGHT COLUMN: DECKINFO MODULE */}
-                <div className="hidden lg:flex flex-col lg:w-[300px] xl:w-[340px] bg-[#050505] border-l border-white/5 relative z-30 shadow-[-40px_0_100px_rgba(0,0,0,0.9)] h-full overflow-hidden">
+                <div className={`
+                  ${activeDeckDetailTab === 'stats' ? 'flex' : 'hidden lg:flex'}
+                  flex-col w-full lg:w-[300px] xl:w-[340px] bg-[#050505] border-l border-white/5 relative z-30 shadow-[-40px_0_100px_rgba(0,0,0,0.9)] h-full overflow-hidden
+                `}>
                   <div className="flex flex-col h-full relative z-10 font-sans">
                     {/* MODULE HEADER */}
                     <div className="px-5 py-5 border-b border-white/5 bg-black/40 backdrop-blur-sm">
@@ -5530,7 +5573,8 @@ Return ONLY JSON. No markdown backticks.`;
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 10 }}
             transition={{ duration: 0.15 }}
-            className="lg:hidden fixed bottom-[8vh] left-1/2 -translate-x-1/2 z-[1200] w-[85vw] max-w-[320px] rounded-xl overflow-hidden shadow-[0_0_80px_rgba(6,182,212,0.6)] border-2 border-cyan-500/50 pointer-events-none"
+            onClick={() => setHoveredPreviewCard(null)}
+            className="lg:hidden fixed bottom-[8vh] left-1/2 -translate-x-1/2 z-[1300] w-[85vw] max-w-[320px] rounded-xl overflow-hidden shadow-[0_0_80px_rgba(6,182,212,0.6)] border-2 border-cyan-500/50 pointer-events-auto"
           >
             <div className="relative w-full">
               <img
@@ -6464,6 +6508,16 @@ function RoadmapModal({
   }, [isOpen, initialShowChangelog]);
 
   const releaseHistory = [
+    {
+      version: "V2.9.0",
+      date: "May 20, 2026",
+      changes: [
+        "Mobile Responsive AdminMatrix: Implemented multi-view navigation for administrative controls on small screens.",
+        "Precision Deck View: Integrated mobile tab system (List/Preview/Stats) for optimized deck analysis on the go.",
+        "Visual Refinement: Optimized interface padding and typography scaling for 100% mobile usability across collection views.",
+        "Navigation: Enabled intuitive back-navigation in administrative and modal contexts."
+      ]
+    },
     {
       version: "V2.8.0",
       date: "May 19, 2026",
@@ -7720,7 +7774,7 @@ function SetExplorer({
   setSearchQuery,
   setIsMobileMenuOpen,
 }: {
-  setViewMode: (v: string) => void;
+  setViewMode: (v: any) => void;
   performSearch: (o: any) => void;
   setSearchQuery: (s: string) => void;
   setIsMobileMenuOpen?: (v: boolean) => void;
@@ -8014,7 +8068,7 @@ function ReleaseCalendar({
   performSearch,
   setSearchQuery,
 }: {
-  setViewMode: (v: string) => void;
+  setViewMode: (v: any) => void;
   performSearch: (o: any) => void;
   setSearchQuery: (s: string) => void;
 }) {
@@ -8559,9 +8613,10 @@ function getCardImages(card: any): {
   };
 }
 
-function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
+function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
   const [allUsers, setAllUsers] = useState<any[]>([]);
   const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [showUserDetailsMobile, setShowUserDetailsMobile] = useState(false);
   const [userDecks, setUserDecks] = useState<any[]>([]);
   const [userDeckbox, setUserDeckbox] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -8595,9 +8650,6 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
           totalVal += data.totalCost || 0;
         });
 
-        // Calculate card count from deckboxes if manageable
-        // For now let's just stick to decks for value
-        
         setSystemStats({
           totalUsers: users.length,
           totalDecks: totalDks,
@@ -8614,6 +8666,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
 
   const selectUser = async (user: any) => {
     setSelectedUser(user);
+    setShowUserDetailsMobile(true);
     setLoading(true);
     try {
       const decksSnapshot = await getDocs(collection(db, "users", user.id, "decks"));
@@ -8637,15 +8690,23 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
   return (
     <div className="fixed inset-0 z-[2000] bg-[#030303] flex flex-col font-mono text-white overflow-hidden">
       {/* Top Status Bar */}
-      <div className="h-14 border-b border-orange-500/20 bg-black flex items-center justify-between px-6 shrink-0 relative overflow-hidden">
+      <div className="h-14 border-b border-orange-500/20 bg-black flex items-center justify-between px-4 lg:px-6 shrink-0 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-orange-500/5 via-transparent to-transparent opacity-50" />
         
-        <div className="flex items-center gap-6 relative z-10">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded bg-orange-500 flex items-center justify-center text-black">
+        <div className="flex items-center gap-4 lg:gap-6 relative z-10 overflow-hidden">
+          {showUserDetailsMobile && (
+            <button 
+              onClick={() => setShowUserDetailsMobile(false)}
+              className="lg:hidden p-2 text-white/40 hover:text-orange-500 transition-colors"
+            >
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          )}
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="w-8 h-8 rounded bg-orange-500 flex items-center justify-center text-black shrink-0">
               <ShieldCheck className="w-5 h-5" />
             </div>
-            <div>
+            <div className="hidden sm:block">
               <h1 className="text-[10px] font-magic font-black uppercase tracking-[0.3em] leading-none mb-1">Admin Dashboard</h1>
               <div className="flex items-center gap-2">
                 <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
@@ -8687,9 +8748,12 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
         </div>
       </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden relative">
         {/* Left Sidebar: User Directory */}
-        <div className="w-80 border-r border-white/5 flex flex-col bg-[#050505] shrink-0">
+        <div className={`
+          absolute inset-0 lg:relative lg:inset-auto lg:w-80 border-r border-white/5 flex flex-col bg-[#050505] shrink-0 z-20 transition-transform duration-300
+          ${showUserDetailsMobile ? '-translate-x-full lg:translate-x-0' : 'translate-x-0'}
+        `}>
           <div className="p-4 border-b border-white/5 bg-black/40">
             <div className="relative group">
                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-orange-500 transition-colors" />
@@ -8748,7 +8812,10 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
         </div>
 
         {/* Main Content Area */}
-        <div className="flex-1 flex flex-col relative overflow-hidden">
+        <div className={`
+          flex-1 flex flex-col relative overflow-hidden bg-[#030303] z-10 transition-transform duration-300
+          ${showUserDetailsMobile ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
+        `}>
           {/* Background Decor */}
           <div className="absolute inset-0 pointer-events-none opacity-[0.02]">
             <div className="absolute top-0 left-0 w-full h-full" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, white 1px, transparent 0)`, backgroundSize: '40px 40px' }} />
@@ -8757,66 +8824,62 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
           {selectedUser ? (
             <div className="flex-1 flex flex-col overflow-hidden relative z-10">
               {/* User Header */}
-              <div className="p-8 bg-gradient-to-b from-white/5 to-transparent border-b border-white/5 flex items-start justify-between">
-                <div className="flex items-center gap-8">
-                  <div className="w-24 h-24 rounded-2xl border-2 border-orange-500/20 p-1 bg-black shadow-[0_0_50px_rgba(249,115,22,0.1)]">
+              <div className="p-3 lg:p-8 bg-gradient-to-b from-white/5 to-transparent border-b border-white/5 flex flex-col lg:flex-row items-center lg:items-start justify-between gap-4 lg:gap-0">
+                <div className="flex flex-col lg:flex-row items-center gap-3 lg:gap-8 text-center lg:text-left">
+                  <div className="w-16 h-16 lg:w-24 lg:h-24 rounded-2xl border-2 border-orange-500/20 p-1 bg-black shadow-[0_0_50px_rgba(249,115,22,0.1)]">
                     <div className="w-full h-full rounded-xl overflow-hidden grayscale">
-                      {selectedUser.photoURL ? <img src={selectedUser.photoURL} alt="Large Avatar" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/5 flex items-center justify-center"><User className="w-10 h-10 opacity-20" /></div>}
+                      {selectedUser.photoURL ? <img src={selectedUser.photoURL} alt="Large Avatar" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/5 flex items-center justify-center"><User className="w-6 h-6 lg:w-10 lg:h-10 opacity-20" /></div>}
                     </div>
                   </div>
-                  <div className="space-y-4">
+                  <div className="space-y-2 lg:space-y-4 max-w-full">
                     <div>
-                      <div className="flex items-center gap-3 mb-1">
-                        <span className="px-2 py-0.5 bg-orange-500 text-black text-[7px] font-black uppercase rounded tracking-widest">Active User</span>
-                        <span className="text-[12px] opacity-20 font-bold uppercase tracking-widest leading-none">ID: {selectedUser.id}</span>
+                      <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 mb-1">
+                        <span className="px-2 py-0.5 bg-orange-500 text-black text-[6px] lg:text-[7px] font-black uppercase rounded tracking-widest">Active User</span>
+                        <span className="text-[9px] lg:text-[12px] opacity-20 font-bold uppercase tracking-widest leading-none truncate max-w-[120px]">ID: {selectedUser.id.slice(0,8)}...</span>
                       </div>
-                      <h2 className="text-5xl font-magic font-black text-white uppercase tracking-tighter leading-none italic">
+                      <h2 className="text-xl sm:text-2xl lg:text-5xl font-magic font-black text-white uppercase tracking-tighter leading-none italic truncate max-w-[280px] lg:max-w-none">
                         {selectedUser.userName || selectedUser.displayName || "Unknown"}
                       </h2>
                     </div>
-                    <div className="flex items-center gap-6">
+                    <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3 lg:gap-6">
                        <div className="flex flex-col">
-                         <span className="text-[8px] text-white/20 uppercase font-black">Role</span>
-                         <span className="text-[11px] text-orange-500 font-magic font-black uppercase tracking-widest">{selectedUser.userTitle || "User"}</span>
+                         <span className="text-[7px] lg:text-[8px] text-white/20 uppercase font-black text-center lg:text-left">Role</span>
+                         <span className="text-[9px] lg:text-[11px] text-orange-500 font-magic font-black uppercase tracking-widest whitespace-nowrap">{selectedUser.userTitle || "User"}</span>
                        </div>
                        <div className="flex flex-col">
-                         <span className="text-[8px] text-white/20 uppercase font-black">Email</span>
-                         <span className="text-[11px] text-white/60 font-mono lower tracking-tight">{selectedUser.email || "No Email"}</span>
-                       </div>
-                       <div className="flex flex-col">
-                         <span className="text-[8px] text-white/20 uppercase font-black">Account Total</span>
-                         <span className="text-[11px] text-emerald-400 font-mono uppercase tracking-widest font-black">€{userDecks.reduce((sum, d) => sum + (d.totalCost || 0), 0).toFixed(2)}</span>
+                         <span className="text-[7px] lg:text-[8px] text-white/20 uppercase font-black text-center lg:text-left">Account Total</span>
+                         <span className="text-[9px] lg:text-[11px] text-emerald-400 font-mono uppercase tracking-widest font-black">€{userDecks.reduce((sum, d) => sum + (d.totalCost || 0), 0).toFixed(2)}</span>
                        </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex gap-4">
-                   <div className="rune-panel p-4 bg-orange-500/5 border-orange-500/20 text-center flex flex-col justify-center min-w-[120px]">
-                      <Library className="w-5 h-5 mx-auto mb-2 text-orange-500" />
-                      <span className="text-2xl font-magic font-black text-white leading-none">{userDecks.length}</span>
-                      <span className="text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Total Decks</span>
+                <div className="flex gap-2 lg:gap-4 w-full lg:w-auto overflow-x-auto pb-1 lg:pb-0 custom-scrollbar shrink-0">
+                   <div className="rune-panel p-2 lg:p-4 bg-orange-500/5 border-orange-500/20 text-center flex flex-col justify-center min-w-[100px] lg:min-w-[120px] shrink-0">
+                      <Library className="w-3.5 h-3.5 lg:w-5 lg:h-5 mx-auto mb-1 text-orange-500" />
+                      <span className="text-lg lg:text-2xl font-magic font-black text-white leading-none">{userDecks.length}</span>
+                      <span className="text-[6px] lg:text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Decks</span>
                    </div>
-                   <div className="rune-panel p-4 bg-cyan-500/5 border-cyan-500/20 text-center flex flex-col justify-center min-w-[120px]">
-                      <Box className="w-5 h-5 mx-auto mb-2 text-cyan-400" />
-                      <span className="text-2xl font-magic font-black text-white leading-none">{userDeckbox.length}</span>
-                      <span className="text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Total Cards</span>
+                   <div className="rune-panel p-2 lg:p-4 bg-cyan-500/5 border-cyan-500/20 text-center flex flex-col justify-center min-w-[100px] lg:min-w-[120px] shrink-0">
+                      <Box className="w-3.5 h-3.5 lg:w-5 lg:h-5 mx-auto mb-1 text-cyan-400" />
+                      <span className="text-lg lg:text-2xl font-magic font-black text-white leading-none">{userDeckbox.length}</span>
+                      <span className="text-[6px] lg:text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Cards</span>
                    </div>
                 </div>
               </div>
 
               {/* Data Grid */}
-              <div className="flex-1 overflow-hidden grid grid-cols-2 gap-px bg-white/5 shrink-0">
+              <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-px bg-white/5 shrink-0">
                 {/* DECK REPOSITORY */}
                 <div className="flex flex-col bg-[#030303] overflow-hidden">
-                   <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
+                   <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
                       <div className="flex items-center gap-2">
-                        <Database className="w-4 h-4 text-orange-500" />
-                        <span className="text-[10px] font-magic font-black uppercase tracking-[0.2em]">Saved Decks</span>
+                        <Database className="w-3.5 h-3.5 text-orange-500" />
+                        <span className="text-[9px] lg:text-[10px] font-magic font-black uppercase tracking-[0.2em]">Saved Decks</span>
                       </div>
-                      <span className="text-[8px] font-mono text-white/20 font-black">{userDecks.length} DECKS</span>
+                      <span className="text-[7px] lg:text-[8px] font-mono text-white/20 font-black">{userDecks.length} DECKS</span>
                    </div>
-                   <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-3 lg:p-6 space-y-3 lg:space-y-4">
                       {userDecks.length === 0 && (
                         <div className="h-60 flex flex-col items-center justify-center gap-4 opacity-10 border border-dashed border-white/10 rounded-2xl">
                           <Library className="w-12 h-12" />
@@ -8824,11 +8887,11 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
                         </div>
                       )}
                       {userDecks.map(deck => (
-                        <div key={deck.id} className="rune-panel p-5 bg-black border-white/5 hover:border-orange-500/30 transition-all group flex flex-col gap-4">
+                        <div key={deck.id} className="rune-panel p-3 lg:p-5 bg-black border-white/5 hover:border-orange-500/30 transition-all group flex flex-col gap-3 lg:gap-4">
                            <div className="flex items-start justify-between">
-                              <div className="flex gap-4">
+                              <div className="flex gap-3 lg:gap-4">
                                  {/* Commander Thumbnails */}
-                                 <div className="flex -space-x-4">
+                                 <div className="flex -space-x-3 lg:-space-x-4">
                                     {(deck.commanders || []).map((cmdr: any, cidx: number) => {
                                       let imgSrc = resolveCardImage(cmdr);
                                       // Fallback to art_crops if cmdr was just a name
@@ -8894,14 +8957,14 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
 
                 {/* DECKBOX ARTIFACTS */}
                 <div className="flex flex-col bg-[#030303] border-l border-white/10 overflow-hidden">
-                   <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
+                   <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
                       <div className="flex items-center gap-2">
-                        <Box className="w-4 h-4 text-cyan-400" />
-                        <span className="text-[10px] font-magic font-black uppercase tracking-[0.2em]">Deckbox Inventory</span>
+                        <Box className="w-3.5 h-3.5 text-cyan-400" />
+                        <span className="text-[9px] lg:text-[10px] font-magic font-black uppercase tracking-[0.2em]">Saved Deckbox</span>
                       </div>
-                      <span className="text-[8px] font-mono text-white/20 font-black">{userDeckbox.reduce((acc, curr) => acc + (curr.qty || curr.count || 1), 0)} CARDS</span>
+                      <span className="text-[7px] lg:text-[8px] font-mono text-white/20 font-black">{userDeckbox.reduce((acc, curr) => acc + (curr.qty || curr.count || 1), 0)} CARDS</span>
                    </div>
-                   <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-3 lg:p-6">
                       <div className="grid grid-cols-1 gap-1">
                         {userDeckbox.length === 0 && (
                           <div className="h-60 flex flex-col items-center justify-center gap-4 opacity-10 border border-dashed border-white/10 rounded-2xl">

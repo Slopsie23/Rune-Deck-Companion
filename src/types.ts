@@ -67,4 +67,6 @@ export interface ScryfallSet {
   icon_svg_uri: string;
   digital?: boolean;
   parent_set_code?: string;
+  queryCodes?: string[];
+  isFuture?: boolean;
 }
