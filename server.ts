@@ -281,55 +281,121 @@ async function startServer() {
   // Proxy for Moxfield to avoid CORS
   app.get("/api/mf/:id", async (req, res) => {
     const deckId = req.params.id;
-    console.log(`[Local Proxy] Fetching Moxfield via URL: ${deckId}`);
-    try {
-      // Try scraping first as it's more reliable for bypassing blocks
-      const response = await axios.get(`https://www.moxfield.com/decks/${deckId}`, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-          "Referer": "https://www.moxfield.com/"
-        },
-        timeout: 10000
-      });
+    const deckPageUrl = `https://www.moxfield.com/decks/${deckId}`;
+    
+    const userAgents = [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ];
 
-      const html = response.data;
-      const match = html.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
-      
-      if (match && match[1]) {
-        const jsonData = JSON.parse(match[1]);
-        const deckData = jsonData.props?.pageProps?.deck;
-        if (deckData) {
-          return res.json({
-            name: deckData.name,
-            commanders: deckData.commanders,
-            commandersPartner: deckData.commandersPartner,
-            mainboard: deckData.mainboard,
-            sideboard: deckData.sideboard
-          });
+    // Strategies in order of reliability
+    const strategies = [
+      {
+        name: "Mobile App API",
+        url: `https://api.moxfield.com/v2/decks/all/${deckId}`,
+        headers: {
+          "User-Agent": "Moxfield/2.1.0 (com.moxfield.mobile; build:40; iOS 17.4.1) Alamofire/5.8.1",
+          "Accept": "application/json",
+          "Accept-Language": "en-US,en;q=0.9",
+          "X-Moxfield-Application": "moxfield-mobile"
+        },
+        process: (data: any) => (data && data.name ? data : null)
+      },
+      {
+        name: "Official API (v2)",
+        url: `https://api.moxfield.com/v2/decks/all/${deckId}`,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+          "Referer": "https://www.moxfield.com/",
+          "X-Requested-With": "XMLHttpRequest"
+        },
+        process: (data: any) => (data && data.name ? data : null)
+      },
+      {
+        name: "Bot Spoof API",
+        url: `https://api2.moxfield.com/v2/decks/all/${deckId}`,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+          "Accept": "application/json",
+          "Referer": "https://www.google.com/"
+        },
+        process: (data: any) => (data && data.name ? data : null)
+      },
+      {
+        name: "Secondary API (api2)",
+        url: `https://api2.moxfield.com/v2/decks/all/${deckId}`,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+          "Accept": "application/json",
+          "Referer": "https://www.moxfield.com/",
+          "X-Moxfield-Application": "moxfield-web"
+        },
+        process: (data: any) => (data && data.name ? data : null)
+      },
+      {
+        name: "Text Export",
+        url: `${deckPageUrl}/export`,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          "Accept": "text/plain, */*",
+          "Referer": deckPageUrl
+        },
+        process: (data: any) => (data && typeof data === 'string' && !data.includes("<html") ? { rawText: data, id: deckId } : null)
+      },
+      {
+        name: "HTML Scraper",
+        url: deckPageUrl,
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Referer": "https://www.moxfield.com/decks/public"
+        },
+        process: (data: any) => {
+          if (typeof data !== 'string') return null;
+          const match = data.match(/<script id="__NEXT_DATA__" type="application\/json">([\s\S]*?)<\/script>/);
+          if (match && match[1]) {
+            try {
+              const d = JSON.parse(match[1]).props?.pageProps?.deck;
+              if (d) return {
+                name: d.name,
+                commanders: d.commanders,
+                commandersPartner: d.commandersPartner,
+                mainboard: d.mainboard,
+                sideboard: d.sideboard,
+                maybeboard: d.maybeboard
+              };
+            } catch (e) {}
+          }
+          return null;
         }
       }
+    ];
 
-      // Fallback
-      const apiResponse = await axios.get(`https://api2.moxfield.com/v2/decks/all/${deckId}`, {
-        headers: {
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-          "Accept": "application/json",
-          "Referer": "https://www.moxfield.com/"
-        },
-        timeout: 10000
-      });
-      res.json(apiResponse.data);
-    } catch (error: any) {
-      console.error(`Moxfield Proxy Error for ${deckId}:`, error.message);
-      const status = error.response?.status || 500;
-      const errorMsg = error.response?.data?.error || error.message;
-      res.status(status).json({ 
-        error: `Moxfield Proxy Error: ${errorMsg}`, 
-        status: status,
-        deckId: deckId
-      });
+    for (const s of strategies) {
+      try {
+        console.log(`[MF Proxy] Trying: ${s.name} for ${deckId}`);
+        const resp = await axios.get(s.url, {
+          headers: s.headers,
+          timeout: 8000,
+          validateStatus: (status) => status === 200
+        });
+        const processed = s.process(resp.data);
+        if (processed) {
+          console.log(`[MF Proxy] SUCCESS: ${s.name}`);
+          return res.json(processed);
+        }
+      } catch (e: any) {
+        console.warn(`[MF Proxy] ${s.name} failed: ${e.message}`);
+      }
     }
+
+    res.status(403).json({ 
+      error: "Moxfield blokkeert alle automatische verbindingspogingen (Cloudflare).", 
+      message: "Tip: Gebruik de 'Copy to clipboard' tekst functie op Moxfield en plak de lijst handmatig.",
+      deckId,
+      suggestManual: true 
+    });
   });
 
   // Gemini API Proxy

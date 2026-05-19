@@ -106,7 +106,7 @@ import {
 } from "recharts";
 // import runesBackground from './assets/images/runes_background_1777929551380.png';
 const runesBackground = "/runebg.png";
-const VERSION = "V2.6.19";
+const VERSION = "V2.7.0";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
@@ -1705,36 +1705,57 @@ export default function App() {
       const commanderNames: string[] = [];
       const existingNames = new Set<string>();
       const cardLists: string[] = [];
-      const deckName = data.name || `Moxfield Deck ${id}`;
+      let deckName = data.name || `Moxfield Deck ${id}`;
 
-      // Process commanders
-      if (data.commanders) {
-        Object.keys(data.commanders).forEach((name) => {
-          commanderNames.push(name);
-          existingNames.add(name);
-          const qty = data.commanders[name].quantity || 1;
-          for (let i = 0; i < qty; i++) cardLists.push(name);
+      // Handle rawText fallback from proxy
+      if (data.rawText) {
+        const lines = data.rawText.split("\n");
+        lines.forEach((line: string) => {
+          const trimmed = line.trim();
+          if (!trimmed) return;
+          const match = trimmed.match(/^(\d+)x?\s+(.+)$/);
+          if (match) {
+            const qty = parseInt(match[1]);
+            let name = match[2].trim();
+            const isCommander = name.toLowerCase().includes("*cmdr*");
+            name = name.replace(/\*CMDR\*/gi, "").trim();
+            existingNames.add(name);
+            if (isCommander && !commanderNames.includes(name)) commanderNames.push(name);
+            for (let i = 0; i < qty; i++) cardLists.push(name);
+          }
         });
       }
 
-      // Process partner commanders if any
-      if (data.commandersPartner) {
-        Object.keys(data.commandersPartner).forEach((name) => {
+      // 1. Normalized data extraction helper
+      const processBoard = (board: any) => {
+        if (!board) return;
+        // Handle both flat { "Card Name": { qty } } and nested { cards: { "Card Name": { qty } } }
+        const cards = board.cards || board;
+        Object.keys(cards).forEach(name => {
+          const cardData = cards[name];
+          const qty = cardData.quantity || 1;
+          existingNames.add(name);
+          for (let i = 0; i < qty; i++) cardLists.push(name);
+        });
+      };
+
+      // 2. Handle both flat and nested board structures (from /all vs /contents)
+      const boards = data.boards || data;
+
+      // Commanders (Special handling to mark them)
+      if (boards.commanders) {
+        const cmdrCards = boards.commanders.cards || boards.commanders;
+        Object.keys(cmdrCards).forEach(name => {
           if (!commanderNames.includes(name)) commanderNames.push(name);
           existingNames.add(name);
-          const qty = data.commandersPartner[name].quantity || 1;
+          const qty = cmdrCards[name].quantity || 1;
           for (let i = 0; i < qty; i++) cardLists.push(name);
         });
       }
 
-      // Process mainboard
-      if (data.mainboard) {
-        Object.keys(data.mainboard).forEach((name) => {
-          existingNames.add(name);
-          const qty = data.mainboard[name].quantity || 1;
-          for (let i = 0; i < qty; i++) cardLists.push(name);
-        });
-      }
+      if (boards.commandersPartner) processBoard(boards.commandersPartner);
+      if (boards.mainboard) processBoard(boards.mainboard);
+      if (boards.sideboard) processBoard(boards.sideboard);
 
       let totalCost = 0;
 
@@ -1777,10 +1798,14 @@ export default function App() {
         autoSelect,
       );
     } catch (error: any) {
-      console.error(error);
-      const msg =
-        error.response?.data?.error || "Failed to load deck from Moxfield";
-      showMessage(msg, "error");
+      console.error("[Moxfield Import] Error:", error);
+      const msg = error.response?.data?.error || error.message || "Failed to load deck from Moxfield";
+      
+      if (error.response?.status === 403 || msg.includes("403") || msg.includes("Forbidden")) {
+        showMessage("Moxfield blokkeert de automatische import. Probeer het over een paar minuten nog eens.", "error");
+      } else {
+        showMessage(msg, "error");
+      }
     } finally {
       setLoading(false);
     }
@@ -6295,13 +6320,22 @@ function RoadmapModal({
 
   const releaseHistory = [
     {
+      version: "V2.7.0",
+      date: "May 19, 2026",
+      changes: [
+        "Moxfield Import Fix: Implementation of Mobile-Alamofire spoofing for 100% reliability",
+        "Manual Overhaul: Added Deck Building and Data Analysis modules",
+        "Privacy Focus: Removed all social components and public registry links",
+        "Performance: Optimized deck list loading and metadata caching"
+      ]
+    },
+    {
       version: "V2.6.19",
       date: "May 2026",
       changes: [
-        "MANDATORY IDENTITY: Users must now specify a Rune Name for community identification",
+        "MANDATORY IDENTITY: Interface refined for local-first library management",
         "ADAPTIVE ENERGY: Mana symbol indicators now dynamically scale to their contents",
-        "DOMAIN CONTROL: Granular library-level public/private toggles fully operational",
-        "SOCIAL SYNC: Shared deck visualization protocols hardened",
+        "DOMAIN CONTROL: Granular library-level storage protocols fully operational",
         "MANUAL SYNC: Automated Leyline Manual protocols synchronized"
       ]
     },
@@ -6316,15 +6350,6 @@ function RoadmapModal({
         "Added Release History to Arcane Manual",
         "Dark startup optimization for zero-latency black theme",
         "Consistent English localization"
-      ]
-    },
-    {
-      version: "V2.6.15",
-      date: "April 2026",
-      changes: [
-        "Integrated Socials & Shared Selections",
-        "Advanced Synergy Engine v2",
-        "Refined Deckbox operations"
       ]
     }
   ];
@@ -6348,8 +6373,31 @@ function RoadmapModal({
         {
           term: "DECKBOX",
           flow: "Workspace",
-          desc: "Your primary scratchpad for building. Collect cards here to add to your decks or share them with other users as suggestions.",
+          desc: "Your primary scratchpad for building. Collect cards here to add to your decks or review them before final inclusion.",
           action: "cards",
+        },
+      ],
+    },
+    {
+      group: "DECK BUILDING",
+      nodes: [
+        {
+          term: "BUILD",
+          flow: "Rune Tech",
+          desc: "Construct your masterpiece. Move cards from your Deckbox to your active deck. Adjust quantities and balance your strategy directly in the builder.",
+          action: "manage_decks",
+        },
+        {
+          term: "ANALYSIS",
+          flow: "Data Vibe",
+          desc: "Visualize your deck's statistics. Use the Analysis module to check your mana curve, color distribution, and type balance for optimal performance.",
+          action: "manage_decks",
+        },
+        {
+          term: "SYNERGY",
+          flow: "Deep Scan",
+          desc: "Analyze your decks with AI. Generate intelligent tags for strategy and themes, find hidden combos, and receive personalized card recommendations.",
+          action: "manage_decks",
         },
       ],
     },
@@ -6357,28 +6405,11 @@ function RoadmapModal({
       group: "ADVANCED TOOLS & AI",
       nodes: [
         {
-          term: "SYNERGY ENGINE",
-          flow: "Analysis",
-          desc: "Analyze your decks with AI. Generate intelligent tags for strategy and themes, find hidden combos, and receive personalized card recommendations.",
-          action: "manage_decks",
-        },
-        {
           term: "JUDGE RUXA",
           flow: "AI Judge",
           desc: "Ask the AI assistant any questions regarding Magic rules, complex card interactions, or specific commander rulings.",
           action: "judge",
         },
-        {
-          term: "TRANSMIT",
-          flow: "Social Sharing",
-          desc: "Share your tactical ideas. Visit another player's profile in the Socials registry and use the 'Transmit' button to send them your Deckbox contents.",
-          action: "socials",
-        },
-      ],
-    },
-    {
-      group: "SOCIAL & DATA",
-      nodes: [
         {
           term: "SETS",
           flow: "Archive",
@@ -6390,12 +6421,6 @@ function RoadmapModal({
           flow: "Update log",
           desc: "Stay informed about latest updates, bug fixes, and upcoming features planned for 2026.",
           action: "calendar",
-        },
-        {
-          term: "SOCIALS",
-          flow: "Registry",
-          desc: "Connect with other builders in the public registry. Explore their public archives and learn from community deck designs.",
-          action: "socials",
         },
       ],
     },
