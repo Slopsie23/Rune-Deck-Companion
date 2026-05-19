@@ -28,6 +28,30 @@
         "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "name"]
+    },
+    "ChatMessage": {
+      "title": "Chat Message",
+      "description": "A message in Ruxa chat",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "assistant"] },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "role", "content", "timestamp"]
+    },
+    "DeckAnalysis": {
+      "title": "Deck Synergy Analysis",
+      "description": "AI analysis of deck synergies",
+      "type": "object",
+      "properties": {
+        "deckId": { "type": "string" },
+        "analysisText": { "type": "string" },
+        "synergyRunes": { "type": "array", "items": { "type": "string" } },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["deckId", "analysisText", "timestamp"]
     }
   },
   "firestore": {
@@ -38,6 +62,14 @@
     "/users/{userId}/decks/{deckId}": {
       "schema": "Deck",
       "description": "User saved decks"
+    },
+    "/users/{userId}/ruxa_chat/{messageId}": {
+      "schema": "ChatMessage",
+      "description": "Ruxa chat history"
+    },
+    "/users/{userId}/decks/{deckId}/analysis/{analysisId}": {
+      "schema": "DeckAnalysis",
+      "description": "Advanced synergy analysis for a specific deck"
     }
   }
 }

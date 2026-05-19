@@ -163,10 +163,23 @@ router.get("/mf/:id", async (req, res) => {
 
   const strategies = [
     {
-      name: "Mobile App API",
-      url: `https://api.moxfield.com/v2/decks/all/${deckId}`,
+      name: "Official API (api2)",
+      url: `https://api2.moxfield.com/v2/decks/all/${deckId}`,
       headers: {
-        "User-Agent": "Moxfield/2.1.0 (com.moxfield.mobile; build:40; iOS 17.4.1) Alamofire/5.8.1",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://www.moxfield.com/",
+        "X-Requested-With": "XMLHttpRequest",
+        "X-Moxfield-Application": "moxfield-web"
+      },
+      process: (data: any) => (data && data.name ? data : null)
+    },
+    {
+      name: "Mobile App API (api2)",
+      url: `https://api2.moxfield.com/v2/decks/all/${deckId}`,
+      headers: {
+        "User-Agent": "Moxfield/2.1.3 (com.moxfield.mobile; build:42; iOS 17.5.1) Alamofire/5.9.1",
         "Accept": "application/json",
         "Accept-Language": "en-US,en;q=0.9",
         "X-Moxfield-Application": "moxfield-mobile"
@@ -174,13 +187,12 @@ router.get("/mf/:id", async (req, res) => {
       process: (data: any) => (data && data.name ? data : null)
     },
     {
-      name: "Official API (v2)",
+      name: "Legacy Search API",
       url: `https://api.moxfield.com/v2/decks/all/${deckId}`,
       headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json",
-        "Referer": "https://www.moxfield.com/",
-        "X-Requested-With": "XMLHttpRequest"
+        "Referer": "https://www.moxfield.com/decks/public"
       },
       process: (data: any) => (data && data.name ? data : null)
     },
@@ -191,17 +203,6 @@ router.get("/mf/:id", async (req, res) => {
         "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
         "Accept": "application/json",
         "Referer": "https://www.google.com/"
-      },
-      process: (data: any) => (data && data.name ? data : null)
-    },
-    {
-      name: "Secondary API (api2)",
-      url: `https://api2.moxfield.com/v2/decks/all/${deckId}`,
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "application/json",
-        "Referer": "https://www.moxfield.com/",
-        "X-Moxfield-Application": "moxfield-web"
       },
       process: (data: any) => (data && data.name ? data : null)
     },

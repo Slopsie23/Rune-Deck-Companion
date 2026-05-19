@@ -44,15 +44,17 @@ export interface SavedDeck {
   id: string;
   name: string;
   tags: string[];
-  commanders: string[];
-  commanderNames?: string[]; // Added to match usage
-  existingNames?: string[];  // Added to persist card names in deck
+  commanders: any[];
+  commanderNames?: string[];
+  existingNames?: string[];
   art_crops: string[];
   ci: string;
   totalCost?: number;
   createdAt?: any;
   updatedAt?: any;
   isPublic?: boolean;
+  importUrl?: string; // New field
+  source?: "archidekt" | "moxfield" | "tappedout" | "local"; // New field
 }
 
 export interface ScryfallSet {

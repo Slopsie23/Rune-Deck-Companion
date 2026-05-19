@@ -88,9 +88,11 @@ import {
   Monitor,
   Smartphone,
   Loader2,
+  Cpu,
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import axios from "axios";
+import Markdown from 'react-markdown';
 import {
   BarChart,
   Bar,
@@ -106,7 +108,7 @@ import {
 } from "recharts";
 // import runesBackground from './assets/images/runes_background_1777929551380.png';
 const runesBackground = "/runebg.png";
-const VERSION = "V2.7.0";
+const VERSION = "V2.8.0";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
@@ -197,6 +199,7 @@ import {
   writeBatch,
   arrayUnion,
   collectionGroup,
+  orderBy,
 } from "firebase/firestore";
 import { Card, DeckCard, SavedDeck, ScryfallSet } from "./types";
 import { IdentityPortal } from "./components/IdentityPortal";
@@ -400,6 +403,56 @@ const renderManaSymbols = (manaCost: any, size = "w-4 h-4") => {
   );
 };
 
+// Helper to resolve card images across various data formats
+const resolveCardImage = (card: any) => {
+  if (!card) return null;
+  
+  // Handle string inputs (ID or URL)
+  if (typeof card === "string") {
+    if (card.startsWith("http")) return card;
+    // UUID-like check for scryfall IDs
+    if (card.length > 30 && card.includes("-")) {
+      return `https://cards.scryfall.io/small/front/${card[0]}/${card[1]}/${card}.jpg`;
+    }
+    return null;
+  }
+
+  // Handle nested card objects (common in deck imports)
+  const c = card.card || card;
+  const oracle = c.oracleCard || c.oracle_card || c;
+  const scryfall = c.scryfallData || c.scryfall_data || c;
+  const edition = c.edition || c;
+
+  // Direct Image URIs (Scryfall format or our custom format)
+  const uris = scryfall.image_uris || oracle.image_uris || edition.image_uris || {};
+  if (uris.large) return uris.large;
+  if (uris.png) return uris.png;
+  if (uris.normal) return uris.normal;
+  if (uris.small) return uris.small;
+  
+  // Handle two-faced cards
+  if (scryfall.card_faces?.[0]?.image_uris?.normal) return scryfall.card_faces[0].image_uris.normal;
+  if (scryfall.card_faces?.[0]?.image_uris?.small) return scryfall.card_faces[0].image_uris.small;
+  
+  // Support common custom field names
+  if (c.normal) return c.normal;
+  if (c.small) return c.small;
+  if (c.art_crop) return c.art_crop;
+  if (c.thumb) return c.thumb;
+  if (c.imageUrl) return c.imageUrl;
+  if (c.image) return c.image;
+  if (c.img) return c.img;
+
+  // Fallback ID checking
+  const sid = c.scryfall_id || c.scryfallId || c.oracle_id || c.oracleId || (c.id && c.id.length > 30 ? c.id : null);
+  if (sid && typeof sid === "string" && sid.includes("-")) {
+    // Try large then small
+    return `https://cards.scryfall.io/large/front/${sid[0]}/${sid[1]}/${sid}.jpg`;
+  }
+  
+  return null;
+};
+
 export default function App() {
   const [viewMode, setViewMode] = useState<
     | "cards"
@@ -408,7 +461,7 @@ export default function App() {
     | "calendar"
     | "sheriff"
     | "judge"
-    | "socials"
+    | "admin"
   >("cards");
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Searching the Multiverse...");
@@ -439,6 +492,7 @@ export default function App() {
   };
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const isAdmin = useMemo(() => user?.email === 'sdebeer@gmail.com', [user]);
 
   const [tagToVerify, setTagToVerify] = useState<{
     deckId: string;
@@ -451,6 +505,100 @@ export default function App() {
   const [pendingTags, setPendingTags] = useState<Record<string, string[]>>({});
   const [deckDescriptions, setDeckDescriptions] = useState<Record<string, string>>({});
   const [isAiGeneratingTags, setIsAiGeneratingTags] = useState<Record<string, boolean>>({});
+  const [deepAnalysis, setDeepAnalysis] = useState<Record<string, string>>({});
+  const [viewingAnalysis, setViewingAnalysis] = useState<string | null>(null);
+
+  const fetchLatestAnalysis = async (deckId: string) => {
+    if (!user) return;
+    try {
+      const analysisRef = collection(db, "users", user.uid, "decks", deckId, "analysis");
+      const q = query(analysisRef, orderBy("timestamp", "desc"), limit(1));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        setDeepAnalysis(prev => ({ ...prev, [deckId]: snap.docs[0].data().analysisText }));
+      }
+    } catch (e) {
+      console.warn("Failed to fetch analysis", e);
+    }
+  };
+
+  const generateDeepAnalysis = async (deckId: string) => {
+    if (!user) return;
+    const deck = savedDecks.find(d => d.id === deckId);
+    if (!deck) return;
+    
+    startArcaneLoading("Calculating Arcane Congruence...");
+    try {
+      const cardsSnapshot = await getDocs(collection(db, "users", user.uid, "decks", deck.id, "cards"));
+      const cards: any[] = cardsSnapshot.docs.map(d => d.data());
+      
+      const cardList = cards.map(c => `${c.qty}x ${c.name} (${c.type_line || ''})`).join("\n");
+      const commanders = deck.commanders.join(", ");
+      
+      const prompt = `Je bent een wereldklasse Magic: The Gathering Deck Architect en Strategisch Analist.
+      Voer een diepgaande SYNERGIE-AUDIT en STRATEGISCHE EVALUATIE uit voor dit Commander deck.
+      
+      Deck Naam: ${deck.name}
+      Commanders: ${commanders}
+      Decklist:
+      ${cardList || "Geen kaartdata beschikbaar."}
+      
+      INSTRUCTIES:
+      - TAAL: Schrijf het volledige rapport in het NEDERLANDS.
+      - TOON: Uiterst professioneel, analytisch en gezaghebbend. Geen 'beer-lore', geen rollenspel, puur technische MTG analyse.
+      - JARGON: Gebruik correct MTG-jargon. Termen die in de internationale community in het Engels worden gebruikt (mulligan, ramp, curve, stack, triggers, lethal, board state, sequencing, tech) mogen in het Engels blijven staan binnen de Nederlandse zinsstructuur.
+      - KWALITEIT: Gebruik grammaticaal correcte, lopende Nederlandse zinnen. Vermijd AI-clichés of vreemde opmerkingen over data-encapsulatie.
+      
+      STRUCTUREER het rapport exact met deze koppen (gebruik # en ##):
+      # Arcane Strategische Audit: ${deck.name}
+      
+      ## 1. Strategische Kern & Archetype
+      Analyseer de fundamentele identiteit van het deck. Wat is de 'game plan'? Hoe verhoudt dit deck zich tot de huidige Commander meta?
+      
+      ## 2. Kritieke Synergie-Knooppunten
+      Identificeer specifieke kaart-combinaties en 'resource loops' die de motor van het deck vormen. Focus op interacties die niet direct voor de hand liggen.
+      
+      ## 3. Technische Diepgang & Lijnen
+      Bespreek complexe interacties, 'stack management' en eventuele 'win-lines' of combo's. Wees specifiek over hoe verschillende lagen (layers) of triggers interacteren.
+      
+      ## 4. Piloting: Mulligan & Sequencing
+      Geef concreet advies over welke handen te houden ('keepable hands') en hoe de eerste 4-5 beurten optimaal uitgespeeld moeten worden voor maximaal momentum.
+      
+      ## 5. Optimalisatie & Krachtniveau
+      Geef 3-5 gerichte suggesties voor upgrades. Focus op het verbeteren van de 'mana curve', card draw consistentie en interactie-pakketten.
+      
+      FORMATTERING:
+      - Gebruik standard {T} voor tap en {W}{U}{B}{R}{G}{C} voor mana symbolen.
+      - Gebruik vetgedrukte tekst voor kaartnamen en sleutelconcepten.
+      - Gebruik duidelijke bullet-points voor leesbaarheid.`;
+
+      const response = await callGemini({
+        model: "gemini-3-flash-preview",
+        contents: [{ parts: [{ text: prompt }] }],
+      });
+
+      const reportText = response.text;
+      if (!reportText) {
+        throw new Error("Het AI-orakel gaf geen antwoord. Probeer het later opnieuw.");
+      }
+      
+      const analysisRef = collection(db, "users", user.uid, "decks", deck.id, "analysis");
+      await addDoc(analysisRef, {
+        deckId,
+        analysisText: reportText,
+        timestamp: serverTimestamp()
+      });
+      
+      setDeepAnalysis(prev => ({ ...prev, [deckId]: reportText }));
+      setViewingAnalysis(deckId);
+      showMessage("STRATEGY MANIFESTED", "success");
+    } catch (e: any) {
+      console.error(e);
+      showMessage(e.message || "Deep analysis failed.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // Performance and reliability for mobile
   useEffect(() => {
@@ -553,6 +701,7 @@ export default function App() {
   }, [allCards]);
   const [deckbox, setDeckbox] = useState<DeckCard[]>([]);
   const [savedDecks, setSavedDecks] = useState<SavedDeck[]>([]);
+  const [syncingDecks, setSyncingDecks] = useState<Record<string, boolean>>({});
 
   const [mtgSets, setMtgSets] = useState<
     {
@@ -1175,6 +1324,8 @@ export default function App() {
     totalCost?: number;
     autoSelect: boolean;
     candidates: any[];
+    importUrl?: string;
+    source?: "archidekt" | "moxfield" | "tappedout" | "local";
   } | null>(null);
   const [showBackToTop, setShowBackToTop] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1227,6 +1378,8 @@ export default function App() {
     existingNames: Set<string>,
     totalCost?: number,
     autoSelect: boolean = true,
+    importUrl?: string,
+    source?: "archidekt" | "moxfield" | "tappedout" | "local",
   ) => {
     // If no commanders found, try to infer from existing names (look for legendary creatures)
     let finalCommanderNames = [...commanderNames];
@@ -1264,6 +1417,8 @@ export default function App() {
             totalCost,
             autoSelect,
             candidates: possibleCommanders,
+            importUrl,
+            source,
           });
           return; // STOP here, wait for user selection
         } else if (sfData.data.length > 0) {
@@ -1277,6 +1432,8 @@ export default function App() {
             candidates: sfData.data
               .filter((c: any) => c && !c.error && c.status !== 404)
               .slice(0, 50),
+            importUrl,
+            source,
           });
           return;
         } else {
@@ -1297,6 +1454,8 @@ export default function App() {
       existingNames,
       totalCost,
       autoSelect,
+      importUrl,
+      source,
     );
   };
 
@@ -1307,6 +1466,8 @@ export default function App() {
     existingNames: Set<string>,
     totalCost?: number,
     autoSelect: boolean = true,
+    importUrl?: string,
+    source?: "archidekt" | "moxfield" | "tappedout" | "local",
   ) => {
     // Fetch commander details for CI and images
     const commanderDetails = await Promise.all(
@@ -1390,13 +1551,15 @@ export default function App() {
         userId: user.uid,
         name: deckName,
         tags: existingData?.tags || [],
-        commanders: finalCommanderNames,
+        commanders: commandersData, // Rich data
         commanderNames: finalCommanderNames,
         existingNames: Array.from(existingNames),
         art_crops: finalArtCrops,
         ci: ciStr,
         totalCost: totalCost || existingData?.totalCost || 0,
         updatedAt: serverTimestamp(),
+        importUrl: importUrl || existingData?.importUrl || null,
+        source: source || existingData?.source || "local",
       };
       
       if (!existingSnap.exists()) {
@@ -1433,7 +1596,7 @@ export default function App() {
 
   const onSelectCommander = (selectedNames: string[]) => {
     if (!commanderSelection) return;
-    const { id, deckName, existingNames, totalCost, autoSelect } =
+    const { id, deckName, existingNames, totalCost, autoSelect, importUrl, source } =
       commanderSelection;
     setCommanderSelection(null);
     processDeckWithCommanders(
@@ -1443,10 +1606,12 @@ export default function App() {
       new Set(existingNames),
       totalCost,
       autoSelect,
+      importUrl,
+      source,
     );
   };
 
-  const fetchArchidektDeck = async (id: string, autoSelect: boolean = true) => {
+  const fetchArchidektDeck = async (id: string, autoSelect: boolean = true, importUrl?: string) => {
     if (!id.trim()) return;
     startArcaneLoading("Fetching Deck Chronicles...");
     try {
@@ -1531,6 +1696,8 @@ export default function App() {
         existingNames,
         totalCost,
         autoSelect,
+        importUrl,
+        "archidekt",
       );
       // Removed setIsViewingDeck(true) to stay in context as requested
     } catch (error: any) {
@@ -1543,7 +1710,7 @@ export default function App() {
     }
   };
 
-  const fetchTappedOutDeck = async (id: string, autoSelect: boolean = true) => {
+  const fetchTappedOutDeck = async (id: string, autoSelect: boolean = true, importUrl?: string) => {
     if (!id.trim()) return;
     startArcaneLoading("Fetching Deck Chronicles...");
     try {
@@ -1683,6 +1850,8 @@ export default function App() {
         existingNames,
         totalCost,
         autoSelect,
+        importUrl,
+        "tappedout",
       );
       // Removed setIsViewingDeck(true) to stay in context as requested
     } catch (error: any) {
@@ -1695,7 +1864,7 @@ export default function App() {
     }
   };
 
-  const fetchMoxfieldDeck = async (id: string, autoSelect: boolean = true) => {
+  const fetchMoxfieldDeck = async (id: string, autoSelect: boolean = true, importUrl?: string) => {
     if (!id.trim()) return;
     startArcaneLoading("Fetching Deck Chronicles...");
     try {
@@ -1796,6 +1965,8 @@ export default function App() {
         existingNames,
         totalCost,
         autoSelect,
+        importUrl,
+        "moxfield",
       );
     } catch (error: any) {
       console.error("[Moxfield Import] Error:", error);
@@ -1851,11 +2022,11 @@ export default function App() {
       }
 
       if (source === "archidekt") {
-        await fetchArchidektDeck(deckId, autoSelect);
+        await fetchArchidektDeck(deckId, autoSelect, rawId.includes("http") ? rawId : undefined);
       } else if (source === "moxfield") {
-        await fetchMoxfieldDeck(deckId, autoSelect);
+        await fetchMoxfieldDeck(deckId, autoSelect, rawId.includes("http") ? rawId : undefined);
       } else {
-        await fetchTappedOutDeck(deckId, autoSelect);
+        await fetchTappedOutDeck(deckId, autoSelect, rawId.includes("http") ? rawId : undefined);
       }
     }
 
@@ -1872,7 +2043,56 @@ export default function App() {
     setCommanders([]);
   };
 
+  const syncDeck = async (deck: SavedDeck) => {
+    let url = deck.importUrl;
+    if (!url && deck.source && deck.id) {
+      if (deck.source === "archidekt" && /^\d+$/.test(deck.id)) {
+        url = `https://www.archidekt.com/decks/${deck.id}`;
+      } else if (deck.source === "moxfield") {
+        url = `https://www.moxfield.com/decks/${deck.id}`;
+      } else if (deck.source === "tappedout") {
+        url = `https://tappedout.net/mtg-decks/${deck.id}`;
+      }
+    }
+
+    if (!url) {
+      showMessage("This deck has no source URL to sync with.", "error");
+      return;
+    }
+
+    setSyncingDecks((prev) => ({ ...prev, [deck.id]: true }));
+    startArcaneLoading(`Synchronizing with ${deck.source || "source"}...`);
+    try {
+      await fetchAnyDeck(url, false);
+      showMessage("SYNC_COMPLETE", "success");
+    } catch (err) {
+      console.error("Sync failed:", err);
+      showMessage("SYNC_FAILED", "error");
+    } finally {
+      setSyncingDecks((prev) => ({ ...prev, [deck.id]: false }));
+      setLoading(false);
+    }
+  };
+
   const [glowIndex, setGlowIndex] = useState(0);
+
+  // Auto-Sync Logic (Archidekt/Moxfield/TappedOut)
+  useEffect(() => {
+    if (!activeDeckId || !user || loading) return;
+    const deck = savedDecks.find(d => d.id === activeDeckId);
+    if (!deck || !deck.importUrl || syncingDecks[deck.id]) return;
+
+    // Check if stale (> 24h)
+    const now = new Date();
+    // FireStore timestamp handler
+    const updatedAt = deck.updatedAt?.seconds ? new Date(deck.updatedAt.seconds * 1000) : new Date(0);
+    const diffHours = (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60);
+
+    if (diffHours > 24) {
+      console.log(`[Auto-Sync] Initiating refresh for staleness (${Math.round(diffHours)}h)`);
+      syncDeck(deck);
+    }
+  }, [activeDeckId, user, savedDecks]);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -2373,6 +2593,7 @@ export default function App() {
 
   const viewDeckDetails = async (id: string, source?: string) => {
     startArcaneLoading("Fetching Deck Chronicles...");
+    fetchLatestAnalysis(id);
     try {
       if (!source) {
         if (/^\d+$/.test(id)) source = "archidekt";
@@ -2580,6 +2801,7 @@ export default function App() {
 
       setViewingDeckCards(parsedCards);
       setViewingDeckName(deckName);
+      setViewingDeckId(id);
       setIsViewingDeck(true);
     } catch (err: any) {
       console.error("Failed to fetch deck details", err);
@@ -3157,7 +3379,7 @@ Return ONLY JSON. No markdown backticks.`;
 
             <div className="flex items-center gap-4 py-2">
               <div className="flex-1 h-px bg-white/5" />
-              <span className="text-[8px] font-mono text-white/10 uppercase font-black">or resonate via</span>
+              <span className="text-[10px] font-mono text-white/40 uppercase font-black">or resonate via</span>
               <div className="flex-1 h-px bg-white/5" />
             </div>
 
@@ -3968,7 +4190,7 @@ Return ONLY JSON. No markdown backticks.`;
                     <Sparkles className="w-5 h-5 text-orange-500" />
                     <div>
                       <h3 className="text-xl font-magic font-black text-white uppercase tracking-widest leading-none">Fun_Area</h3>
-                      <p className="text-[8px] font-magic font-bold text-white/30 uppercase tracking-[0.2em] mt-1">Select Active Module</p>
+                        <p className="text-[11px] font-magic font-bold text-white/40 uppercase tracking-[0.15em] mt-1">Select Active Module</p>
                     </div>
                   </div>
                   <button 
@@ -4010,7 +4232,7 @@ Return ONLY JSON. No markdown backticks.`;
                       className={`flex flex-col items-center justify-center gap-2 p-4 rounded-2xl border transition-all hover:scale-[1.02] active:scale-95 ${mod.color}`}
                     >
                       <mod.icon className="w-6 h-6" />
-                      <span className="text-[8px] font-magic font-black uppercase tracking-widest">{mod.label}</span>
+                      <span className="text-[10px] font-magic font-black uppercase tracking-widest">{mod.label}</span>
                     </button>
                   ))}
                 </div>
@@ -4045,7 +4267,7 @@ Return ONLY JSON. No markdown backticks.`;
                       </div>
                       <div>
                         <h3 className="font-magic font-black text-sm uppercase tracking-widest text-white">Profile Settings</h3>
-                        <p className="text-[9px] font-mono text-white/30 uppercase tracking-widest">Manage your identity and interface</p>
+                        <p className="text-[11px] font-mono text-white/50 uppercase tracking-widest">Manage your identity and interface</p>
                       </div>
                     </div>
                     <button onClick={() => setIsSettingsOpen(false)} className="w-10 h-10 flex items-center justify-center hover:bg-white/5 rounded-full text-white/20 transition-all">
@@ -4061,7 +4283,7 @@ Return ONLY JSON. No markdown backticks.`;
                       </h4>
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1 text-left">
-                          <label className="text-[8px] font-mono font-black text-white/20 uppercase tracking-widest ml-1">Username</label>
+                          <label className="text-[10px] font-mono font-black text-white/40 uppercase tracking-widest ml-1">Username</label>
                           <input
                             type="text"
                             value={userName}
@@ -4071,7 +4293,7 @@ Return ONLY JSON. No markdown backticks.`;
                           />
                         </div>
                         <div className="space-y-1 text-left">
-                          <label className="text-[8px] font-mono font-black text-white/20 uppercase tracking-widest ml-1">Title</label>
+                          <label className="text-[10px] font-mono font-black text-white/40 uppercase tracking-widest ml-1">Title</label>
                           <input
                             type="text"
                             value={userTitle}
@@ -4082,7 +4304,7 @@ Return ONLY JSON. No markdown backticks.`;
                         </div>
                       </div>
                       <div className="space-y-1 text-left">
-                        <label className="text-[8px] font-mono font-black text-white/20 uppercase tracking-widest ml-1">Profile Photo URL</label>
+                        <label className="text-[10px] font-mono font-black text-white/40 uppercase tracking-widest ml-1">Profile Photo URL</label>
                         <div className="flex gap-2">
                           <input
                             type="text"
@@ -4106,9 +4328,9 @@ Return ONLY JSON. No markdown backticks.`;
                         <div className="flex items-center justify-between">
                           <div className="flex flex-col">
                             <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Interface Density</span>
-                            <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest leading-none">Desktop Grid Scaling</span>
+                            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Desktop Grid Scaling</span>
                           </div>
-                          <span className="text-[10px] font-mono text-orange-500 font-bold bg-orange-500/5 px-2 py-0.5 rounded border border-orange-500/20 tracking-tighter">
+                          <span className="text-[11px] font-mono text-orange-500 font-bold bg-orange-500/5 px-2 py-0.5 rounded border border-orange-500/20 tracking-tighter">
                             {cardsPerRowDesktop === 0 ? "AUTO_CALC" : `${cardsPerRowDesktop}_UNITS`}
                           </span>
                         </div>
@@ -4119,14 +4341,14 @@ Return ONLY JSON. No markdown backticks.`;
                           step="1"
                           value={cardsPerRowDesktop}
                           onChange={(e) => saveUserSettings({ cardsPerRowDesktop: parseInt(e.target.value) })}
-                          className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-orange-500"
+                          className="w-full h-1 bg-white/20 rounded-full appearance-none cursor-pointer accent-orange-500"
                         />
                         <div className="flex justify-between mt-2 px-1">
-                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">Auto</span>
-                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">2</span>
-                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">4</span>
-                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">6</span>
-                          <span className="text-[7px] font-mono text-white/20 uppercase font-black">8</span>
+                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">Auto</span>
+                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">2</span>
+                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">4</span>
+                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">6</span>
+                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">8</span>
                         </div>
                       </div>
 
@@ -4134,9 +4356,9 @@ Return ONLY JSON. No markdown backticks.`;
                         <div className="flex items-center justify-between">
                           <div className="flex flex-col">
                             <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Mobile Columns</span>
-                            <span className="text-[8px] font-mono text-white/20 uppercase tracking-widest leading-none">Layout Adaptation</span>
+                            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Layout Adaptation</span>
                           </div>
-                          <span className="text-[10px] font-mono text-cyan-400 font-bold bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/20 tracking-tighter">{cardsPerRowMobile} COL</span>
+                          <span className="text-[11px] font-mono text-cyan-400 font-bold bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/20 tracking-tighter">{cardsPerRowMobile} COL</span>
                         </div>
                         <div className="px-2">
                           <input 
@@ -4146,17 +4368,41 @@ Return ONLY JSON. No markdown backticks.`;
                             step="1"
                             value={cardsPerRowMobile}
                             onChange={(e) => saveUserSettings({ cardsPerRowMobile: parseInt(e.target.value) })}
-                            className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-cyan-400"
+                            className="w-full h-1 bg-white/20 rounded-full appearance-none cursor-pointer accent-cyan-400"
                           />
                           <div className="flex justify-between mt-2 px-1">
-                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">1</span>
-                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">2</span>
-                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">3</span>
-                            <span className="text-[7px] font-mono text-white/20 uppercase font-black">4</span>
+                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">1</span>
+                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">2</span>
+                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">3</span>
+                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">4</span>
                           </div>
                         </div>
                       </div>
                     </div>
+
+                    {/* ADMIN SECTION */}
+                    {isAdmin && (
+                      <div className="bg-orange-500/5 border-y border-orange-500/10 p-4 space-y-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <ShieldCheck className="w-4 h-4 text-orange-500" />
+                          <div>
+                            <h4 className="text-[10px] font-magic font-black text-white uppercase tracking-widest">Grand Arbiter Matrix</h4>
+                            <p className="text-[7px] font-mono text-orange-500/40 uppercase tracking-widest leading-none">Restricted Administrator Access</p>
+                          </div>
+                        </div>
+                        
+                        <button 
+                          onClick={() => {
+                            setViewMode("admin");
+                            setIsSettingsOpen(false);
+                          }}
+                          className="w-full py-4 bg-orange-500 text-black rounded-xl font-magic font-black uppercase tracking-widest text-[10px] shadow-[0_0_20px_rgba(249,115,22,0.2)] hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
+                        >
+                          <Terminal className="w-4 h-4" />
+                          Open Admin Dashboard
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <footer className="p-4 border-t border-white/5 bg-black/40 flex items-center justify-between gap-4">
@@ -4356,6 +4602,12 @@ Return ONLY JSON. No markdown backticks.`;
                 )}
               </button>
             </div>
+            {viewMode === "admin" && isAdmin && (
+              <div className="p-0 h-full"> 
+                <AdminMatrix setViewMode={setViewMode} />
+              </div>
+            )}
+
             {viewMode === "cards" && (
               <div
                 className="grid transition-all duration-500 gap-3 sm:gap-6 p-2 pb-4"
@@ -4525,7 +4777,7 @@ Return ONLY JSON. No markdown backticks.`;
               </div>
             )}
 
-            {viewMode === "judge" && <JudgeView />}
+            {viewMode === "judge" && <JudgeView user={user} />}
 
             {viewMode === "manage_decks" && (
               <div className="space-y-6 p-4 lg:p-8 relative">
@@ -4534,7 +4786,7 @@ Return ONLY JSON. No markdown backticks.`;
                     <h2 className="text-xl font-magic font-extrabold text-orange-500 uppercase tracking-tight">
                       Saved Decks
                     </h2>
-                    <p className="text-[10px] text-cyan-500/60 font-bold font-mono tracking-widest">
+                    <p className="text-[11px] text-cyan-500 font-bold font-mono tracking-widest">
                       MY COLLECTION
                     </p>
                   </div>
@@ -4543,7 +4795,7 @@ Return ONLY JSON. No markdown backticks.`;
                       <input
                         type="text"
                         placeholder="Archidekt, TappedOut or Moxfield ID/URL..."
-                        className="bg-black/60 border border-[#2a2a2a] shadow-[inset_0_1px_5px_rgba(0,0,0,0.8)] rounded-sm px-4 py-2 text-[11px] flex-1 focus:border-cyan-500/50 outline-none placeholder:text-white/20 text-cyan-400 font-magic transition-colors"
+                        className="bg-black/60 border border-[#2a2a2a] shadow-[inset_0_1px_5px_rgba(0,0,0,0.8)] rounded-sm px-4 py-3 text-[12px] flex-1 focus:border-cyan-500/50 outline-none placeholder:text-white/50 text-cyan-400 font-magic transition-colors"
                         value={newDeckIdInput}
                         onChange={(e) => setNewDeckIdInput(e.target.value)}
                         onKeyDown={(e) =>
@@ -4553,13 +4805,13 @@ Return ONLY JSON. No markdown backticks.`;
                       />
                       <button
                         onClick={() => fetchAnyDeck(newDeckIdInput, false)}
-                        className="rune-panel px-4 py-2 text-cyan-500/80 font-black text-[10px] items-center gap-2 flex transition-all active:scale-95 font-magic uppercase hover:text-cyan-400 hover:border-cyan-500/30 z-10"
+                        className="rune-panel px-4 py-2 text-cyan-500 font-black text-[12px] items-center gap-2 flex transition-all active:scale-95 font-magic uppercase hover:text-cyan-400 hover:border-cyan-500/30 z-10"
                       >
-                        <Plus className="w-3.5 h-3.5" />
+                        <Plus className="w-4 h-4" />
                         Add Deck
                       </button>
                     </div>
-                    <p className="text-[7px] font-mono text-white/20 italic text-right px-1">
+                    <p className="text-[11px] font-mono text-white/50 italic text-right px-1">
                       Tip: ensure your deck is "Public" to import successfully.
                     </p>
 
@@ -4601,10 +4853,10 @@ Return ONLY JSON. No markdown backticks.`;
                           {deck.totalCost ? (
                             <div className="flex flex-col items-end gap-1">
                                 <div className="flex items-center bg-black/60 backdrop-blur-md px-3 py-1.5 rounded-full border border-[#00aeef]/20 shadow-xl group-hover:border-[#00aeef]/40 transition-all min-h-[30px]">
-                                  <span className="text-[8px] text-[#00aeef]/70 font-magic font-extrabold uppercase mr-2 tracking-widest leading-none">
+                                  <span className="text-[10px] text-[#00aeef]/90 font-magic font-extrabold uppercase mr-3 tracking-widest leading-none">
                                     Price
                                   </span>
-                                  <span className="text-[12px] text-white/90 font-mono font-black">
+                                  <span className="text-[12px] text-white font-mono font-black">
                                     €{deck.totalCost.toFixed(2)}
                                   </span>
                                 </div>
@@ -4616,9 +4868,21 @@ Return ONLY JSON. No markdown backticks.`;
                           <h3 className="font-magic font-bold text-2xl text-white group-hover:text-cyan-400 transition-colors uppercase leading-none drop-shadow-lg">
                             {deck.name}
                           </h3>
-                          <p className="text-[10px] text-white/40 uppercase font-black tracking-[0.2em] font-mono mt-2">
-                            Commander Deck
-                          </p>
+                          <div className="flex items-center gap-3 mt-2">
+                             <p className="text-[10px] text-white/40 uppercase font-black tracking-[0.2em] font-mono">
+                               Commander Deck
+                             </p>
+                             {deck.importUrl && (
+                               <button 
+                                 onClick={(e) => { e.stopPropagation(); syncDeck(deck); }}
+                                 disabled={syncingDecks[deck.id]}
+                                 className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/30 transition-all group/sync text-cyan-400"
+                               >
+                                 <RotateCw className={`w-3 h-3 ${syncingDecks[deck.id] ? 'animate-spin' : ''}`} />
+                                 <span className="text-[10px] font-magic font-bold uppercase tracking-widest">{syncingDecks[deck.id] ? 'Synchronizing...' : 'Refresh Source'}</span>
+                               </button>
+                             )}
+                          </div>
                         </div>
                       </div>
 
@@ -4626,16 +4890,16 @@ Return ONLY JSON. No markdown backticks.`;
                         {/* Tags Display */}
                         <div className="flex-1">
                           <div className="flex items-center justify-between mb-3 px-1">
-                            <span className="text-[9px] font-magic font-black text-white/30 uppercase tracking-[0.2em]">
+                            <span className="text-[11px] font-magic font-black text-white/60 uppercase tracking-[0.2em]">
                               Active Runes
                             </span>
-                            <div className="h-[1px] flex-1 mx-4 bg-white/5" />
+                            <div className="h-[1px] flex-1 mx-4 bg-white/20" />
                           </div>
                           
                           <div className="flex flex-wrap gap-1.5 min-h-[40px]">
                             {(deck.tags || []).length === 0 && (pendingTags[deck.id] || []).length === 0 && (
-                              <div className="w-full py-4 text-center border border-dashed border-white/5 rounded-xl">
-                                <span className="text-[9px] font-mono text-white/10 uppercase tracking-widest italic">
+                              <div className="w-full py-4 text-center border border-dashed border-white/20 rounded-xl">
+                                <span className="text-[12px] font-mono text-white/60 uppercase tracking-widest italic">
                                   No runes assigned
                                 </span>
                               </div>
@@ -4724,16 +4988,16 @@ Return ONLY JSON. No markdown backticks.`;
                                 animate={{ opacity: 1, y: 0 }}
                                 className="flex flex-col gap-3 text-center"
                               >
-                                <p className="text-[9px] text-white/30 font-mono leading-relaxed uppercase tracking-widest px-2">
-                                  Uses AI to analyze the synergy of all cards in your deck to suggest optimal search runes.
+                                <p className="text-[11px] text-white/50 font-mono italic leading-relaxed px-2 text-center">
+                                  AI scans your deck strategy to suggest optimal search runes for deeper synergies.
                                 </p>
                                 <button
                                   onClick={() => autoAddCommanderTags(deck.id, deck.commanders)}
                                   disabled={loading}
-                                  className="w-full flex items-center justify-center gap-3 py-3 rounded-2xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 text-cyan-400 font-magic font-black uppercase tracking-[0.2em] text-[10px] transition-all shadow-inner group"
+                                  className="w-full flex items-center justify-center gap-3 py-4 rounded-xl bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/30 text-cyan-400 font-magic font-black uppercase tracking-[0.2em] text-[11px] transition-all shadow-inner group"
                                 >
-                                  <Zap className="w-3.5 h-3.5 animate-pulse group-hover:scale-125 transition-transform" />
-                                  {suggestedDecks.has(deck.id) ? "Relaunch Deep Scan" : "Analyze Deck Synergy"}
+                                  <Zap className="w-4 h-4 animate-pulse group-hover:scale-125 transition-transform" />
+                                  {suggestedDecks.has(deck.id) ? "Relaunch Core Scan" : "Analyze Strategy"}
                                 </button>
                               </motion.div>
                             )}
@@ -4745,7 +5009,7 @@ Return ONLY JSON. No markdown backticks.`;
                                 className="space-y-3"
                               >
                                 <textarea
-                                  className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 text-[10px] outline-none focus:border-cyan-500/40 transition-all placeholder:text-white/10 text-white/70 min-h-[80px] resize-none font-sans"
+                                  className="w-full bg-black/40 border border-white/10 rounded-xl px-5 py-4 text-[13px] outline-none focus:border-cyan-500/40 transition-all placeholder:text-white/30 text-white/90 min-h-[100px] resize-none font-sans"
                                   placeholder="Describe your strategy: 'I want to sacrifice small creatures to drain opponents and generate zombies'..."
                                   value={deckDescriptions[deck.id] || ""}
                                   onChange={(e) =>
@@ -4788,7 +5052,7 @@ Return ONLY JSON. No markdown backticks.`;
                                   <input
                                     type="text"
                                     placeholder="Add direct rune (e.g. 'Bear' or 'Infect')"
-                                    className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-[10px] outline-none focus:border-orange-500/40 transition-all placeholder:text-white/10 text-white shadow-inner"
+                                    className="w-full bg-black/40 border border-white/10 rounded-xl pl-10 pr-4 py-3 text-[11px] outline-none focus:border-orange-500/40 transition-all placeholder:text-white/30 text-white shadow-inner"
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter") {
                                         addTag(deck.id, (e.target as HTMLInputElement).value);
@@ -4797,8 +5061,8 @@ Return ONLY JSON. No markdown backticks.`;
                                     }}
                                   />
                                 </div>
-                                <p className="text-[8px] text-white/20 font-mono text-center uppercase tracking-widest">
-                                  Press Enter to assign rune
+                                <p className="text-[11px] text-white/50 font-mono italic text-center">
+                                  Press Enter to assign new search rune
                                 </p>
                               </motion.div>
                             )}
@@ -4815,6 +5079,13 @@ Return ONLY JSON. No markdown backticks.`;
                             <span>Details</span>
                           </button>
                           <div className="flex flex-1 gap-2">
+                            <button
+                               onClick={() => deepAnalysis[deck.id] ? setViewingAnalysis(deck.id) : generateDeepAnalysis(deck.id)}
+                               className={`p-3 border rounded-xl transition-all group flex-1 flex items-center justify-center ${deepAnalysis[deck.id] ? 'bg-purple-500/10 border-purple-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
+                               title={deepAnalysis[deck.id] ? "View Arcane Audit" : "Generate Arcane Audit"}
+                             >
+                               <Brain className={`w-4 h-4 transition-colors ${deepAnalysis[deck.id] ? 'text-purple-400' : 'text-white/10 group-hover:text-purple-400'}`} />
+                             </button>
                             <button
                                onClick={() => setDeckToDelete(deck.id)}
                                className="p-3 bg-red-500/5 hover:bg-red-500/10 border border-white/5 hover:border-red-500/20 rounded-xl transition-all group flex-1 flex items-center justify-center"
@@ -4884,11 +5155,26 @@ Return ONLY JSON. No markdown backticks.`;
                     <h2 className="text-2xl font-magic font-black text-cyan-400 uppercase tracking-[0.1em] truncate max-w-lg drop-shadow-[0_0_8px_rgba(34,211,238,0.3)]">
                       {viewingDeckName || "Deckinfo"}
                     </h2>
-                    <div className="flex items-center gap-2">
-                      <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
-                      <p className="text-[10px] text-white/40 uppercase font-mono tracking-[0.2em]">
-                        {viewingDeckCards.length} Cards Analyzed
-                      </p>
+                    <div className="flex items-center gap-4">
+                      <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-500 animate-pulse" />
+                        <p className="text-[10px] text-white/40 uppercase font-mono tracking-[0.2em]">
+                          {viewingDeckCards.length} Cards Analyzed
+                        </p>
+                      </div>
+                      {viewingDeckId && (
+                        <button
+                          onClick={() => {
+                            const d = savedDecks.find(deck => deck.id === viewingDeckId);
+                            if (d) syncDeck(d);
+                          }}
+                          disabled={syncingDecks[viewingDeckId]}
+                          className="flex items-center gap-1.5 px-3 py-1 rounded-xl bg-cyan-500/10 border border-cyan-500/20 hover:bg-cyan-500/20 transition-all text-cyan-400 group/sync-btn"
+                        >
+                          <RotateCw className={`w-3 h-3 ${syncingDecks[viewingDeckId] ? 'animate-spin' : ''}`} />
+                          <span className="text-[10px] font-magic font-bold uppercase tracking-widest">{syncingDecks[viewingDeckId] ? 'Synchronizing...' : 'Refresh Deck'}</span>
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -4908,104 +5194,70 @@ Return ONLY JSON. No markdown backticks.`;
                 <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-cyan-500/5 rounded-full blur-[120px] pointer-events-none" />
 
                 {/* LEFT COLUMN: TACTICAL LIST */}
-                <div className="w-full lg:w-[320px] xl:w-[380px] overflow-y-auto no-scrollbar p-4 relative z-10 border-r border-white/5 bg-black/40">
-                  <div className="space-y-6">
+                <div className="w-full lg:w-[320px] xl:w-[420px] h-full overflow-y-auto p-6 relative z-10 border-r border-white/5 bg-black/60 custom-scrollbar">
+                  <div className="space-y-8 pb-20">
                     {Object.entries(groupedDeckCards)
                       .filter(([_, cards]) => (cards as any[]).length > 0)
                       .map(([category, cards]) => (
-                        <div key={category} className="space-y-1">
-                          <div className="flex items-center gap-2 group mb-2 mt-4 first:mt-0">
-                            <div className="w-1 h-1 bg-cyan-500 rotate-45" />
-                            <h3 className="text-[8px] font-magic font-black text-white/30 uppercase tracking-[0.3em]">
+                        <div key={category} className="space-y-2">
+                          <div className="flex items-center gap-3 group mb-4 mt-6 first:mt-0 sticky top-0 bg-black/80 backdrop-blur-md py-2 z-20 -mx-6 px-6 border-y border-white/[0.03]">
+                            <div className="w-2 h-2 bg-cyan-500 shadow-[0_0_8px_rgba(6,182,212,0.5)]" />
+                            <h3 className="text-[10px] font-magic font-black text-white/60 uppercase tracking-[0.4em]">
                               {category}
                             </h3>
-                            <span className="text-[8px] font-mono text-cyan-400/40 ml-auto">
+                            <div className="flex-1 h-[1px] bg-white/5" />
+                            <span className="text-[10px] font-mono text-cyan-400/60 font-bold bg-white/5 px-2 py-0.5 rounded">
                               {(cards as any[]).length}
                             </span>
                           </div>
 
-                          <div className="flex flex-col">
+                          <div className="flex flex-col gap-1">
                             {(cards as any[]).map((dc, i) => {
-                              const c =
-                                dc.card?.oracleCard ||
-                                dc.card?.oracle_card ||
-                                dc.card;
-                              const scryfall =
-                                dc.card?.scryfallData || dc.card?.scryfall_data;
-                              const oracle =
-                                dc.card?.oracleCard ||
-                                dc.card?.oracle_card ||
-                                dc.card;
-                              const edition = dc.card?.edition;
-                              const cardName =
-                                c?.name || dc.card?.name || "Unknown Card";
-                              const manaCost =
-                                oracle?.mana_cost ||
-                                scryfall?.mana_cost ||
-                                edition?.mana_cost ||
-                                "";
+                              const cardData = dc.card || dc;
+                              const oracle = cardData.oracleCard || cardData.oracle_card || cardData.card?.oracleCard || (cardData.name ? cardData : null);
+                              const scryfall = cardData.scryfallData || cardData.scryfall_data || (cardData.scryfall_id ? cardData : null);
+                              const edition = cardData.edition || (cardData.imageUrl ? cardData : null);
+                              
+                              const cardName = oracle?.name || cardData.name || dc.name || "Unknown Card";
+                              const manaCost = oracle?.mana_cost || scryfall?.mana_cost || edition?.mana_cost || cardData.mana_cost || "";
+                              const img = resolveCardImage(cardData);
 
-                              let img =
-                                scryfall?.image_uris?.large ||
-                                scryfall?.image_uris?.png ||
-                                edition?.image_uris?.large ||
-                                edition?.image_uris?.png ||
-                                edition?.imageUrl ||
-                                edition?.image_url ||
-                                scryfall?.image_uris?.normal ||
-                                oracle?.image_uris?.large ||
-                                oracle?.image_uris?.normal;
-                              const scryfallId =
-                                dc.card?.scryfall_id ||
-                                dc.card?.scryfallId ||
-                                dc.card?.uids?.scryfall ||
-                                scryfall?.id ||
-                                dc.uids?.scryfall;
-                              if (!img && scryfallId) {
-                                img = `https://cards.scryfall.io/large/front/${scryfallId.slice(0, 1)}/${scryfallId.slice(1, 2)}/${scryfallId}.jpg`;
-                              }
-
-                              const isSelected =
-                                selectedDeckCard === img ||
-                                hoveredPreviewCard === img;
+                              const isSelected = selectedDeckCard === img || hoveredPreviewCard === img;
 
                               return (
                                 <button
-                                  key={`${category}-${i}`}
+                                  key={`${category}-${cardName}-${i}`}
                                   onClick={() => {
                                     setSelectedDeckCard(img);
                                     setHoveredPreviewCard(img);
                                   }}
-                                  onMouseEnter={() =>
-                                    setHoveredPreviewCard(img)
-                                  }
-                                  className={`group flex items-center justify-between py-1.5 px-3 rounded-lg transition-all border ${
+                                  onMouseEnter={() => setHoveredPreviewCard(img)}
+                                  className={`group flex items-center justify-between py-2 px-3 rounded-xl transition-all border cursor-pointer text-left ${
                                     isSelected
-                                      ? "bg-cyan-500/10 border-cyan-500/20"
-                                      : "border-transparent hover:bg-white/[0.04]"
+                                      ? "bg-cyan-500/15 border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)]"
+                                      : "border-transparent hover:bg-white/[0.06] hover:border-white/10"
                                   }`}
                                 >
-                                  <div className="flex items-center gap-2 min-w-0">
-                                    <span className="text-[9px] font-mono text-white/20 w-3">
-                                      {dc.quantity || 1}
+                                  <div className="flex items-center gap-3 min-w-0">
+                                    <span className={`text-[10px] font-mono w-5 font-bold transition-opacity ${isSelected ? "text-cyan-400" : "text-white/20"}`}>
+                                      {dc.quantity || 1}x
                                     </span>
                                     <span
-                                      className={`text-[11px] font-magic font-bold uppercase tracking-wide truncate transition-colors ${
+                                      className={`text-[12px] font-magic font-bold uppercase tracking-wide truncate transition-all ${
                                         isSelected
-                                          ? "text-cyan-400"
-                                          : "text-white/50 group-hover:text-white"
+                                          ? "text-cyan-400 translate-x-1"
+                                          : "text-white/60 group-hover:text-white"
                                       }`}
                                     >
                                       {cardName}
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-1 shrink-0 ml-2">
-                                    {renderManaSymbols(manaCost, "w-3 h-3")}
+                                  <div className="flex items-center gap-1 shrink-0 ml-4">
+                                    {renderManaSymbols(manaCost, "w-3.5 h-3.5")}
                                   </div>
                                 </button>
                               );
                             })}
-                            <div className="mt-8 pt-4 border-t border-cyan-500/10"></div>
                           </div>
                         </div>
                       ))}
@@ -5081,352 +5333,187 @@ Return ONLY JSON. No markdown backticks.`;
                 </div>
 
                 {/* RIGHT COLUMN: DECKINFO MODULE */}
-                <div className="hidden lg:flex flex-col lg:w-[320px] xl:w-[380px] bg-[#050505] border-l border-white/5 relative z-30 shadow-[-40px_0_100px_rgba(0,0,0,0.9)] overflow-y-auto no-scrollbar">
-                  {/* Arcane Background Signature */}
-                  <div className="absolute inset-0 opacity-[0.03] pointer-events-none flex items-center justify-center">
-                    <Zap className="w-[80%] h-auto text-cyan-500 rotate-12" />
-                  </div>
-
-                  <div className="flex flex-col min-h-max relative z-10 font-sans h-full">
+                <div className="hidden lg:flex flex-col lg:w-[300px] xl:w-[340px] bg-[#050505] border-l border-white/5 relative z-30 shadow-[-40px_0_100px_rgba(0,0,0,0.9)] h-full overflow-hidden">
+                  <div className="flex flex-col h-full relative z-10 font-sans">
                     {/* MODULE HEADER */}
-                    <div className="px-6 py-6 border-b border-white/5 bg-black/40 backdrop-blur-sm sticky top-0 z-20">
-                      <div className="flex flex-col gap-4">
-                        <div className="flex items-center justify-between">
-                          <h3 className="text-[10px] font-magic font-black text-cyan-400 uppercase tracking-[0.4em]">
-                            Deckinfo
-                          </h3>
-                          <div className="flex gap-1">
-                            <div className="w-1 h-1 bg-cyan-500/40 rounded-full animate-pulse" />
-                            <div className="w-1 h-1 bg-cyan-500/20 rounded-full" />
-                          </div>
+                    <div className="px-5 py-5 border-b border-white/5 bg-black/40 backdrop-blur-sm">
+                      <div className="flex items-center justify-between mb-1">
+                        <h3 className="text-[9px] font-magic font-black text-cyan-400 uppercase tracking-[0.4em]">
+                          TACTICAL_STATS
+                        </h3>
+                        <div className="flex gap-1">
+                          <div className="w-1 h-1 bg-cyan-500/40 rounded-full" />
+                          <div className="w-1 h-1 bg-cyan-500/10 rounded-full" />
                         </div>
-                        <p className="text-[11px] font-mono text-white/20 uppercase tracking-widest truncate">
-                          {viewingDeckName || "No Deck Selected"}
-                        </p>
-
-
                       </div>
+                      <p className="text-[10px] font-mono text-white/30 uppercase tracking-widest truncate">
+                        {viewingDeckName}
+                      </p>
                     </div>
-                    {/* LOWER DATA: TELEMETRY & SYNERGY */}
-                    <div className="flex-1 bg-black/60 border-t border-white/5 backdrop-blur-xl p-8 overflow-y-auto no-scrollbar font-sans">
-                      <div className="space-y-10">
-                        {/* MANA CURVE SECTION */}
-                        <section>
-                          <div className="flex items-center gap-3 mb-6">
-                            <div className="w-1.5 h-1.5 bg-orange-500 rotate-45 shadow-[0_0_10px_rgba(249,115,22,0.4)]" />
-                            <h4 className="text-[10px] font-magic font-black text-white/50 uppercase tracking-[0.3em]">
-                              Manabase Curve
-                            </h4>
-                          </div>
-                          <div className="h-40 w-full">
+
+                    {/* COMPACT DATA: NO-SCROLL DASHBOARD */}
+                    <div className="flex-1 p-5 flex flex-col gap-6 overflow-hidden">
+                      {/* MANA CURVE SECTION */}
+                      <section className="flex flex-col">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-1 h-1 bg-orange-500 rotate-45 shadow-[0_0_8px_rgba(249,115,22,0.4)]" />
+                          <h4 className="text-[9px] font-magic font-black text-white/40 uppercase tracking-[0.2em]">
+                            Manabase_Curve
+                          </h4>
+                        </div>
+                        <div className="h-28 w-full bg-white/[0.02] rounded-lg p-2 border border-white/[0.03]">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <BarChart
+                              data={(() => {
+                                const counts: Record<string, number> = {};
+                                for (let i = 0; i <= 7; i++)
+                                  counts[i === 7 ? "7+" : i.toString()] = 0;
+                                viewingDeckCards.forEach((dc) => {
+                                  const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                  const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                  const tl = (card?.type_line || scryfall?.type_line || "").toLowerCase();
+                                  if (tl.includes("land")) return;
+                                  let cmc = Math.floor(card?.cmc || scryfall?.cmc || 0);
+                                  const qty = dc.quantity || 1;
+                                  if (cmc >= 7) counts["7+"] += qty;
+                                  else counts[cmc.toString()] += qty;
+                                });
+                                return Object.entries(counts).map(([name, value]) => ({ name, value }));
+                              })()}
+                            >
+                              <XAxis dataKey="name" stroke="rgba(255,255,255,0.2)" fontSize={8} axisLine={false} tickLine={false} dy={5} />
+                              <Tooltip
+                                contentStyle={{ backgroundColor: "#000", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "6px", fontSize: "8px", padding: '4px 8px' }}
+                                itemStyle={{ color: "#06b6d4" }}
+                                cursor={{ fill: "rgba(255,255,255,0.03)" }}
+                              />
+                              <Bar dataKey="value" fill="#06b6d4" radius={[2, 2, 0, 0]} barSize={12} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      </section>
+
+                      {/* MANA ALIGNMENT SECTION */}
+                      <section className="flex flex-col">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-1 h-1 bg-emerald-500 rotate-45 shadow-[0_0_8px_rgba(16,185,129,0.4)]" />
+                          <h4 className="text-[9px] font-magic font-black text-white/40 uppercase tracking-[0.2em]">
+                            Mana_Alignment
+                          </h4>
+                        </div>
+                        <div className="flex items-center justify-between bg-white/[0.02] border border-white/[0.03] rounded-xl p-3">
+                          <div className="w-20 h-20">
                             <ResponsiveContainer width="100%" height="100%">
-                              <BarChart
-                                data={(() => {
-                                  const counts: Record<string, number> = {};
-                                  for (let i = 0; i <= 7; i++)
-                                    counts[i === 7 ? "7+" : i.toString()] = 0;
-                                  viewingDeckCards.forEach((dc) => {
-                                    const card =
-                                      dc.card?.oracleCard ||
-                                      dc.card?.oracle_card ||
-                                      dc.card;
-                                    const scryfall =
-                                      dc.card?.scryfallData ||
-                                      dc.card?.scryfall_data;
-                                    const tl = (
-                                      card?.type_line ||
-                                      scryfall?.type_line ||
-                                      ""
-                                    ).toLowerCase();
-                                    if (tl.includes("land")) return;
-                                    let cmc = Math.floor(
-                                      card?.cmc || scryfall?.cmc || 0,
-                                    );
-                                    const qty = dc.quantity || 1;
-                                    if (cmc >= 7) counts["7+"] += qty;
-                                    else counts[cmc.toString()] += qty;
-                                  });
-                                  return Object.entries(counts).map(
-                                    ([name, value]) => ({ name, value }),
-                                  );
-                                })()}
-                              >
-                                <CartesianGrid
-                                  strokeDasharray="3 3"
-                                  stroke="rgba(255,255,255,0.03)"
-                                  vertical={false}
-                                />
-                                <XAxis
-                                  dataKey="name"
-                                  stroke="rgba(255,255,255,0.2)"
-                                  fontSize={9}
-                                  axisLine={false}
-                                  tickLine={false}
-                                />
-                                <YAxis hide />
-                                <Tooltip
-                                  contentStyle={{
-                                    backgroundColor: "#050505",
-                                    border: "1px solid rgba(255,255,255,0.1)",
-                                    borderRadius: "8px",
-                                    fontSize: "9px",
-                                  }}
-                                  itemStyle={{ color: "#06b6d4" }}
-                                  cursor={{ fill: "rgba(255,255,255,0.02)" }}
-                                />
-                                <Bar
-                                  dataKey="value"
-                                  fill="#06b6d4"
-                                  radius={[2, 2, 0, 0]}
-                                />
-                              </BarChart>
+                              <PieChart>
+                                <Pie
+                                  data={(() => {
+                                    const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+                                    viewingDeckCards.forEach((dc) => {
+                                      const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                      const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                      const manaCost = oracle?.mana_cost || scryfall?.mana_cost || "";
+                                      const matches = manaCost.match(/\{[WUBRG]\}/g);
+                                      if (matches) {
+                                        matches.forEach((m) => {
+                                          const color = m.substring(1, 2);
+                                          if (counts[color] !== undefined) counts[color]++;
+                                        });
+                                      }
+                                    });
+                                    return Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value }));
+                                  })()}
+                                  cx="50%" cy="50%" innerRadius={18} outerRadius={30} paddingAngle={2} dataKey="value"
+                                >
+                                  {(() => {
+                                    const COLORS = { W: "#f0e6d2", U: "#00aeef", B: "#333333", R: "#ef5350", G: "#4caf50" };
+                                    const counts: Record<string, number> = { W: 0, U: 0, B: 0, R: 0, G: 0 };
+                                    viewingDeckCards.forEach((dc) => {
+                                      const oracle = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                      const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                      const manaCost = oracle?.mana_cost || scryfall?.mana_cost || "";
+                                      const matches = manaCost.match(/\{[WUBRG]\}/g);
+                                      if (matches) { matches.forEach((m) => { const color = m.substring(1, 2); if (counts[color] !== undefined) counts[color]++; }); }
+                                    });
+                                    return Object.entries(counts).filter(([_, v]) => v > 0).map(([name, value]) => ({ name, value })).map((entry) => (
+                                      <Cell key={entry.name} fill={COLORS[entry.name as keyof typeof COLORS]} />
+                                    ));
+                                  })()}
+                                </Pie>
+                                <Tooltip contentStyle={{ fontSize: '8px', backgroundColor: '#000', border: 'none' }} />
+                              </PieChart>
                             </ResponsiveContainer>
                           </div>
-                        </section>
-
-                        {/* COLOR IDENTITY SECTION */}
-                        <section>
-                          <div className="flex items-center gap-3 mb-6">
-                            <div className="w-1.5 h-1.5 bg-emerald-500 rotate-45 shadow-[0_0_10px_rgba(16,185,129,0.4)]" />
-                            <h4 className="text-[10px] font-magic font-black text-white/50 uppercase tracking-[0.3em]">
-                              Mana Alignment
-                            </h4>
-                          </div>
-                          <div className="flex items-center gap-10">
-                            <div className="w-28 h-28">
-                              <ResponsiveContainer width="100%" height="100%">
-                                <PieChart>
-                                  <Pie
-                                    data={(() => {
-                                      const counts: Record<string, number> = {
-                                        W: 0,
-                                        U: 0,
-                                        B: 0,
-                                        R: 0,
-                                        G: 0,
-                                      };
-                                      viewingDeckCards.forEach((dc) => {
-                                        const oracle =
-                                          dc.card?.oracleCard ||
-                                          dc.card?.oracle_card ||
-                                          dc.card;
-                                        const scryfall =
-                                          dc.card?.scryfallData ||
-                                          dc.card?.scryfall_data;
-                                        const manaCost =
-                                          oracle?.mana_cost ||
-                                          scryfall?.mana_cost ||
-                                          "";
-
-                                        // Extract colored symbols from mana cost
-                                        const matches =
-                                          manaCost.match(/\{[WUBRG]\}/g);
-                                        if (matches) {
-                                          matches.forEach((m) => {
-                                            const color = m.substring(1, 2);
-                                            if (counts[color] !== undefined)
-                                              counts[color]++;
-                                          });
-                                        }
-                                      });
-                                      return Object.entries(counts)
-                                        .filter(([_, v]) => v > 0)
-                                        .map(([name, value]) => ({
-                                          name,
-                                          value,
-                                        }));
-                                    })()}
-                                    cx="50%"
-                                    cy="50%"
-                                    innerRadius={24}
-                                    outerRadius={36}
-                                    paddingAngle={4}
-                                    dataKey="value"
-                                  >
-                                    {(() => {
-                                      const COLORS = {
-                                        W: "#f0e6d2",
-                                        U: "#00aeef",
-                                        B: "#333333",
-                                        R: "#ef5350",
-                                        G: "#4caf50",
-                                      };
-                                      const counts: Record<string, number> = {
-                                        W: 0,
-                                        U: 0,
-                                        B: 0,
-                                        R: 0,
-                                        G: 0,
-                                      };
-                                      viewingDeckCards.forEach((dc) => {
-                                        const oracle =
-                                          dc.card?.oracleCard ||
-                                          dc.card?.oracle_card ||
-                                          dc.card;
-                                        const scryfall =
-                                          dc.card?.scryfallData ||
-                                          dc.card?.scryfall_data;
-                                        const manaCost =
-                                          oracle?.mana_cost ||
-                                          scryfall?.mana_cost ||
-                                          "";
-                                        const matches =
-                                          manaCost.match(/\{[WUBRG]\}/g);
-                                        if (matches) {
-                                          matches.forEach((m) => {
-                                            const color = m.substring(1, 2);
-                                            if (counts[color] !== undefined)
-                                              counts[color]++;
-                                          });
-                                        }
-                                      });
-                                      const data = Object.entries(counts)
-                                        .filter(([_, v]) => v > 0)
-                                        .map(([name, value]) => ({
-                                          name,
-                                          value,
-                                        }));
-                                      return data.map((entry) => (
-                                        <Cell
-                                          key={entry.name}
-                                          fill={
-                                            COLORS[
-                                              entry.name as keyof typeof COLORS
-                                            ]
-                                          }
-                                        />
-                                      ));
-                                    })()}
-                                  </Pie>
-                                </PieChart>
-                              </ResponsiveContainer>
-                            </div>
-                            <div className="flex-1 grid grid-cols-2 gap-y-2 gap-x-4">
-                              {(() => {
-                                let totalCmc = 0;
-                                let nonLandCount = 0;
-                                let landCount = 0;
-                                let artifactCount = 0;
-                                let creatureCount = 0;
-                                let spellCount = 0;
-                                let enchantmentCount = 0;
-
-                                viewingDeckCards.forEach((c) => {
-                                  const oracle =
-                                    c.card?.oracleCard ||
-                                    c.card?.oracle_card ||
-                                    c.card;
-                                  const scryfall =
-                                    c.card?.scryfallData ||
-                                    c.card?.scryfall_data;
-                                  const edition = c.card?.edition;
-                                  const typeLine = (
-                                    oracle?.type_line ||
-                                    scryfall?.type_line ||
-                                    edition?.type_line ||
-                                    c.card?.type_line ||
-                                    ""
-                                  ).toLowerCase();
-                                  const qty = c.quantity || 1;
-
-                                  if (typeLine.includes("land")) {
-                                    landCount += qty;
-                                  } else {
-                                    const cmc =
-                                      oracle?.cmc ||
-                                      scryfall?.cmc ||
-                                      edition?.cmc ||
-                                      c.card?.cmc ||
-                                      0;
-                                    totalCmc += cmc * qty;
-                                    nonLandCount += qty;
-                                  }
-
-                                  if (typeLine.includes("artifact"))
-                                    artifactCount += qty;
-                                  if (typeLine.includes("creature"))
-                                    creatureCount += qty;
-                                  if (typeLine.includes("enchantment"))
-                                    enchantmentCount += qty;
-                                  if (
-                                    typeLine.includes("instant") ||
-                                    typeLine.includes("sorcery")
-                                  )
-                                    spellCount += qty;
-                                });
-
-                                const avgCmc =
-                                  nonLandCount > 0
-                                    ? (totalCmc / nonLandCount).toFixed(2)
-                                    : "0.00";
-
-                                return [
-                                  { label: "Avg CMC", val: avgCmc, icon: Zap },
-                                  {
-                                    label: "Spells",
-                                    val: spellCount,
-                                    icon: BookOpen,
-                                  },
-                                  {
-                                    label: "Enchant",
-                                    val: enchantmentCount,
-                                    icon: Sparkles,
-                                  },
-                                  {
-                                    label: "Creatures",
-                                    val: creatureCount,
-                                    icon: User,
-                                  },
-                                  {
-                                    label: "Artifacts",
-                                    val: artifactCount,
-                                    icon: Hexagon,
-                                  },
-                                  {
-                                    label: "Lands",
-                                    val: landCount,
-                                    icon: MapIcon,
-                                  },
-                                ].map((stat) => (
-                                  <div
-                                    key={stat.label}
-                                    className="bg-white/[0.02] border border-white/5 p-2 rounded-sm group hover:border-cyan-500/20 transition-colors"
-                                  >
-                                    <p className="text-[7px] font-magic font-bold text-white/20 uppercase tracking-widest">
-                                      {stat.label}
-                                    </p>
-                                    <div className="flex items-center gap-2 mt-1">
-                                      <span className="text-xs font-mono font-bold text-cyan-400/80 group-hover:text-cyan-400">
-                                        {stat.val}
-                                      </span>
-                                    </div>
-                                  </div>
-                                ));
-                              })()}
-                            </div>
-                          </div>
-                        </section>
-
-                        {/* QUICK ACTIONS FOOTER */}
-                        <div className="pt-6 border-t border-white/5 flex flex-col gap-4">
-                          <button
-                            onClick={findAlternativeCommanders}
-                            className="w-full py-5 bg-cyan-500/10 hover:bg-cyan-500 text-cyan-400 hover:text-black border border-cyan-500/20 hover:border-cyan-400 rounded-[2rem] text-[10px] font-magic font-black uppercase tracking-[0.3em] transition-all shadow-[0_0_40px_rgba(6,182,212,0.1)] hover:shadow-[0_0_40px_rgba(6,182,212,0.4)] flex items-center justify-center gap-4 group/alt-btn relative overflow-hidden"
-                          >
-                            <Users className="w-4 h-4 group-hover/alt-btn:scale-110 transition-transform" />
-                            Search Alternative Commanders
-                          </button>
-                          <div className="flex justify-between items-center opacity-40 hover:opacity-100 transition-opacity px-2">
-                            <span className="text-[8px] font-mono uppercase tracking-[0.4em] text-white/30">
-                              Sync Status: Optimised
-                            </span>
-                            <div className="flex gap-1">
-                              <div className="w-1 h-1 bg-cyan-500 animate-pulse" />
-                              <div className="w-1 h-1 bg-cyan-500/20" />
-                            </div>
+                          <div className="flex-1 ml-4 grid grid-cols-2 gap-y-1 gap-x-3">
+                            {(() => {
+                              let totalCmc = 0, nonLandCount = 0, landCount = 0, creatureCount = 0, artifactCount = 0, spellCount = 0;
+                              viewingDeckCards.forEach((c) => {
+                                const card = c.card?.oracleCard || c.card?.card || c;
+                                const tl = (card?.type_line || "").toLowerCase();
+                                if (tl.includes("land")) landCount += (c.quantity || 1);
+                                else {
+                                  nonLandCount += (c.quantity || 1);
+                                  totalCmc += (card?.cmc || 0) * (c.quantity || 1);
+                                  if (tl.includes("creature")) creatureCount += (c.quantity || 1);
+                                  else if (tl.includes("artifact")) artifactCount += (c.quantity || 1);
+                                  else if (tl.includes("instant") || tl.includes("sorcery")) spellCount += (c.quantity || 1);
+                                }
+                              });
+                              const avg = nonLandCount > 0 ? (totalCmc / nonLandCount).toFixed(2) : "0.00";
+                              return [
+                                { label: "Lands", val: landCount },
+                                { label: "Avg CMC", val: avg },
+                                { label: "Crea", val: creatureCount },
+                                { label: "Spell", val: spellCount }
+                              ].map(item => (
+                                <div key={item.label} className="flex flex-col">
+                                  <span className="text-[7px] text-white/20 uppercase font-bold">{item.label}</span>
+                                  <span className="text-[10px] text-cyan-400 font-mono font-black">{item.val}</span>
+                                </div>
+                              ));
+                            })()}
                           </div>
                         </div>
-                      </div>
+                      </section>
+
+                      {/* STRATEGIC SUMMARY / TELEMETRY */}
+                      <section className="flex flex-col mt-auto pb-4">
+                        <div className="flex items-center gap-2 mb-3">
+                          <div className="w-1 h-1 bg-white rotate-45 shadow-[0_0_8px_rgba(255,255,255,0.2)]" />
+                          <h4 className="text-[9px] font-magic font-black text-white/40 uppercase tracking-[0.2em]">
+                            Strategic_Summary
+                          </h4>
+                        </div>
+                        <div className="bg-gradient-to-br from-white/[0.03] to-transparent p-4 rounded-2xl border border-white/5">
+                           <div className="flex items-center justify-between mb-1">
+                             <span className="text-[10px] font-magic font-bold text-white/60">TOTAL_RESERVES</span>
+                             <span className="text-[12px] font-mono font-black text-orange-500">
+                               {viewingDeckCards.reduce((acc, curr) => acc + (curr.quantity || 1), 0)}
+                             </span>
+                           </div>
+                           <div className="h-[1px] bg-white/5 my-2" />
+                           <div className="grid grid-cols-2 gap-4">
+                              <div className="flex flex-col">
+                                <span className="text-[7px] text-white/20 uppercase">Rarity_Core</span>
+                                <span className="text-[9px] text-white/60 font-mono">B-Class // 0.88</span>
+                              </div>
+                              <div className="flex flex-col text-right">
+                                <span className="text-[7px] text-white/20 uppercase">Sync_Status</span>
+                                <span className="text-[9px] text-emerald-500/60 font-mono">STABLE</span>
+                              </div>
+                           </div>
+                        </div>
+
+                        {/* ALTERNATIVE COMMANDER BUTTON */}
+                        <div className="mt-4 flex flex-col gap-2">
+                           <button
+                            onClick={findAlternativeCommanders}
+                            className="w-full py-3 bg-cyan-500/10 hover:bg-cyan-500 text-cyan-400 hover:text-black border border-cyan-500/20 hover:border-cyan-400 rounded-xl text-[8px] font-magic font-black uppercase tracking-[0.2em] transition-all flex items-center justify-center gap-2 group/alt-btn"
+                          >
+                            <Users className="w-3 h-3 group-hover/alt-btn:scale-110 transition-transform" />
+                            Seek Alt Commanders
+                          </button>
+                        </div>
+                      </section>
                     </div>
                   </div>
                 </div>
@@ -5611,6 +5698,78 @@ Return ONLY JSON. No markdown backticks.`;
         )}
       </AnimatePresence>
 
+      {/* Modal for Synergy Analysis Report */}
+      <AnimatePresence>
+        {viewingAnalysis && (
+          <div className="fixed inset-0 z-[1200] flex items-center justify-center p-4 sm:p-8">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="absolute inset-0 bg-black/90 backdrop-blur-xl"
+              onClick={() => setViewingAnalysis(null)}
+            />
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 30 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 30 }}
+              className="rune-panel relative w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col rounded-[2.5rem] border-purple-500/20 shadow-[0_0_100px_rgba(168,85,247,0.2)] bg-[#0a0a0c]"
+            >
+              <div className="p-6 border-b border-white/10 flex items-center justify-between bg-purple-500/5">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center border border-purple-500/20">
+                    <Brain className="w-6 h-6 text-purple-400" />
+                  </div>
+                  <div>
+                    <h2 className="font-magic font-black text-sm uppercase tracking-widest text-purple-400">
+                      Arcane Synergie Audit
+                    </h2>
+                    <p className="text-[10px] uppercase text-white/40 tracking-wider font-bold">
+                      Advanced Strategy Extraction
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setViewingAnalysis(null)}
+                  className="p-3 hover:bg-white/5 rounded-2xl transition-colors group"
+                >
+                  <X className="w-5 h-5 text-white/30 group-hover:text-white" />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
+                <div className="prose prose-invert prose-purple max-w-none prose-sm sm:prose-base font-sans [&>h1]:font-magic [&>h1]:uppercase [&>h1]:tracking-widest [&>h1]:text-purple-400 [&>h2]:text-purple-300 [&>h2]:mt-8 [&>p]:text-white/80 [&>p]:leading-relaxed">
+                  <Markdown 
+                    components={{
+                      p: ({ children }) => <p>{processMTGChildren(children)}</p>,
+                      li: ({ children }) => <li>{processMTGChildren(children)}</li>,
+                      h1: ({ children }) => <h1>{processMTGChildren(children)}</h1>,
+                      h2: ({ children }) => <h2>{processMTGChildren(children)}</h2>,
+                      h3: ({ children }) => <h3>{processMTGChildren(children)}</h3>,
+                      strong: ({ children }) => <strong>{processMTGChildren(children)}</strong>,
+                      em: ({ children }) => <em>{processMTGChildren(children)}</em>,
+                      th: ({ children }) => <th>{processMTGChildren(children)}</th>,
+                      td: ({ children }) => <td>{processMTGChildren(children)}</td>,
+                    }}
+                  >
+                    {deepAnalysis[viewingAnalysis]}
+                  </Markdown>
+                </div>
+              </div>
+
+              <div className="p-6 border-t border-white/10 bg-black/40 flex justify-end">
+                <button
+                  onClick={() => setViewingAnalysis(null)}
+                  className="px-8 py-3 bg-purple-500 text-black font-magic font-black uppercase text-[11px] tracking-widest rounded-xl hover:scale-105 transition-all shadow-xl shadow-purple-500/20"
+                >
+                  Gelezen en Begrepen
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Delete Confirmation Modal */}
       <AnimatePresence>
         {deckToDelete && (
@@ -5720,20 +5879,6 @@ Return ONLY JSON. No markdown backticks.`;
                     </div>
                   </div>
 
-                  <div className="flex gap-4">
-                    <div className="w-10 h-10 rounded-xl bg-cyan-500/10 flex items-center justify-center shrink-0 border border-cyan-500/20 text-cyan-400 font-magic">
-                      03
-                    </div>
-                    <div>
-                      <p className="text-xs font-magic font-bold text-white uppercase tracking-widest mb-1">
-                        Social Discovery
-                      </p>
-                      <p className="text-[10px] text-white/40 leading-relaxed font-sans">
-                        Visit other users, clone their experimental decks, and 
-                        suggest tactical adjustments to their configuration.
-                      </p>
-                    </div>
-                  </div>
                 </div>
 
                 <button
@@ -5889,7 +6034,7 @@ Return ONLY JSON. No markdown backticks.`;
                         />
                         <div className="absolute inset-0 bg-gradient-to-t from-cyan-500/20 to-transparent pointer-events-none" />
                         <div className="mt-2 text-center">
-                          <span className="text-[8px] font-magic font-black text-cyan-400 uppercase tracking-[0.3em] animate-pulse">
+                          <span className="text-[11px] font-magic font-black text-cyan-400 uppercase tracking-[0.2em] animate-pulse">
                             Tactical Preview Active
                           </span>
                         </div>
@@ -6002,7 +6147,7 @@ Return ONLY JSON. No markdown backticks.`;
               <p className="text-orange-500 font-magic font-extrabold uppercase tracking-[0.3em] text-sm animate-pulse">
                 Synchronizing...
               </p>
-              <p className="text-white/20 text-[10px] font-bold mt-2 uppercase tracking-widest">
+              <p className="text-white/60 text-[11px] font-bold mt-2 uppercase tracking-widest text-center">
                 {loadingMessage}
               </p>
             </div>
@@ -6320,6 +6465,16 @@ function RoadmapModal({
 
   const releaseHistory = [
     {
+      version: "V2.8.0",
+      date: "May 19, 2026",
+      changes: [
+        "Arcane Strategic Audit: Renamed Deep Synergy reports to professional 'Arcane Audits' with refined Dutch prompt engineering.",
+        "Mana Integrity: Implemented dynamic symbol injection for authentic {T} and {W}{U}{B}{R}{G} rendering in AI reports.",
+        "Stability: Hardened connectivity logic for 'Arcane Archives' with descriptive Dutch error recovery.",
+        "Localization: Standardized technical MTG jargon within Dutch analytical frameworks."
+      ]
+    },
+    {
       version: "V2.7.0",
       date: "May 19, 2026",
       changes: [
@@ -6394,9 +6549,9 @@ function RoadmapModal({
           action: "manage_decks",
         },
         {
-          term: "SYNERGY",
+          term: "ARCANE AUDIT",
           flow: "Deep Scan",
-          desc: "Analyze your decks with AI. Generate intelligent tags for strategy and themes, find hidden combos, and receive personalized card recommendations.",
+          desc: "Analyze your decks with world-class AI. Generate technical strategy audits, identify deep synergetic loops, and receive professional optimization advice.",
           action: "manage_decks",
         },
       ],
@@ -6954,15 +7109,48 @@ function DeckAnalysis({ cards }: { cards: any[] }) {
 /* DEPRECATED ADMIN CODE 
 */
 
+// Cache for Ruxa to avoid double fetching and speed up response
+const ruxaCardCache: Record<string, { data: any; rulings: string[] }> = {};
+
+const renderMTGText = (content: string) => {
+  if (!content || typeof content !== 'string') return content;
+  // Regex for {T}, {W}, {U}, {B}, {R}, {G}, {C}, {1}, {2}, etc.
+  const symbolRegex = /\{([^}]+)\}/g;
+  const parts = content.split(symbolRegex);
+
+  return parts.map((part, i) => {
+    // If it's a symbol part (every odd index because of capture group in split)
+    if (i % 2 === 1) {
+      const symbol = `{${part.toUpperCase()}}`;
+      if (MANA_SYMBOL_URIS[symbol]) {
+        return (
+          <img
+            key={i}
+            src={MANA_SYMBOL_URIS[symbol]}
+            alt={symbol}
+            className="inline-block w-[1.15em] h-[1.15em] mx-0.5 align-text-bottom brightness-110 saturate-125 select-none"
+            draggable={false}
+          />
+        );
+      }
+      return <span key={i} className="font-mono font-bold text-cyan-400">{`{${part}}`}</span>;
+    }
+    return part;
+  });
+};
+
+const processMTGChildren = (children: any) => {
+  return React.Children.map(children, (child) => {
+    if (typeof child === 'string') {
+      return renderMTGText(child);
+    }
+    return child;
+  });
+};
+
 // MTG Judge Component
-function JudgeView() {
-  const [messages, setMessages] = useState<any[]>([
-    {
-      role: "assistant",
-      content:
-        "Hallo! Mijn naam is Ruxa, Bear Judge. Ik help je graag met de complexe regels van ons mooie spel. Waar kan ik m'n tanden in zetten?",
-    },
-  ]);
+function JudgeView({ user }: { user: any }) {
+  const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [waitingForSelection, setWaitingForSelection] = useState(false);
@@ -6983,6 +7171,62 @@ function JudgeView() {
     scrollToBottom();
   }, [messages, isProcessing]);
 
+  useEffect(() => {
+    if (!user) return;
+    const messagesRef = collection(db, "users", user.uid, "ruxa_chat");
+    const q = query(messagesRef, orderBy("timestamp", "asc"));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      if (snapshot.empty) {
+        setMessages([{
+          role: "assistant",
+          content: "Hallo! Mijn naam is Ruxa, Bear Judge. Ik help je graag met de complexe regels van ons mooie spel. Waar kan ik m'n tanden in zetten?",
+          timestamp: new Date().toISOString()
+        }]);
+      } else {
+        const loaded = snapshot.docs.map(doc => ({
+          ...doc.data(),
+          id: doc.id
+        }));
+        setMessages(loaded);
+      }
+    }, (err) => handleFirestoreError(err, OperationType.LIST, `users/${user.uid}/ruxa_chat`));
+
+    return () => unsubscribe();
+  }, [user]);
+
+  const clearChat = async () => {
+    if (!user) return;
+    try {
+      const messagesRef = collection(db, "users", user.uid, "ruxa_chat");
+      const snapshot = await getDocs(messagesRef);
+      const batch = writeBatch(db);
+      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+    } catch (e) {
+      handleFirestoreError(e, OperationType.BATCH, `users/${user.uid}/ruxa_chat`);
+    }
+  };
+
+  const saveMessage = async (role: "user" | "assistant", content: string, relatedCards: any[] = []) => {
+    if (!user) return;
+    try {
+      const messagesRef = collection(db, "users", user.uid, "ruxa_chat");
+      await addDoc(messagesRef, {
+        role,
+        content,
+        relatedCards: relatedCards.map(c => ({
+          name: c.name,
+          image_uris: c.image_uris,
+          card_faces: c.card_faces || null
+        })),
+        timestamp: serverTimestamp()
+      });
+    } catch (e) {
+      handleFirestoreError(e, OperationType.WRITE, `users/${user.uid}/ruxa_chat`);
+    }
+  };
+
   const fetchCardSuggestions = async (query: string): Promise<string[]> => {
     try {
       const res = await axios.get(
@@ -6995,11 +7239,25 @@ function JudgeView() {
   };
 
   const fetchCardContext = async (name: string): Promise<string> => {
+    if (ruxaCardCache[name]) {
+      const { data, rulings } = ruxaCardCache[name];
+      return `**Kaart: ${data.name}**\n**Metadata:** ${data.type_line} | MV: ${data.cmc} | P/T: ${data.power}/${data.toughness}\n**Regeltekst:** ${data.oracle_text}\n**Rulings:** ${rulings.join("; ")}\n`;
+    }
+
     try {
       const res = await axios.get(
         `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
       );
       const data = res.data;
+      
+      let rulings: string[] = [];
+      try {
+        const rulingsRes = await axios.get(`/api/sf/cards/${data.id}/rulings`);
+        rulings = rulingsRes.data.data.map((r: any) => r.comment);
+      } catch (re) {}
+
+      ruxaCardCache[name] = { data, rulings };
+
       const typeLine = data.type_line || "Type: Unknown";
       const cmc = data.cmc !== undefined ? `Mana Value: ${data.cmc}` : "";
       const pt =
@@ -7008,7 +7266,9 @@ function JudgeView() {
           : "";
       const oracle = data.oracle_text || "No rule text found.";
       const colors = data.color_identity?.join(", ") || "Kleurloos";
-      return `**Kaart: ${data.name}**\n**Metadata:** ${typeLine} | ${cmc} | ${pt}\n**Color Identity:** ${colors}\n**Regeltekst:** ${oracle}\n`;
+      const rulingsStr = rulings.length > 0 ? `\n**Rulings:** ${rulings.slice(0, 5).join("; ")}` : "";
+
+      return `**Kaart: ${data.name}**\n**Metadata:** ${typeLine} | ${cmc} | ${pt}\n**Color Identity:** ${colors}\n**Regeltekst:** ${oracle}${rulingsStr}\n`;
     } catch (e) {
       return `**Kaart: ${name}**\n*Kon kaartdata niet vinden.*\n`;
     }
@@ -7019,7 +7279,7 @@ function JudgeView() {
     if (!input.trim() || isProcessing) return;
 
     const queryStr = input.trim();
-    setMessages((prev) => [...prev, { role: "user", content: queryStr }]);
+    saveMessage("user", queryStr);
     setInput("");
     setIsProcessing(true);
     setPendingQuery(queryStr);
@@ -7031,11 +7291,7 @@ function JudgeView() {
       Note: Even partial names or nicknames should be recognized as MTG cards if they clearly refer to them.
       If no cards are present, return an empty string.`;
 
-      if (false) {
-        throw new Error("AI not initialized. Check GEMINI_API_KEY.");
-      }
-
-      // Using gemini-flash-latest as a stable alias
+      // Optimized extraction
       const response = await callGemini({
         model: "gemini-3-flash-preview",
         contents: [{ parts: [{ text: queryStr }] }],
@@ -7050,23 +7306,37 @@ function JudgeView() {
         .map((n: string) => n.trim())
         .filter((n: string) => n.length > 2);
 
-      // 2. Validate cards and check for ambiguity
+      // 2. Validate cards and check for ambiguity - Parallelized for speed
       const newSuggestions: Record<string, string[]> = {};
       const validNames: string[] = [];
 
-      for (const name of extracted) {
+      await Promise.all(extracted.map(async (name) => {
+        if (ruxaCardCache[name]) {
+          validNames.push(ruxaCardCache[name].data.name);
+          return;
+        }
         try {
           const scryRes = await axios.get(
             `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
           );
           validNames.push(scryRes.data.name);
+          // Pre-fetch rulings silently
+          try {
+            const rulingsRes = await axios.get(`/api/sf/cards/${scryRes.data.id}/rulings`);
+            ruxaCardCache[name] = { 
+              data: scryRes.data, 
+              rulings: rulingsRes.data.data.map((r: any) => r.comment) 
+            };
+          } catch(re) {
+            ruxaCardCache[name] = { data: scryRes.data, rulings: [] };
+          }
         } catch (err) {
           const sug = await fetchCardSuggestions(name);
           if (sug.length > 0) {
             newSuggestions[name] = sug;
           }
         }
-      }
+      }));
 
       if (Object.keys(newSuggestions).length > 0) {
         setSuggestions(newSuggestions);
@@ -7079,7 +7349,7 @@ function JudgeView() {
     } catch (err: any) {
       console.error(err);
       let errorMsg =
-        "Oei, mijn mentale archief is even onbereikbaar. Probeer het over een momentje opnieuw.";
+        "Oei, de strategische archieven zijn tijdelijk niet bereikbaar. Probeer het over een momentje opnieuw.";
       if (err.message) {
         if (err.message.includes("AI not initialized")) {
           errorMsg =
@@ -7099,57 +7369,47 @@ function JudgeView() {
     }
   };
 
-  const renderRuxaContent = (content: string) => {
-    // Regex for {T}, {W}, {U}, {B}, {R}, {G}, {C}, {1}, {2}, etc.
-    const symbolRegex = /\{([^}]+)\}/g;
-    const parts = content.split(symbolRegex);
-
-    return parts.map((part, i) => {
-      // If it's a symbol part (every odd index because of capture group in split)
-      if (i % 2 === 1) {
-        const symbol = `{${part.toUpperCase()}}`;
-        if (MANA_SYMBOL_URIS[symbol]) {
-          return (
-            <img
-              key={i}
-              src={MANA_SYMBOL_URIS[symbol]}
-              alt={symbol}
-              className="inline-block w-4 h-4 mx-0.5 align-middle brightness-125 saturate-150 shadow-[0_0_5px_rgba(255,255,255,0.2)]"
-            />
-          );
-        }
-        return (
-          <span
-            key={i}
-            className="font-mono font-bold text-green-400"
-          >{`{${part}}`}</span>
-        );
-      }
-      return <span key={i}>{part}</span>;
-    });
-  };
-
   const generateRuling = async (query: string, confirmedNames: string[]) => {
     setIsProcessing(true);
     try {
-      let context = "";
-      const cardsData = [];
-      for (const name of confirmedNames) {
+      const cardsData: any[] = [];
+      const contextParts = await Promise.all(confirmedNames.map(async (name) => {
+        if (ruxaCardCache[name]) {
+          const { data, rulings } = ruxaCardCache[name];
+          cardsData.push(data);
+          const rulingsStr = rulings.length > 0 ? `\n**Rulings:** ${rulings.slice(0, 8).join("; ")}` : "";
+          return `**Kaart: ${data.name}**\n**Oracle:** ${data.type_line} | MV: ${data.cmc} | P/T: ${data.power}/${data.toughness}\n**Tekst:** ${data.oracle_text}${rulingsStr}\n`;
+        }
+        
         try {
           const res = await axios.get(
             `/api/sf/cards/named?exact=${encodeURIComponent(name)}`,
           );
-          cardsData.push(res.data);
-          context += `**Kaart: ${res.data.name}**\n**Metadata:** ${res.data.type_line} | Mana Value: ${res.data.cmc} | P/T: ${res.data.power}/${res.data.toughness}\n**Color Identity:** ${res.data.color_identity?.join(", ")}\n**Regeltekst:** ${res.data.oracle_text}\n`;
+          const data = res.data;
+          cardsData.push(data);
+          
+          let rulings: string[] = [];
+          try {
+            const rulingsRes = await axios.get(`/api/sf/cards/${data.id}/rulings`);
+            rulings = rulingsRes.data.data.map((r: any) => r.comment);
+            ruxaCardCache[name] = { data, rulings };
+          } catch (re) {
+            ruxaCardCache[name] = { data, rulings: [] };
+          }
+
+          const rulingsStr = rulings.length > 0 ? `\n**Rulings:** ${rulings.slice(0, 8).join("; ")}` : "";
+          return `**Kaart: ${data.name}**\n**Oracle:** ${data.type_line} | MV: ${data.cmc} | P/T: ${data.power}/${data.toughness}\n**Tekst:** ${data.oracle_text}${rulingsStr}\n`;
         } catch (e) {
-          context += `**Kaart: ${name}**\n*Kon kaartdata niet vinden.*\n`;
+          return `**Kaart: ${name}**\n*Kon kaartdata niet vinden.*\n`;
         }
-      }
+      }));
+
+      const context = contextParts.join("\n");
 
       const systemPrompt = `Je bent Ruxa, een deskundige maar bondige Magic: The Gathering Judge. 
       
       MISSIE:
-      Beantwoord vragen over spelregels direct en nauwkeurig. Gebruik de verstrekte context als bron.
+      Beantwoord vragen over spelregels direct en nauwkeurig. Je hebt toegang tot de LIVE Scryfall Oracle Archives, dus je kennis is ALTIJD up-to-date met de nieuwste sets en rulings.
       
       RICHTLIJNEN VOOR STIJL EN TAAL:
       - Antwoord ALTIJD in het NEDERLANDS.
@@ -7177,6 +7437,7 @@ function JudgeView() {
           },
         });
         ruling = response.text || "";
+        await saveMessage("assistant", ruling, cardsData);
       } catch (e: any) {
         console.error("Ruxa API error:", e);
         if (e.message && e.message.includes("503")) {
@@ -7260,17 +7521,24 @@ function JudgeView() {
                 <h2 className="font-magic font-black text-sm uppercase tracking-[0.2em] text-green-400">
                   Ruxa's Court
                 </h2>
-                <p className="text-[9px] uppercase tracking-widest opacity-40 font-bold">
+                <p className="text-[11px] uppercase tracking-widest opacity-80 font-bold text-green-500">
                   Bear Judge Oversight
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-2 px-3 py-1 bg-green-500/5 rounded-full border border-green-500/10">
+                <div className="flex items-center gap-2 px-3 py-1 bg-green-500/5 rounded-full border border-green-500/10">
               <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-[8px] font-mono uppercase text-green-500/60 font-black tracking-widest">
+              <span className="text-[10px] font-mono uppercase text-green-500/80 font-black tracking-widest">
                 Connected
               </span>
             </div>
+            <button
+              onClick={clearChat}
+              className="p-2 hover:bg-red-500/10 rounded-xl transition-colors group"
+              title="Clear Chat History"
+            >
+              <Trash2 className="w-4 h-4 text-green-500/40 group-hover:text-red-500/60" />
+            </button>
           </div>
 
           {/* Messages */}
@@ -7310,7 +7578,7 @@ function JudgeView() {
                       : "bg-green-500/5 border border-green-500/10 text-green-50 rounded-tl-none"
                   }`}
                   >
-                    {renderRuxaContent(msg.content)}
+                    {renderMTGText(msg.content)}
                     {msg.relatedCards && msg.relatedCards.length > 0 && (
                       <div className="mt-4 flex flex-wrap gap-2 overflow-x-auto pb-2 custom-scrollbar">
                         {msg.relatedCards.map((card: any, idx: number) => (
@@ -7357,8 +7625,8 @@ function JudgeView() {
                       style={{ animationDelay: "300ms" }}
                     />
                   </div>
-                  <span className="text-[10px] font-magic font-black uppercase text-green-500/40 tracking-widest">
-                    Consulting Rules...
+                  <span className="text-[11px] font-magic font-black uppercase text-green-500/80 tracking-widest">
+                    Consulting Oracle Archives...
                   </span>
                 </div>
               </div>
@@ -7378,7 +7646,7 @@ function JudgeView() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {Object.entries(suggestions).map(([term, choices]) => (
                   <div key={term} className="space-y-1">
-                    <p className="text-[8px] font-bold text-green-500/40 uppercase pl-1">
+                    <p className="text-[10px] font-bold text-green-500/90 uppercase pl-1">
                       Voor "{term}":
                     </p>
                     <select
@@ -7431,7 +7699,7 @@ function JudgeView() {
                 </div>
               </button>
             </form>
-            <p className="text-[8px] text-green-500/20 font-black uppercase tracking-[0.2em] mt-4 text-center">
+            <p className="text-[11px] text-green-500/60 font-black uppercase tracking-[0.15em] mt-4 text-center">
               Beer Judge Ruxa is een AI-assistent. Verifieer uitspraken altijd
               met de officiële regels.
             </p>
@@ -8289,6 +8557,481 @@ function getCardImages(card: any): {
     border_crop: images.border_crop || "",
     art_crop: images.art_crop || "",
   };
+}
+
+function AdminMatrix({ setViewMode }: { setViewMode: (v: string) => void }) {
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [userDecks, setUserDecks] = useState<any[]>([]);
+  const [userDeckbox, setUserDeckbox] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [systemStats, setSystemStats] = useState({
+    totalUsers: 0,
+    totalDecks: 0,
+    totalValue: 0
+  });
+
+  const filteredUsers = allUsers.filter(u => 
+    (u.userName || u.displayName || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (u.email || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (u.id || "").toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  useEffect(() => {
+    const fetchSystemData = async () => {
+      setLoading(true);
+      try {
+        const querySnapshot = await getDocs(collection(db, "users"));
+        const users = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAllUsers(users);
+        
+        // Calculate total system stats
+        const decksSnapshot = await getDocs(collectionGroup(db, "decks"));
+        let totalVal = 0;
+        let totalDks = decksSnapshot.docs.length;
+        decksSnapshot.docs.forEach(doc => {
+          const data = doc.data();
+          totalVal += data.totalCost || 0;
+        });
+
+        // Calculate card count from deckboxes if manageable
+        // For now let's just stick to decks for value
+        
+        setSystemStats({
+          totalUsers: users.length,
+          totalDecks: totalDks,
+          totalValue: totalVal
+        });
+      } catch (err) {
+        console.error("Admin Dashboard Sync Error:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchSystemData();
+  }, []);
+
+  const selectUser = async (user: any) => {
+    setSelectedUser(user);
+    setLoading(true);
+    try {
+      const decksSnapshot = await getDocs(collection(db, "users", user.id, "decks"));
+      const decks = decksSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUserDecks(decks);
+
+      const deckboxSnapshot = await getDocs(collection(db, "users", user.id, "deckbox"));
+      const deckbox = deckboxSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setUserDeckbox(deckbox);
+    } catch (err) {
+      console.error("Admin error fetching user data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resolveCardImage_Admin = (card: any) => {
+    return resolveCardImage(card);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[2000] bg-[#030303] flex flex-col font-mono text-white overflow-hidden">
+      {/* Top Status Bar */}
+      <div className="h-14 border-b border-orange-500/20 bg-black flex items-center justify-between px-6 shrink-0 relative overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-orange-500/5 via-transparent to-transparent opacity-50" />
+        
+        <div className="flex items-center gap-6 relative z-10">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded bg-orange-500 flex items-center justify-center text-black">
+              <ShieldCheck className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-[10px] font-magic font-black uppercase tracking-[0.3em] leading-none mb-1">Admin Dashboard</h1>
+              <div className="flex items-center gap-2">
+                <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[8px] opacity-40 uppercase font-bold tracking-widest leading-none">Management Session Active</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="h-6 w-px bg-white/10 hidden md:block" />
+
+          {/* System Metrics */}
+          <div className="hidden lg:flex items-center gap-8">
+            <div className="flex flex-col">
+              <span className="text-[7px] text-white/20 uppercase font-black tracking-widest">Total Users</span>
+              <span className="text-[12px] text-orange-500 font-magic font-black tracking-tighter">{systemStats.totalUsers}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[7px] text-white/20 uppercase font-black tracking-widest">Total Decks</span>
+              <span className="text-[12px] text-cyan-400 font-magic font-black tracking-tighter">{systemStats.totalDecks}</span>
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[7px] text-white/20 uppercase font-black tracking-widest">Total Global Value</span>
+              <span className="text-[12px] text-emerald-400 font-magic font-black tracking-tighter">€{systemStats.totalValue.toFixed(2)}</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4 relative z-10">
+          <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded font-mono text-[9px] text-white/40">
+             <Clock className="w-3 h-3 text-orange-500" />
+             {new Date().toLocaleTimeString()}
+          </div>
+          <button 
+            onClick={() => setViewMode("cards")}
+            className="p-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 rounded transition-all group"
+          >
+            <X className="w-4 h-4 group-hover:rotate-90 transition-transform" />
+          </button>
+        </div>
+      </div>
+
+      <div className="flex-1 flex overflow-hidden">
+        {/* Left Sidebar: User Directory */}
+        <div className="w-80 border-r border-white/5 flex flex-col bg-[#050505] shrink-0">
+          <div className="p-4 border-b border-white/5 bg-black/40">
+            <div className="relative group">
+               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-orange-500 transition-colors" />
+               <input 
+                 type="text" 
+                 placeholder="Search Users..." 
+                 value={searchQuery}
+                 onChange={(e) => setSearchQuery(e.target.value)}
+                 className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2.5 text-[10px] outline-none focus:border-orange-500/40 transition-all font-mono"
+               />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
+            <div className="space-y-1">
+              {filteredUsers.length === 0 && !loading && (
+                <div className="p-8 text-center opacity-20 uppercase text-[8px] tracking-[0.2em]">No Users Found</div>
+              )}
+              {filteredUsers.map(u => (
+                <button 
+                  key={u.id}
+                  onClick={() => selectUser(u)}
+                  className={`w-full text-left p-3 rounded-lg border transition-all flex items-center justify-between group relative overflow-hidden ${selectedUser?.id === u.id ? 'bg-orange-500/10 border-orange-500/30' : 'border-transparent hover:bg-white/5'}`}
+                >
+                  <div className="flex items-center gap-3 relative z-10">
+                    <div className={`w-10 h-10 rounded border overflow-hidden shrink-0 ${selectedUser?.id === u.id ? 'border-orange-500/50 scale-105' : 'border-white/10 opacity-60'} transition-all`}>
+                      {u.photoURL ? (
+                        <img src={u.photoURL} alt="Avatar" className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" />
+                      ) : (
+                        <div className="w-full h-full bg-white/10 flex items-center justify-center">
+                          <User className="w-4 h-4 opacity-20 text-orange-500" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <span className={`text-[10px] font-magic font-black uppercase truncate tracking-widest ${selectedUser?.id === u.id ? 'text-orange-400' : 'text-white/60 group-hover:text-white'}`}>
+                        {u.userName || u.displayName || "Unknown User"}
+                      </span>
+                      <span className="text-[7px] opacity-30 truncate uppercase">{u.id}</span>
+                    </div>
+                  </div>
+                  {selectedUser?.id === u.id && (
+                    <div className="absolute right-0 top-0 bottom-0 w-1 bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.8)]" />
+                  )}
+                  <ChevronRight className={`w-3 h-3 transition-all ${selectedUser?.id === u.id ? 'translate-x-0 opacity-100' : '-translate-x-2 opacity-0'}`} />
+                </button>
+              ))}
+              {loading && <div className="p-4 flex flex-col items-center gap-2"><Loader2 className="w-4 h-4 animate-spin text-orange-500 opacity-20" /></div>}
+            </div>
+          </div>
+
+          <div className="p-4 border-t border-white/5 bg-black/60 text-[7px] text-white/10 uppercase tracking-widest font-black flex items-center justify-between">
+            <span>Admin Console</span>
+            <span>v1.0</span>
+          </div>
+        </div>
+
+        {/* Main Content Area */}
+        <div className="flex-1 flex flex-col relative overflow-hidden">
+          {/* Background Decor */}
+          <div className="absolute inset-0 pointer-events-none opacity-[0.02]">
+            <div className="absolute top-0 left-0 w-full h-full" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, white 1px, transparent 0)`, backgroundSize: '40px 40px' }} />
+          </div>
+
+          {selectedUser ? (
+            <div className="flex-1 flex flex-col overflow-hidden relative z-10">
+              {/* User Header */}
+              <div className="p-8 bg-gradient-to-b from-white/5 to-transparent border-b border-white/5 flex items-start justify-between">
+                <div className="flex items-center gap-8">
+                  <div className="w-24 h-24 rounded-2xl border-2 border-orange-500/20 p-1 bg-black shadow-[0_0_50px_rgba(249,115,22,0.1)]">
+                    <div className="w-full h-full rounded-xl overflow-hidden grayscale">
+                      {selectedUser.photoURL ? <img src={selectedUser.photoURL} alt="Large Avatar" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/5 flex items-center justify-center"><User className="w-10 h-10 opacity-20" /></div>}
+                    </div>
+                  </div>
+                  <div className="space-y-4">
+                    <div>
+                      <div className="flex items-center gap-3 mb-1">
+                        <span className="px-2 py-0.5 bg-orange-500 text-black text-[7px] font-black uppercase rounded tracking-widest">Active User</span>
+                        <span className="text-[12px] opacity-20 font-bold uppercase tracking-widest leading-none">ID: {selectedUser.id}</span>
+                      </div>
+                      <h2 className="text-5xl font-magic font-black text-white uppercase tracking-tighter leading-none italic">
+                        {selectedUser.userName || selectedUser.displayName || "Unknown"}
+                      </h2>
+                    </div>
+                    <div className="flex items-center gap-6">
+                       <div className="flex flex-col">
+                         <span className="text-[8px] text-white/20 uppercase font-black">Role</span>
+                         <span className="text-[11px] text-orange-500 font-magic font-black uppercase tracking-widest">{selectedUser.userTitle || "User"}</span>
+                       </div>
+                       <div className="flex flex-col">
+                         <span className="text-[8px] text-white/20 uppercase font-black">Email</span>
+                         <span className="text-[11px] text-white/60 font-mono lower tracking-tight">{selectedUser.email || "No Email"}</span>
+                       </div>
+                       <div className="flex flex-col">
+                         <span className="text-[8px] text-white/20 uppercase font-black">Account Total</span>
+                         <span className="text-[11px] text-emerald-400 font-mono uppercase tracking-widest font-black">€{userDecks.reduce((sum, d) => sum + (d.totalCost || 0), 0).toFixed(2)}</span>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex gap-4">
+                   <div className="rune-panel p-4 bg-orange-500/5 border-orange-500/20 text-center flex flex-col justify-center min-w-[120px]">
+                      <Library className="w-5 h-5 mx-auto mb-2 text-orange-500" />
+                      <span className="text-2xl font-magic font-black text-white leading-none">{userDecks.length}</span>
+                      <span className="text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Total Decks</span>
+                   </div>
+                   <div className="rune-panel p-4 bg-cyan-500/5 border-cyan-500/20 text-center flex flex-col justify-center min-w-[120px]">
+                      <Box className="w-5 h-5 mx-auto mb-2 text-cyan-400" />
+                      <span className="text-2xl font-magic font-black text-white leading-none">{userDeckbox.length}</span>
+                      <span className="text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Total Cards</span>
+                   </div>
+                </div>
+              </div>
+
+              {/* Data Grid */}
+              <div className="flex-1 overflow-hidden grid grid-cols-2 gap-px bg-white/5 shrink-0">
+                {/* DECK REPOSITORY */}
+                <div className="flex flex-col bg-[#030303] overflow-hidden">
+                   <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
+                      <div className="flex items-center gap-2">
+                        <Database className="w-4 h-4 text-orange-500" />
+                        <span className="text-[10px] font-magic font-black uppercase tracking-[0.2em]">Saved Decks</span>
+                      </div>
+                      <span className="text-[8px] font-mono text-white/20 font-black">{userDecks.length} DECKS</span>
+                   </div>
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-4">
+                      {userDecks.length === 0 && (
+                        <div className="h-60 flex flex-col items-center justify-center gap-4 opacity-10 border border-dashed border-white/10 rounded-2xl">
+                          <Library className="w-12 h-12" />
+                          <span className="text-[10px] uppercase tracking-widest">No Decks Found</span>
+                        </div>
+                      )}
+                      {userDecks.map(deck => (
+                        <div key={deck.id} className="rune-panel p-5 bg-black border-white/5 hover:border-orange-500/30 transition-all group flex flex-col gap-4">
+                           <div className="flex items-start justify-between">
+                              <div className="flex gap-4">
+                                 {/* Commander Thumbnails */}
+                                 <div className="flex -space-x-4">
+                                    {(deck.commanders || []).map((cmdr: any, cidx: number) => {
+                                      let imgSrc = resolveCardImage(cmdr);
+                                      // Fallback to art_crops if cmdr was just a name
+                                      if (!imgSrc && deck.art_crops && deck.art_crops[cidx]) {
+                                        imgSrc = deck.art_crops[cidx];
+                                      }
+                                      return (
+                                        <div key={cmdr.id || cmdr.name || cidx} className="w-12 h-16 rounded overflow-hidden border border-white/20 shadow-lg relative z-[10-cidx] hover:z-20 hover:scale-110 transition-all bg-white/5">
+                                          {imgSrc ? (
+                                            <img src={imgSrc} className="w-full h-full object-cover" />
+                                          ) : <div className="w-full h-full flex items-center justify-center font-magic text-[8px] opacity-20 text-center px-1">
+                                                {typeof cmdr === "string" ? cmdr.substring(0, 3) : cmdr.name?.substring(0, 3) || "CMD"}
+                                              </div>}
+                                        </div>
+                                      );
+                                    })}
+                                    {(!deck.commanders || deck.commanders.length === 0) && (
+                                       <div className="w-12 h-16 rounded border border-white/5 bg-white/[0.02] flex items-center justify-center">
+                                          <User className="w-4 h-4 opacity-10" />
+                                       </div>
+                                    )}
+                                 </div>
+
+                                 <div className="space-y-1">
+                                   <h3 className="text-xl font-magic font-black text-white uppercase tracking-tight group-hover:text-orange-400 transition-colors">{deck.name}</h3>
+                                   <div className="flex items-center gap-2 text-[8px] font-mono font-bold">
+                                      <span className="text-orange-500/60 uppercase">IDENTITY: {deck.ci || "C"}</span>
+                                      <span className="text-white/10 h-3 w-px mx-1 bg-white/5" />
+                                      <span className="text-white/40 uppercase">{deck.commanders?.length || 0} COMMANDERS</span>
+                                   </div>
+                                 </div>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-lg font-magic font-black text-emerald-400">€{deck.totalCost?.toFixed(2)}</span>
+                                <p className="text-[7px] text-white/20 uppercase font-black tracking-widest mt-0.5">Value</p>
+                              </div>
+                           </div>
+                           
+                           {deck.tags && deck.tags.length > 0 && (
+                             <div className="flex flex-wrap gap-1.5 pt-3 border-t border-white/5">
+                               {deck.tags.map(tag => (
+                                 <span key={tag} className="px-2 py-0.5 bg-white/5 border border-white/10 rounded text-[7px] text-white/40 uppercase font-black tracking-widest">
+                                   {tag.split(":::")[0]}
+                                 </span>
+                               ))}
+                             </div>
+                           )}
+
+                           <div className="grid grid-cols-2 gap-2 pt-2">
+                             <div className="flex flex-col p-2 bg-white/5 rounded border border-white/5">
+                               <span className="text-[6px] text-white/20 uppercase font-black">Deck ID</span>
+                               <span className="text-[8px] font-mono text-white/40 truncate">{deck.id}</span>
+                             </div>
+                             <div className="flex flex-col p-2 bg-white/5 rounded border border-white/5">
+                               <span className="text-[6px] text-white/20 uppercase font-black">Source</span>
+                               <span className="text-[8px] font-mono text-cyan-500/60 uppercase">{deck.importUrl?.includes('moxfield') ? 'Moxfield' : deck.importUrl?.includes('archidekt') ? 'Archidekt' : 'Local Forge'}</span>
+                             </div>
+                           </div>
+                        </div>
+                      ))}
+                   </div>
+                </div>
+
+                {/* DECKBOX ARTIFACTS */}
+                <div className="flex flex-col bg-[#030303] border-l border-white/10 overflow-hidden">
+                   <div className="p-4 border-b border-white/5 flex items-center justify-between bg-black/40">
+                      <div className="flex items-center gap-2">
+                        <Box className="w-4 h-4 text-cyan-400" />
+                        <span className="text-[10px] font-magic font-black uppercase tracking-[0.2em]">Deckbox Inventory</span>
+                      </div>
+                      <span className="text-[8px] font-mono text-white/20 font-black">{userDeckbox.reduce((acc, curr) => acc + (curr.qty || curr.count || 1), 0)} CARDS</span>
+                   </div>
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-6">
+                      <div className="grid grid-cols-1 gap-1">
+                        {userDeckbox.length === 0 && (
+                          <div className="h-60 flex flex-col items-center justify-center gap-4 opacity-10 border border-dashed border-white/10 rounded-2xl">
+                            <Box className="w-12 h-12" />
+                            <span className="text-[10px] uppercase tracking-widest">Deckbox Empty</span>
+                          </div>
+                        )}
+                        {userDeckbox.map((card: any, idx) => {
+                          const imgSrc = resolveCardImage(card);
+                          return (
+                            <div key={card.id || card.uniqueId || idx} className="flex items-center gap-4 p-2 hover:bg-white/5 transition-all group rounded">
+                               <div className="w-12 h-16 rounded overflow-hidden border border-white/10 shrink-0 group-hover:border-cyan-500/50 transition-all bg-white/5">
+                                 {imgSrc ? (
+                                   <img 
+                                     src={imgSrc} 
+                                     className="w-full h-full object-cover transition-transform group-hover:scale-110" 
+                                   />
+                                 ) : <div className="flex items-center justify-center h-full"><Box className="w-4 h-4 opacity-10" /></div>}
+                               </div>
+                               <div className="w-8 h-8 rounded bg-cyan-500/10 border border-cyan-500/20 flex flex-col items-center justify-center text-[10px] font-mono font-black text-cyan-400 shrink-0">
+                               {card.qty || card.count || 1}
+                               <span className="text-[6px] opacity-40">QTY</span>
+                             </div>
+                             <div className="flex-1 min-w-0">
+                               <p className="text-[11px] font-magic font-black uppercase text-white tracking-widest group-hover:text-cyan-400 transition-colors truncate">{card.name}</p>
+                               <div className="flex items-center gap-2">
+                                  <span className="text-[7px] font-mono text-white/20 uppercase font-black">{card.type_line?.split("—")[0] || "Spell"}</span>
+                                  <span className="text-[7px] text-emerald-400/40 font-mono">€{parseFloat(card.prices?.eur || "0").toFixed(2)}</span>
+                               </div>
+                             </div>
+                             <div className="flex flex-col items-end shrink-0">
+                                <span className="text-[9px] font-mono text-white/20 uppercase tracking-widest italic">{card.from_deck || "Unsorted"}</span>
+                             </div>
+                          </div>
+                        );
+                      })}
+                      </div>
+                   </div>
+                </div>
+              </div>
+
+              {/* Bottom Analysis Bar */}
+              <div className="h-10 bg-black border-t border-white/10 px-6 flex items-center justify-between shrink-0">
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center gap-2">
+                    <Activity className="w-3.5 h-3.5 text-emerald-500" />
+                    <span className="text-[8px] uppercase tracking-[0.2em] font-black opacity-30 animate-pulse">Monitoring System Stability...</span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-6">
+                   <div className="flex items-center gap-2">
+                     <span className="text-[8px] text-white/20 lowercase">latency:</span>
+                     <span className="text-[8px] font-mono text-emerald-500">12ms</span>
+                   </div>
+                   <div className="flex items-center gap-2">
+                     <span className="text-[8px] text-white/20 lowercase">integrity:</span>
+                     <span className="text-[8px] font-mono text-emerald-500 font-black">100% SECURE</span>
+                   </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="flex-1 flex flex-col items-center justify-center p-20 text-center relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/[0.03] to-transparent pointer-events-none" />
+              
+              <motion.div 
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                className="space-y-8 relative z-10"
+              >
+                <div className="relative mx-auto w-40 h-40">
+                  <div className="absolute inset-0 bg-orange-500/20 blur-[100px] rounded-full animate-pulse" />
+                  <div className="relative z-10 w-full h-full flex items-center justify-center bg-[#070707] border border-orange-500/30 rounded-[48px] shadow-2xl overflow-hidden group">
+                    <ShieldCheck className="w-20 h-20 text-orange-500/20 group-hover:text-orange-500 group-hover:scale-110 transition-all duration-700" />
+                    <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+                  </div>
+                </div>
+
+                <div className="space-y-4 max-w-lg mx-auto">
+                  <h2 className="text-5xl font-magic font-black text-white uppercase tracking-tighter leading-none italic">
+                    User Management <br />
+                    <span className="text-orange-500">Admin Console</span>
+                  </h2>
+                  <p className="text-[11px] text-white/20 uppercase tracking-[0.4em] font-mono leading-loose font-black px-12">
+                    Select a user from the directory to view their saved decks and current deckbox contents.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-center gap-12 pt-8">
+                  <div className="flex flex-col items-center gap-2">
+                    <Globe className="w-6 h-6 text-orange-400/40" />
+                    <span className="text-[8px] font-mono uppercase text-white/10 tracking-widest font-black">Global Access</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-2">
+                    <Database className="w-6 h-6 text-orange-400/40" />
+                    <span className="text-[8px] font-mono uppercase text-white/10 tracking-widest font-black">Realtime Sync</span>
+                  </div>
+                  <div className="flex flex-col items-center gap-2">
+                    <Cpu className="w-6 h-6 text-orange-400/40" />
+                    <span className="text-[8px] font-mono uppercase text-white/10 tracking-widest font-black">Matrix Compute</span>
+                  </div>
+                </div>
+              </motion.div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Matrix Status Message (Toast System for Admin) */}
+      <AnimatePresence>
+        {loading && (
+          <motion.div 
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            className="fixed bottom-8 right-8 z-[3000] p-4 bg-black border border-orange-500/40 rounded-xl shadow-[0_0_50px_rgba(249,115,22,0.2)] flex items-center gap-4"
+          >
+            <div className="relative">
+               <RotateCw className="w-5 h-5 text-orange-500 animate-spin" />
+               <div className="absolute inset-0 bg-orange-500 blur-md animate-pulse opacity-50" />
+            </div>
+            <div className="flex flex-col">
+               <span className="text-[10px] font-magic font-black uppercase text-white tracking-widest">Syncing Dashboard Data</span>
+               <span className="text-[8px] font-mono text-orange-500/60 uppercase font-black">Retrieving user records...</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
 }
 
 

@@ -12,13 +12,35 @@ service cloud.firestore {
       return request.auth != null && request.auth.uid == userId;
     }
 
+    // Admin check - specifically for sdebeer@gmail.com
+    function isAdmin() {
+      return request.auth != null && 
+             request.auth.token.email == 'sdebeer@gmail.com' && 
+             request.auth.token.email_verified == true;
+    }
+
+    // Top-level users collection access for admin
+    match /users {
+      allow list: if isAdmin();
+    }
+
     // This rule covers /users/UID, /users/UID/decks/ID, /users/UID/deckbox/ID, etc.
     match /users/{userId} {
-      allow read, write: if isOwner(userId);
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId);
       
       match /{allPaths=**} {
-        allow read, write: if isOwner(userId);
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if isOwner(userId);
       }
+    }
+
+    // Collection group permissions for admin metrics
+    match /{path=**}/decks/{deckId} {
+      allow list: if isAdmin();
+    }
+    match /{path=**}/deckbox/{cardId} {
+      allow list: if isAdmin();
     }
 
     // Test connectivity path
