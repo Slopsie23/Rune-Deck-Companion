@@ -109,7 +109,7 @@ import {
 } from "recharts";
 // import runesBackground from './assets/images/runes_background_1777929551380.png';
 const runesBackground = "/runebg.png";
-const VERSION = "V2.9.0";
+const VERSION = "V2.10.0";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
@@ -204,6 +204,7 @@ import {
 } from "firebase/firestore";
 import { Card, DeckCard, SavedDeck, ScryfallSet } from "./types";
 import { IdentityPortal } from "./components/IdentityPortal";
+import { CodieCodex } from "./components/CodieCodex";
 
 async function callGemini(options: { 
   model: string, 
@@ -246,7 +247,7 @@ async function callGemini(options: {
 
 const BearIcon = PawPrint;
 
-const FloatingArcaneField = () => {
+const FloatingRuneField = () => {
   const symbols = [
     { s: "w", t: "mana", c: "text-[#f0f2c0]" },
     { s: "u", t: "mana", c: "text-[#00aeef]" },
@@ -465,6 +466,7 @@ export default function App() {
     | "admin"
     | "stats"
     | "search"
+    | "codie"
   >("cards");
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Searching the Multiverse...");
@@ -509,6 +511,14 @@ export default function App() {
   const [pendingTags, setPendingTags] = useState<Record<string, string[]>>({});
   const [deckDescriptions, setDeckDescriptions] = useState<Record<string, string>>({});
   const [isAiGeneratingTags, setIsAiGeneratingTags] = useState<Record<string, boolean>>({});
+  const [codieMessages, setCodieMessages] = useState<any[]>([
+    {
+      id: "1",
+      sender: "codie",
+      text: "Gegroet! Ik ben **Codex Codie**, je strategische deckbouwhulp en MTG-adviseur uit de mysterieuze bibliotheken.\n\nGebruik mij om samen vette nieuwe Commanders te verkennen, diepgaande deckbuild-ideeën te onderzoeken, en verborgen synergieën en bijbehorende kaarten op te sporen. Welke strategie of kleur gaan we vandaag analyseren?",
+      timestamp: new Date(),
+    },
+  ]);
   const [deepAnalysis, setDeepAnalysis] = useState<Record<string, string>>({});
   const [viewingAnalysis, setViewingAnalysis] = useState<string | null>(null);
 
@@ -531,7 +541,7 @@ export default function App() {
     const deck = savedDecks.find(d => d.id === deckId);
     if (!deck) return;
     
-    startArcaneLoading("Calculating Arcane Congruence...");
+    startArcaneLoading("Rune-overeenstemming berekenen...");
     try {
       const cardsSnapshot = await getDocs(collection(db, "users", user.uid, "decks", deck.id, "cards"));
       const cards: any[] = cardsSnapshot.docs.map(d => d.data());
@@ -554,7 +564,7 @@ export default function App() {
       - KWALITEIT: Gebruik grammaticaal correcte, lopende Nederlandse zinnen. Vermijd AI-clichés of vreemde opmerkingen over data-encapsulatie.
       
       STRUCTUREER het rapport exact met deze koppen (gebruik # en ##):
-      # Arcane Strategische Audit: ${deck.name}
+      # Strategische Rune Audit: ${deck.name}
       
       ## 1. Strategische Kern & Archetype
       Analyseer de fundamentele identiteit van het deck. Wat is de 'game plan'? Hoe verhoudt dit deck zich tot de huidige Commander meta?
@@ -577,7 +587,7 @@ export default function App() {
       - Gebruik duidelijke bullet-points voor leesbaarheid.`;
 
       const response = await callGemini({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ parts: [{ text: prompt }] }],
       });
 
@@ -2228,7 +2238,7 @@ export default function App() {
   };
 
   const handleFunModeClick = (
-    mode: "sets" | "calendar" | "sheriff" | "judge",
+    mode: "sets" | "calendar" | "sheriff" | "judge" | "codie",
   ) => {
     clearDeckSelection();
     setViewMode(mode);
@@ -2527,6 +2537,148 @@ export default function App() {
           `users/${user.uid}/deckbox/${cardId}`,
         ),
       );
+    }
+  };
+
+  const addCardByNameToDeckbox = async (cardName: string) => {
+    if (!user) return showMessage("Log in om kaarten toe te voegen aan je deckbox.", "error");
+    const cleanName = cardName.replace(/[\[\]]/g, "").trim();
+    try {
+      const response = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(cleanName)}`);
+      if (response.data) {
+        const isSelected = deckbox.find((c) => c.name.toLowerCase() === response.data.name.toLowerCase());
+        if (!isSelected) {
+          await toggleCardSelection(response.data);
+          showMessage(`${response.data.name.toUpperCase()} toegevoegd aan Deckbox!`, "success");
+        } else {
+          showMessage(`${response.data.name.toUpperCase()} is al in je Deckbox!`, "info");
+        }
+      }
+    } catch (err) {
+      try {
+        const response2 = await axios.get(`/api/sf/cards/search?q=${encodeURIComponent(cleanName)}`);
+        if (response2.data && response2.data.data && response2.data.data.length > 0) {
+          const card = response2.data.data[0];
+          const isSelected = deckbox.find((c) => c.name.toLowerCase() === card.name.toLowerCase());
+          if (!isSelected) {
+            await toggleCardSelection(card);
+            showMessage(`${card.name.toUpperCase()} toegevoegd aan Deckbox!`, "success");
+          } else {
+            showMessage(`${card.name.toUpperCase()} is al in je Deckbox!`, "info");
+          }
+        } else {
+          showMessage(`Kon '${cleanName}' niet vinden op Scryfall.`, "error");
+        }
+      } catch (err2: any) {
+        console.error("Could not add card to deckbox", err2);
+        showMessage(`Fout bij toevoegen: ${err2.message || "onbekend"}`, "error");
+      }
+    }
+  };
+
+  const previewCardByName = async (cardName: string) => {
+    try {
+      const response = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(cardName)}`);
+      if (response.data) {
+        const images = getCardImages(response.data);
+        const imgUrl = images.large || images.normal || images.border_crop || response.data.image_uris?.png;
+        if (imgUrl) setZoomedAltCard(imgUrl);
+      }
+    } catch (err) {
+      try {
+        const response2 = await axios.get(`/api/sf/cards/search?q=${encodeURIComponent(cardName)}`);
+        if (response2.data && response2.data.data && response2.data.data.length > 0) {
+          const card = response2.data.data[0];
+          const images = getCardImages(card);
+          const imgUrl = images.large || images.normal || images.border_crop || card.image_uris?.png;
+          if (imgUrl) setZoomedAltCard(imgUrl);
+        }
+      } catch (err2) {
+        console.error("Could not preview card", err2);
+      }
+    }
+  };
+
+  const onCreateNewDeckFromCodie = async (commanderName: string, deckName: string, suggestedList?: string[]) => {
+    if (!user) return showMessage("Meld u aan om deck-architectuur op te slaan.", "error");
+    try {
+      const response = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(commanderName)}`);
+      if (response.data) {
+        const card = response.data;
+        const id = Date.now().toString();
+        const deckRef = doc(db, "users", user.uid, "decks", id);
+        
+        const listNames = [card.name];
+        let totalCostAccum = card.prices?.eur ? parseFloat(card.prices.eur) : 0;
+
+        const deckData = {
+          name: deckName,
+          ci: card.color_identity ? card.color_identity.join("") : "C",
+          commanders: [card.name],
+          commanderNames: [card.name],
+          art_crops: [card.image_uris?.art_crop || ""],
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          totalCost: totalCostAccum,
+          existingNames: listNames,
+          tags: ["codie_ideas", "commander"],
+          importUrl: ""
+        };
+
+        await setDoc(deckRef, deckData);
+        
+        // Add commander
+        const cardRef = doc(db, "users", user.uid, "decks", id, "cards", card.name.replace(/[^a-zA-Z0-9]/g, "_"));
+        await setDoc(cardRef, {
+          name: card.name,
+          qty: 1,
+          quantity: 1,
+          isCommander: true,
+          type: card.type_line || "",
+          thumb: card.image_uris?.small || "",
+          highRes: card.image_uris?.normal || ""
+        });
+
+        // Add suggestions as non-commanders
+        if (suggestedList && suggestedList.length > 0) {
+          for (const sName of suggestedList) {
+            try {
+              const sfRes = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(sName)}`);
+              if (sfRes.data) {
+                const sCard = sfRes.data;
+                const cRef = doc(db, "users", user.uid, "decks", id, "cards", sCard.name.replace(/[^a-zA-Z0-9]/g, "_"));
+                await setDoc(cRef, {
+                  name: sCard.name,
+                  qty: 1,
+                  quantity: 1,
+                  isCommander: false,
+                  type: sCard.type_line || "",
+                  thumb: sCard.image_uris?.small || "",
+                  highRes: sCard.image_uris?.normal || ""
+                });
+                listNames.push(sCard.name);
+                if (sCard.prices?.eur) {
+                  totalCostAccum += parseFloat(sCard.prices.eur);
+                }
+              }
+            } catch (errAdd) {
+              console.warn("Could not pre-populate suggested card inside local deck", sName, errAdd);
+            }
+          }
+          await updateDoc(deckRef, {
+            existingNames: listNames,
+            totalCost: totalCostAccum
+          });
+        }
+
+        setActiveDeckId(id);
+        setActiveDeckName(deckName);
+        setViewMode("manage_decks");
+        showMessage(`Deck rondom ${commanderName} met succes gesmeed!`, "success");
+      }
+    } catch (e) {
+      console.error("Could not make customized deck", e);
+      showMessage("Kon geen nieuw deck aanmaken rond deze Commander.", "error");
     }
   };
 
@@ -2849,7 +3001,7 @@ export default function App() {
           Return ONLY JSON: { "type": "name"|"mechanic"|"oracle"|"other", "query": "...", "suggestions": ["...", "..."], "isAmbiguous": boolean }`;
 
           const res = await callGemini({
-            model: "gemini-3-flash-preview",
+            model: "gemini-3.5-flash",
             contents: prompt,
             config: { responseMimeType: "application/json" },
           });
@@ -3001,7 +3153,7 @@ export default function App() {
         return;
       }
 
-      startArcaneLoading("Analyzing Arcane Synergy...");
+      startArcaneLoading("Rune Synergie Analyseren...");
 
       // Fetch card details for all commanders
       const cardData = await Promise.all(
@@ -3058,7 +3210,7 @@ Return ONLY JSON. No markdown backticks.`;
         return;
       }
       const response = await callGemini({
-        model: "gemini-3.1-pro-preview",
+        model: "gemini-3.5-flash",
         contents: [{ parts: [{ text: prompt }] }],
       });
 
@@ -3168,7 +3320,7 @@ Return ONLY JSON. No markdown backticks.`;
 
       console.log("[AI] Sending prompt to Gemini...");
       const response = await callGemini({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ parts: [{ text: prompt }] }],
       });
 
@@ -3436,11 +3588,10 @@ Return ONLY JSON. No markdown backticks.`;
     <div className="h-screen rune-bg text-white flex overflow-hidden font-sans relative">
 
       <div
-        className="fixed inset-0 z-0 opacity-[0.04] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat bg-fixed object-cover"
+        className="fixed inset-0 z-0 opacity-[0.15] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat bg-fixed object-cover"
         style={{ backgroundImage: `url(${runesBackground})` }}
       />
       <div className="absolute top-0 right-0 w-[50vh] h-[50vh] bg-cyan-500/5 blur-[150px] rounded-full pointer-events-none" />
-      <div className="absolute bottom-0 left-[20%] w-[40vh] h-[40vh] bg-orange-500/5 blur-[120px] rounded-full pointer-events-none" />
 
       {/* Mobile Top Bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#0c0c0c]/90 backdrop-blur-3xl border-b border-white/[0.04] z-[120] flex items-center justify-between px-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
@@ -4024,45 +4175,54 @@ Return ONLY JSON. No markdown backticks.`;
               <div className="flex items-center gap-2">
                 <Sparkles className="w-3 h-3 text-cyan-500 animate-pulse" />
                 <h2 className="text-[10px] font-magic font-extrabold text-white/30 uppercase tracking-[0.2em]">
-                  Arcane Modules
+                  Rune Modules
                 </h2>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-2 gap-1.55">
+              <button
+                onClick={() => handleFunModeClick("codie")}
+                className="flex flex-col items-center justify-center py-2.5 px-1 rune-panel text-pink-500/85 hover:text-pink-400 font-magic border border-pink-500/20 hover:border-pink-500/40 bg-pink-500/5 hover:bg-pink-500/10 transition-all group z-10 gap-1 rounded-md"
+              >
+                <Sparkles className="w-4 h-4 group-hover:scale-110 text-pink-500 animate-pulse transition-transform" />
+                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
+                  Codex Codie
+                </span>
+              </button>
               <button
                 onClick={() => handleFunModeClick("sets")}
-                className="flex flex-col items-center justify-center py-2.5 rune-panel text-white/40 hover:text-cyan-400 font-magic hover:border-cyan-500/30 transition-all group z-10 gap-1 rounded-md border border-white/5 bg-white/[0.02]"
+                className="flex flex-col items-center justify-center py-2.5 rune-panel text-blue-500/85 hover:text-blue-400 font-magic border border-blue-500/20 hover:border-blue-500/40 bg-blue-500/5 hover:bg-blue-500/10 transition-all group z-10 gap-1 rounded-md"
               >
-                <Library className="w-4 h-4 group-hover:scale-110 transition-transform" />
+                <Library className="w-4 h-4 group-hover:scale-110 transition-transform text-blue-500" />
                 <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
                   Expansions
                 </span>
               </button>
               <button
                 onClick={() => handleFunModeClick("calendar")}
-                className="flex flex-col items-center justify-center py-2.5 rune-panel text-white/40 hover:text-orange-500 font-magic hover:border-orange-500/30 transition-all group z-10 gap-1 rounded-md border border-white/5 bg-white/[0.02]"
+                className="flex flex-col items-center justify-center py-2.5 rune-panel text-orange-500/85 hover:text-orange-400 font-magic border border-orange-500/20 hover:border-orange-500/40 bg-orange-500/5 hover:bg-orange-500/10 transition-all group z-10 gap-1 rounded-md"
               >
-                <Calendar className="w-4 h-4 group-hover:scale-110 transition-transform text-orange-500/80 group-hover:text-orange-500" />
-                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none text-orange-500/80 group-hover:text-orange-500">
+                <Calendar className="w-4 h-4 group-hover:scale-110 transition-transform text-orange-500" />
+                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
                   Timeline
                 </span>
               </button>
               <button
                 onClick={() => handleFunModeClick("sheriff")}
-                className="flex flex-col items-center justify-center py-2.5 rune-panel text-amber-500/60 hover:text-amber-400 font-magic hover:border-amber-500/50 transition-all group z-10 gap-1 rounded-md border border-white/5 bg-white/[0.02]"
+                className="flex flex-col items-center justify-center py-2.5 rune-panel text-amber-500/85 hover:text-amber-400 font-magic border border-amber-500/20 hover:border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/10 transition-all group z-10 gap-1 rounded-md"
               >
-                <Shield className="w-4 h-4 group-hover:scale-110 transition-transform text-amber-500/80 group-hover:text-amber-500" />
-                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none text-amber-500/80 group-hover:text-amber-400">
+                <Shield className="w-4 h-4 group-hover:scale-110 transition-transform text-amber-500" />
+                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
                   Sheriff
                 </span>
               </button>
               <button
                 id="ruxa-beacon"
                 onClick={() => handleFunModeClick("judge")}
-                className="flex flex-col items-center justify-center py-2.5 rune-panel text-green-500/60 hover:text-green-400 font-magic hover:border-green-500/50 transition-all group z-10 gap-1 rounded-md border border-white/5 bg-white/[0.02]"
+                className="flex flex-col items-center justify-center py-2.5 rune-panel text-emerald-500/85 hover:text-emerald-400 font-magic border border-emerald-500/20 hover:border-emerald-500/40 bg-emerald-500/5 hover:bg-emerald-500/10 transition-all group z-10 gap-1 rounded-md"
               >
-                <Gavel className="w-4 h-4 group-hover:scale-110 transition-transform text-green-500/80 group-hover:text-green-500" />
-                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none text-green-500/80 group-hover:text-green-400">
+                <Gavel className="w-4 h-4 group-hover:scale-110 transition-transform text-emerald-500" />
+                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
                   Bear Judge
                 </span>
               </button>
@@ -4078,14 +4238,13 @@ Return ONLY JSON. No markdown backticks.`;
                   });
                   setIsMobileMenuOpen(false);
                 }}
-                className="flex flex-col items-center justify-center py-2.5 rune-panel text-orange-400/60 hover:text-orange-400 font-magic hover:border-orange-500/50 transition-all group z-10 gap-1 rounded-md border border-white/5 bg-white/[0.02]"
+                className="flex flex-col items-center justify-center py-2.5 rune-panel text-rose-500/85 hover:text-rose-455 font-magic border border-rose-500/20 hover:border-rose-500/40 bg-rose-500/5 hover:bg-rose-500/10 transition-all group z-10 gap-1 rounded-md"
               >
-                <PawPrint className="w-4 h-4 group-hover:scale-125 transition-transform text-orange-500/60 group-hover:text-orange-400" />
+                <PawPrint className="w-4 h-4 group-hover:scale-120 transition-transform text-rose-500" />
                 <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
                   Bears
                 </span>
               </button>
-
             </div>
           </section>
         </div>
@@ -4136,7 +4295,7 @@ Return ONLY JSON. No markdown backticks.`;
             <button
               onClick={() => { setRoadmapInitialChangelog(false); setShowRoadmap(true); }}
               className="p-3 rounded-2xl bg-green-500/10 border border-green-500/20 text-green-400 hover:text-green-300 hover:border-green-500/40 hover:bg-green-500/20 transition-all group relative overflow-hidden shrink-0 shadow-[0_0_15px_rgba(34,197,94,0.1)]"
-              title="Arcane Manual"
+              title="Rune Handboek"
             >
               <HelpCircle className="w-5 h-5 relative z-10 animate-pulse" />
               <div className="absolute inset-0 bg-gradient-to-tr from-green-500/30 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -4211,6 +4370,7 @@ Return ONLY JSON. No markdown backticks.`;
                 
                 <div className="grid grid-cols-2 gap-3">
                   {[
+                    { label: 'Codie Codex', icon: Sparkles, action: () => handleFunModeClick("codie"), color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10 border-cyan-400/30' },
                     { label: 'Expansions', icon: Library, action: () => handleFunModeClick("sets"), color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/5' },
                     { label: 'Calendar', icon: Calendar, action: () => handleFunModeClick("calendar"), color: 'text-orange-400 border-orange-500/20 bg-orange-500/5' },
                     { label: 'Sheriff', icon: Shield, action: () => handleFunModeClick("sheriff"), color: 'text-amber-400 border-amber-500/20 bg-amber-500/5' },
@@ -4589,7 +4749,7 @@ Return ONLY JSON. No markdown backticks.`;
                 </div>
               </motion.div>
             )}
-            <div className={`hidden md:flex fixed bottom-12 right-12 z-[100] pointer-events-auto transition-opacity duration-300 ${allCards.length === 0 && !loading && !hasSearched ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <div className="hidden md:flex fixed bottom-12 right-12 z-[100] pointer-events-auto transition-opacity duration-300 opacity-100">
               <button
                 onClick={() => setIsDeckboxOpen(true)}
                 className="flex items-center gap-4 px-6 py-4 bg-black/60 shadow-[0_0_30px_rgba(0,0,0,0.8),0_0_20px_rgba(249,115,22,0.1)] backdrop-blur-xl text-white/40 hover:text-orange-400 rounded-3xl border border-white/10 hover:border-orange-500/40 transition-all group scale-110"
@@ -4667,7 +4827,7 @@ Return ONLY JSON. No markdown backticks.`;
                       </motion.div>
                     ) : (
                       <div className="relative w-full min-h-[90vh] flex flex-col items-center justify-center p-8 sm:p-16 md:p-32 bg-transparent">
-                        <FloatingArcaneField />
+                        <FloatingRuneField />
                         
                         <div className="relative z-10 flex flex-col items-center text-center w-full max-w-6xl px-6 py-12">
                           <motion.div
@@ -4675,7 +4835,7 @@ Return ONLY JSON. No markdown backticks.`;
                             animate={{ opacity: 1, scale: 1 }}
                             className="w-full flex items-center justify-center"
                           >
-                            <div className="bg-black/40 border border-white/10 backdrop-blur-3xl rounded-[2.5rem] px-6 py-10 md:px-16 md:py-16 shadow-[0_0_100px_rgba(0,0,0,0.8)] border-t-white/20 relative group/home">
+                            <div className="bg-transparent border border-white/10 rounded-[2.5rem] px-6 py-10 md:px-16 md:py-16 shadow-[0_0_100px_rgba(0,0,0,0.8)] border-t-white/20 relative group/home">
                               {/* Interactive Sparkle */}
                               <div className="absolute -top-24 -left-24 w-48 h-48 bg-cyan-500/10 blur-[100px] rounded-full group-hover/home:bg-cyan-500/20 transition-all duration-1000" />
                               <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-orange-500/15 blur-[100px] rounded-full group-hover/home:bg-orange-500/30 transition-all duration-1000" />
@@ -4776,7 +4936,7 @@ Return ONLY JSON. No markdown backticks.`;
               </div>
             )}
             {viewMode === "calendar" && (
-              <div className="h-full w-full absolute inset-0 z-30 bg-[#050505]">
+              <div className="h-full w-full absolute inset-0 z-30 bg-transparent">
                 <ReleaseCalendar
                   setViewMode={setViewMode}
                   performSearch={performSearch}
@@ -5090,7 +5250,7 @@ Return ONLY JSON. No markdown backticks.`;
                             <button
                                onClick={() => deepAnalysis[deck.id] ? setViewingAnalysis(deck.id) : generateDeepAnalysis(deck.id)}
                                className={`p-3 border rounded-xl transition-all group flex-1 flex items-center justify-center ${deepAnalysis[deck.id] ? 'bg-purple-500/10 border-purple-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
-                               title={deepAnalysis[deck.id] ? "View Arcane Audit" : "Generate Arcane Audit"}
+                               title={deepAnalysis[deck.id] ? "Bekijk Rune Audit" : "Genereer Rune Audit"}
                              >
                                <Brain className={`w-4 h-4 transition-colors ${deepAnalysis[deck.id] ? 'text-purple-400' : 'text-white/10 group-hover:text-purple-400'}`} />
                              </button>
@@ -5125,6 +5285,18 @@ Return ONLY JSON. No markdown backticks.`;
               <div className="p-4 lg:p-8">
                 <OutlawSheriff />
               </div>
+            )}
+
+            {viewMode === "codie" && (
+              <CodieCodex 
+                user={user}
+                onAddCardToDeckbox={addCardByNameToDeckbox}
+                onPreviewCard={previewCardByName}
+                onCreateNewDeck={onCreateNewDeckFromCodie}
+                showMessage={showMessage}
+                messages={codieMessages}
+                setMessages={setCodieMessages}
+              />
             )}
 
 
@@ -5328,19 +5500,19 @@ Return ONLY JSON. No markdown backticks.`;
                         <div className="absolute inset-0 bg-cyan-400/20 blur-[80px] rounded-full animate-pulse" />
                         {/* Rune-Tech Tech Accents (Removed as requested) */}
 
-                        <div className="relative group">
+                        <div className="relative group p-4 sm:p-6 flex items-center justify-center">
                           <img
                             src={hoveredPreviewCard}
                             alt="Optic Focus"
-                            className="w-[32vh] xl:w-[38vh] max-w-[80vw] h-auto object-contain rounded-[1.8rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
+                            className="w-[23vh] xl:w-[26vh] max-w-[70vw] h-auto object-contain rounded-[1.5rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
                             referrerPolicy="no-referrer"
                           />
 
                           {/* Corner Tech Brackets */}
-                          <div className="absolute -top-4 -left-4 w-12 h-12 border-t-2 border-l-2 border-cyan-400 rounded-tl-2xl z-20 opacity-60" />
-                          <div className="absolute -top-4 -right-4 w-12 h-12 border-t-2 border-r-2 border-cyan-400 rounded-tr-2xl z-20 opacity-60" />
-                          <div className="absolute -bottom-4 -left-4 w-12 h-12 border-b-2 border-l-2 border-cyan-400 rounded-bl-2xl z-20 opacity-60" />
-                          <div className="absolute -bottom-4 -right-4 w-12 h-12 border-b-2 border-r-2 border-cyan-400 rounded-br-2xl z-20 opacity-60" />
+                          <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-cyan-400 rounded-tl-2xl z-20 opacity-60" />
+                          <div className="absolute top-0 right-0 w-12 h-12 border-t-2 border-r-2 border-cyan-400 rounded-tr-2xl z-20 opacity-60" />
+                          <div className="absolute bottom-0 left-0 w-12 h-12 border-b-2 border-l-2 border-cyan-400 rounded-bl-2xl z-20 opacity-60" />
+                          <div className="absolute bottom-0 right-0 w-12 h-12 border-b-2 border-r-2 border-cyan-400 rounded-br-2xl z-20 opacity-60" />
                         </div>
 
                         {/* Rune Accents */}
@@ -5636,51 +5808,46 @@ Return ONLY JSON. No markdown backticks.`;
                     <div className="w-24 h-[1px] bg-white/5 mx-auto" />
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-8 relative z-10">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6 relative z-10 font-sans">
                     {alternativeCommanders.map((c, i) => {
                       const name = c?.name || "Unknown Entity";
-                      const imgs =
-                        c?.image_uris || c?.card_faces?.[0]?.image_uris || {};
-                      const img =
-                        imgs.normal || imgs.large || c?.image_uris?.png;
+                      const images = getCardImages(c);
+                      const img = images.normal || images.border_crop || images.small;
 
                       return (
                         <motion.div
-                          initial={{ opacity: 0, scale: 0.8 }}
+                          initial={{ opacity: 0, scale: 0.9 }}
                           animate={{ opacity: 1, scale: 1 }}
+                          whileHover={{ y: -5 }}
                           transition={{
-                            delay: i * 0.03,
-                            duration: 0.5,
-                            ease: "easeOut",
+                            delay: i * 0.02,
+                            duration: 0.3,
                           }}
                           key={i}
-                          className="relative group cursor-pointer"
+                          className="relative group aspect-[0.71] cursor-pointer"
                           onClick={() => {
-                            const imgs =
-                              c?.image_uris ||
-                              c?.card_faces?.[0]?.image_uris ||
-                              {};
-                            const imgUrl =
-                              imgs.normal || imgs.large || c?.image_uris?.png;
-                            setZoomedAltCard(imgUrl);
+                            setZoomedAltCard(img);
                             showMessage(
                               `PREVIEWING: ${name.toUpperCase()}`,
                               "info",
                             );
                           }}
                         >
-                          <div className="aspect-[0.71] rounded-xl md:rounded-2xl overflow-hidden border border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_50px_rgba(6,182,212,0.5)] transition-all duration-700 transform group-hover:-translate-y-4 relative bg-black/40">
+                          <div
+                            className="h-full w-full rounded-[14px] overflow-hidden border-2 border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(6,182,212,0.4)] transition-all duration-300 bg-black/40"
+                          >
                             <img
                               src={img}
-                              className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-110"
+                              className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-105"
                               alt={name}
+                              loading="lazy"
+                              referrerPolicy="no-referrer"
                             />
-                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-end p-6">
-                              <span className="text-[10px] font-magic font-black text-cyan-400 uppercase tracking-[0.4em] text-center drop-shadow-[0_0_10px_rgba(6,182,212,0.8)]">
-                                {name}
-                              </span>
-                              <div className="w-8 h-1 bg-cyan-500 rounded-full mt-4 translate-y-4 group-hover:translate-y-0 transition-transform duration-500" />
-                            </div>
+                          </div>
+                          <div className="absolute inset-x-0 bottom-0 bg-black/85 px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity rounded-b-[14px] border-t border-white/5">
+                            <p className="text-[8px] font-magic font-black text-cyan-400 uppercase tracking-widest text-center truncate">
+                              {name}
+                            </p>
                           </div>
                         </motion.div>
                       );
@@ -5766,7 +5933,7 @@ Return ONLY JSON. No markdown backticks.`;
                   </div>
                   <div>
                     <h2 className="font-magic font-black text-sm uppercase tracking-widest text-purple-400">
-                      Arcane Synergie Audit
+                      Rune Synergie Audit
                     </h2>
                     <p className="text-[10px] uppercase text-white/40 tracking-wider font-bold">
                       Advanced Strategy Extraction
@@ -6509,6 +6676,15 @@ function RoadmapModal({
 
   const releaseHistory = [
     {
+      version: "V2.10.0",
+      date: "May 20, 2026",
+      changes: [
+        "Codie Codex Chatbot Mobile Interface: Adjusted responsive layout and grid configurations to make Codex Codie chatbot fully accessible and visible on mobile devices.",
+        "Saved Decks Mobile Optimization: Restructured mobile layout within administrative Matrix console with comprehensive sub-tabs (Saved Decks vs. Saved Deckbox) to prevent workspace squishing, featuring enlarged Commander Thumbnails for visual clarity.",
+        "Branding Clean-up: Deleted the obsolete 'Strixhaven Companion' text to align the chatbot theme with modern fan content policies."
+      ]
+    },
+    {
       version: "V2.9.0",
       date: "May 20, 2026",
       changes: [
@@ -6603,7 +6779,7 @@ function RoadmapModal({
           action: "manage_decks",
         },
         {
-          term: "ARCANE AUDIT",
+          term: "RUNE AUDIT",
           flow: "Deep Scan",
           desc: "Analyze your decks with world-class AI. Generate technical strategy audits, identify deep synergetic loops, and receive professional optimization advice.",
           action: "manage_decks",
@@ -6618,6 +6794,12 @@ function RoadmapModal({
           flow: "AI Judge",
           desc: "Ask the AI assistant any questions regarding Magic rules, complex card interactions, or specific commander rulings.",
           action: "judge",
+        },
+        {
+          term: "CODEX CODIE",
+          flow: "AI Advisor",
+          desc: "Your ultimate strategic deck-building companion. Propose Commanders, research synergetic combinations, and generate decklists directly via natural language.",
+          action: "codie",
         },
         {
           term: "SETS",
@@ -7347,7 +7529,7 @@ function JudgeView({ user }: { user: any }) {
 
       // Optimized extraction
       const response = await callGemini({
-        model: "gemini-3-flash-preview",
+        model: "gemini-3.5-flash",
         contents: [{ parts: [{ text: queryStr }] }],
         config: {
           systemInstruction: systemPrompt,
@@ -7479,7 +7661,7 @@ function JudgeView({ user }: { user: any }) {
 
       const userMessage = `--- CONTEXT VAN KAARTEN ---\n${context}\n\n--- REGELSVRAAG ---\n${query}\n\nWat is je uitspraak? (Gebruik {T} en mana symbolen, jargon in het Engels, antwoord in het Nederlands):`;
 
-      const modelId = "gemini-3-flash-preview";
+      const modelId = "gemini-3.5-flash";
 
       let ruling = "";
       try {
@@ -7976,13 +8158,13 @@ function SetExplorer({
 
           <div className="flex flex-col items-center gap-4 max-w-lg mx-auto mb-10 relative z-20">
             <div className="relative group w-3/4 opacity-60 focus-within:opacity-100 transition-opacity">
-              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-cyan-400 transition-colors" />
+              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-blue-400 transition-colors" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Sync set code..."
-                className="w-full bg-white/[0.02] backdrop-blur-3xl border border-white/5 rounded-2xl pl-12 pr-4 py-3 text-[11px] focus:border-cyan-500/30 outline-none transition-all font-sans tracking-wide text-white/70"
+                className="w-full bg-white/[0.05] border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-[11px] focus:border-blue-500/30 outline-none transition-all font-sans tracking-wide text-white/70"
               />
             </div>
 
@@ -7993,7 +8175,7 @@ function SetExplorer({
                   <button
                     key={f.id}
                     onClick={() => toggleFilter(f.labels)}
-                    className={`px-3 py-1.5 rounded-xl text-[8px] font-magic font-bold uppercase tracking-widest border transition-all backdrop-blur-xl shrink-0 ${isActive ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "bg-white/[0.02] text-white/20 border-white/5 hover:border-cyan-500/20"}`}
+                    className={`px-3 py-1.5 rounded-xl text-[8px] font-magic font-bold uppercase tracking-widest border transition-all shrink-0 ${isActive ? "bg-blue-500/10 text-blue-400 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.15)]" : "bg-white/[0.02] text-white/20 border-white/5 hover:border-blue-500/20"}`}
                   >
                     {f.name}
                   </button>
@@ -8004,7 +8186,7 @@ function SetExplorer({
 
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
-              <RotateCw className="w-8 h-8 text-cyan-400 animate-spin" />
+              <RotateCw className="w-8 h-8 text-blue-400 animate-spin" />
               <p className="text-[10px] font-magic font-bold text-white/20 uppercase tracking-widest">
                 Expansions loading...
               </p>
@@ -8019,14 +8201,14 @@ function SetExplorer({
                 >
                   <div
                     className={`absolute inset-0 rounded-full opacity-0 group-hover:opacity-20 blur-xl transition-opacity duration-500 pointer-events-none
-                    ${set.isFuture ? "bg-orange-500" : "bg-cyan-500"}
+                    ${set.isFuture ? "bg-orange-500" : "bg-blue-500"}
                   `}
                   />
 
                   <img
                     src={set.icon_svg_uri}
                     className={`w-full h-full object-contain invert transition-all duration-500 relative z-10
-                      ${set.isFuture ? "opacity-30 group-hover:opacity-100 grayscale brightness-125 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)]" : "opacity-40 group-hover:opacity-100 drop-shadow-[0_0_8px_rgba(6,182,212,0.5)]"}
+                      ${set.isFuture ? "opacity-30 group-hover:opacity-100 grayscale brightness-125 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)]" : "opacity-40 group-hover:opacity-100 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]"}
                     `}
                     alt={set.code}
                     onError={(e) => {
@@ -8043,7 +8225,7 @@ function SetExplorer({
                     <div className="mx-auto w-fit bg-black/90 px-3 py-1 rounded border border-white/10 shadow-2xl backdrop-blur-md whitespace-nowrap flex items-center gap-2">
                       <span
                         className={`text-[9px] font-magic font-bold uppercase tracking-widest drop-shadow-md flex-1 text-center
-                        ${set.isFuture ? "text-orange-400" : "text-cyan-400"}
+                        ${set.isFuture ? "text-orange-400" : "text-blue-400"}
                       `}
                       >
                         {set.name}
@@ -8174,19 +8356,19 @@ function ReleaseCalendar({
         <h3 className="text-3xl md:text-5xl font-magic font-black text-white uppercase tracking-[0.3em] drop-shadow-[0_0_20px_rgba(255,255,255,0.1)]">
           RELEASE CALENDAR 2026
         </h3>
-        <p className="text-[8px] md:text-[10px] font-mono text-cyan-400 uppercase tracking-[0.3em] md:tracking-[0.5em] font-black underline decoration-cyan-500/20 underline-offset-8">
+        <p className="text-[8px] md:text-[10px] font-mono text-orange-400 uppercase tracking-[0.3em] md:tracking-[0.5em] font-black underline decoration-orange-500/20 underline-offset-8">
           GLIMPSE INTO THE FUTURE OF THE MULTIVERSE
         </p>
       </div>
 
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
-          <RotateCw className="w-10 h-10 text-cyan-500 animate-spin" />
+          <RotateCw className="w-10 h-10 text-orange-500 animate-spin" />
         </div>
       ) : (
         <div className="flex-1 relative mt-10 overflow-x-auto overflow-y-hidden w-full pb-32 touch-pan-x">
           {/* Main Horizontal Timeline Line */}
-          <div className="absolute left-12 right-12 h-[2px] bg-gradient-to-r from-transparent via-cyan-500 to-orange-500 top-1/2 -translate-y-1/2 opacity-30 shadow-[0_0_30px_rgba(6,182,212,0.5)] z-0 min-w-[1200px] md:min-w-[1600px]" />
+          <div className="absolute left-12 right-12 h-[2px] bg-gradient-to-r from-transparent via-orange-500 to-amber-500 top-1/2 -translate-y-1/2 opacity-30 shadow-[0_0_30px_rgba(249,115,22,0.5)] z-0 min-w-[1200px] md:min-w-[1600px]" />
 
           <div className="flex items-center justify-between h-full relative z-20 overflow-visible flex-nowrap px-12 min-w-[1200px] md:min-w-[1600px]">
             {timeline.map((set, idx) => {
@@ -8198,10 +8380,10 @@ function ReleaseCalendar({
                   releaseDate.getMonth() >= 5);
               const accentColor = isFarFuture
                 ? "text-orange-500"
-                : "text-cyan-500";
+                : "text-amber-500";
               const glowColor = isFarFuture
                 ? "rgba(249,115,22,1)"
-                : "rgba(6,182,212,1)";
+                : "rgba(245,158,11,1)";
               const maskSrc =
                 set.icon_svg_uri || "https://svgs.scryfall.io/sets/modern.svg";
 
@@ -8214,7 +8396,7 @@ function ReleaseCalendar({
                   <div
                     className={`absolute left-1/2 -translate-x-1/2 w-[1px] md:w-px bg-white/10 transition-all duration-700
                     ${isTop ? "bottom-1/2 h-16 sm:h-24 lg:h-32" : "top-1/2 h-16 sm:h-24 lg:h-32"}
-                    group-hover:bg-cyan-500/50 group-hover:opacity-100 opacity-20
+                    group-hover:bg-orange-500/50 group-hover:opacity-100 opacity-20
                   `}
                   />
 
@@ -8222,7 +8404,7 @@ function ReleaseCalendar({
                   <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50">
                     <div
                       className={`w-3 h-3 sm:w-4 sm:h-4 lg:w-5 lg:h-5 rounded-full border-2 bg-black transition-all duration-500
-                      ${isFarFuture ? "border-orange-500 shadow-[0_0_15px_rgba(249,115,22,1)]" : "border-cyan-500 shadow-[0_0_15px_rgba(6,182,212,1)]"}
+                      ${isFarFuture ? "border-orange-500 shadow-[0_0_15px_rgba(249,115,22,1)]" : "border-amber-500 shadow-[0_0_15px_rgba(245,158,11,1)]"}
                       group-hover:scale-150 group-hover:bg-current ${accentColor}
                     `}
                     />
@@ -8239,7 +8421,7 @@ function ReleaseCalendar({
                     <button
                       onClick={() => onReleaseClick(set.queryCodes)}
                       className={`w-10 h-10 sm:w-16 sm:h-16 lg:w-20 lg:h-20 rounded-full flex items-center justify-center bg-black border-2 border-white/5 relative z-30 shadow-[0_10px_30px_rgba(0,0,0,0.8)] transition-all duration-700 group-hover:scale-125 shrink-0 focus:outline-none cursor-pointer
-                      ${isFarFuture ? "group-hover:border-orange-500 shadow-orange-500/20" : "group-hover:border-cyan-500 shadow-cyan-500/20"}
+                      ${isFarFuture ? "group-hover:border-orange-500 shadow-orange-500/20" : "group-hover:border-amber-500 shadow-amber-500/20"}
                     `}
                     >
                       <div className="absolute inset-0 rounded-full bg-radial-gradient from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -8265,9 +8447,9 @@ function ReleaseCalendar({
                     {/* Info Box */}
                     <button
                       onClick={() => onReleaseClick(set.queryCodes)}
-                      className="w-full text-center rune-panel p-2 sm:p-4 lg:p-6 bg-black/90 backdrop-blur-md hover:border-white/30 transition-all cursor-pointer group/box shadow-2xl relative"
+                      className="w-full text-center rune-panel p-2 sm:p-4 lg:p-6 bg-black/90 hover:border-white/30 transition-all cursor-pointer group/box shadow-2xl relative"
                     >
-                      <h4 className="text-[9px] sm:text-[11px] lg:text-[13px] font-magic font-black text-white uppercase tracking-[0.05em] lg:tracking-[0.1em] mb-1 lg:mb-2 group-hover/box:text-cyan-400 transition-all leading-tight line-clamp-2 drop-shadow-md">
+                      <h4 className="text-[9px] sm:text-[11px] lg:text-[13px] font-magic font-black text-white uppercase tracking-[0.05em] lg:tracking-[0.1em] mb-1 lg:mb-2 group-hover/box:text-orange-400 transition-all leading-tight line-clamp-2 drop-shadow-md">
                         {set.name}
                       </h4>
                       <p
@@ -8339,15 +8521,15 @@ function OutlawSheriff() {
               <h1 className="text-5xl sm:text-7xl md:text-[12rem] font-magic font-black text-white uppercase tracking-[0.25em] leading-none drop-shadow-[0_0_60px_rgba(255,255,255,0.08)]">
                 SHERIFF
               </h1>
-              <div className="absolute -inset-x-10 md:-inset-x-20 top-1/2 -translate-y-1/2 h-[1px] bg-gradient-to-r from-transparent via-orange-500/40 to-transparent" />
-              <div className="absolute left-1/2 -bottom-6 md:-bottom-8 -translate-x-1/2 flex gap-3 md:gap-6 items-center whitespace-nowrap bg-black/40 backdrop-blur-3xl px-4 md:px-8 py-1.5 md:py-2 rounded-full border border-orange-500/20">
-                <Shield className="w-3.5 h-3.5 md:w-5 h-5 text-orange-500" />
-                <span className="text-orange-500 font-magic text-[8px] md:text-[10px] tracking-[0.4em] md:tracking-[0.8em] uppercase font-black">Multiplayer Variant</span>
-                <Shield className="w-3.5 h-3.5 md:w-5 h-5 text-orange-500" />
+              <div className="absolute -inset-x-10 md:-inset-x-20 top-1/2 -translate-y-1/2 h-[1px] bg-gradient-to-r from-transparent via-amber-500/40 to-transparent" />
+              <div className="absolute left-1/2 -bottom-6 md:-bottom-8 -translate-x-1/2 flex gap-3 md:gap-6 items-center whitespace-nowrap bg-black/80 px-4 md:px-8 py-1.5 md:py-2 rounded-full border border-amber-500/20">
+                <Shield className="w-3.5 h-3.5 md:w-5 h-5 text-amber-500" />
+                <span className="text-amber-500 font-magic text-[8px] md:text-[10px] tracking-[0.4em] md:tracking-[0.8em] uppercase font-black">Multiplayer Variant</span>
+                <Shield className="w-3.5 h-3.5 md:w-5 h-5 text-amber-500" />
               </div>
             </motion.div>
           </div>
-          <motion.p variants={itemVariants} className="text-[10px] md:text-sm font-mono text-cyan-400/50 tracking-[0.3em] md:tracking-[0.6em] uppercase max-w-3xl mx-auto pt-4 md:pt-10 px-4">
+          <motion.p variants={itemVariants} className="text-[10px] md:text-sm font-mono text-amber-400/50 tracking-[0.3em] md:tracking-[0.6em] uppercase max-w-3xl mx-auto pt-4 md:pt-10 px-4">
             Een tactisch spel van deductie en overleving
           </motion.p>
         </div>
@@ -8378,22 +8560,22 @@ function OutlawSheriff() {
                     <p className="italic">
                       Sheriff is een spel waarbij je niet weet welke rol de andere spelers hebben. Elke speler krijgt een geheim doel en moet samenwerken of anderen misleiden om te winnen.
                     </p>
-                    <div className="bg-orange-500/10 border-l-2 md:border-l-4 border-orange-500 p-4 md:p-8 rounded-r-xl md:rounded-r-[2rem] space-y-2 md:space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
-                       <h4 className="text-orange-500 font-magic font-black uppercase text-[9px] md:text-[11px] tracking-widest">De Rol van de Sheriff</h4>
+                    <div className="bg-amber-500/10 border-l-2 md:border-l-4 border-amber-500 p-4 md:p-8 rounded-r-xl md:rounded-r-[2rem] space-y-2 md:space-y-4 shadow-[0_10px_30px_rgba(0,0,0,0.3)]">
+                       <h4 className="text-amber-500 font-magic font-black uppercase text-[9px] md:text-[11px] tracking-widest">De Rol van de Sheriff</h4>
                        <p className="text-white/80 leading-relaxed text-[11px] md:text-[13px]">
-                         De Sheriff is de enige speler die <span className="text-white font-bold underline decoration-orange-500/40">bekend is</span> bij iedereen. Omdat iedereen hem wil uitschakelen, begint de Sheriff met <span className="text-orange-500 font-black">50% extra levens</span>.
+                         De Sheriff is de enige speler die <span className="text-white font-bold underline decoration-amber-500/40">bekend is</span> bij iedereen. Omdat iedereen hem wil uitschakelen, begint de Sheriff met <span className="text-amber-500 font-black">50% extra levens</span>.
                        </p>
                     </div>
                   </div>
 
                   <div className="space-y-4 md:space-y-6">
                     <div className="rune-panel bg-white/[0.02] rounded-xl md:rounded-[2.5rem] border border-white/5 p-4 md:p-8 space-y-4 md:space-y-6">
-                      <h4 className="text-[10px] md:text-xs font-magic font-black text-orange-500 uppercase tracking-widest">Rol Verdeling</h4>
+                      <h4 className="text-[10px] md:text-xs font-magic font-black text-amber-500 uppercase tracking-widest">Rol Verdeling</h4>
                       <table className="w-full text-[9px] md:text-sm font-sans text-white/70 border-collapse">
                         <thead>
                           <tr className="border-b border-white/10 text-left">
                             <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-white/40">Spelers</th>
-                            <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-orange-500">S</th>
+                            <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-amber-500">S</th>
                             <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-blue-400">D</th>
                             <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-red-500">O</th>
                             <th className="pb-2 md:pb-3 font-magic uppercase tracking-widest text-cyan-400">R</th>
@@ -8473,9 +8655,9 @@ function OutlawSheriff() {
                   },
                   { 
                     n: "Renegade", 
-                    c: "text-cyan-400", 
-                    bg: "bg-cyan-400/10",
-                    border: "border-cyan-400/20",
+                    c: "text-amber-400", 
+                    bg: "bg-amber-400/10",
+                    border: "border-amber-400/20",
                     t: "De Renegade",
                     d: "Je speelt voor jezelf. Je wint als je als laatste overblijft, maar pas op: de Sheriff moet als allerlaatste doodgaan."
                   }
@@ -8500,18 +8682,18 @@ function OutlawSheriff() {
           {/* Right Column: Meta & Strategy */}
           <div className="lg:col-span-4 space-y-6 md:space-y-12">
             {/* Victory Conditions Panel */}
-            <motion.div variants={itemVariants} className="rune-panel bg-black/60 border border-cyan-500/20 rounded-2xl md:rounded-[3rem] p-6 md:p-10 space-y-8 md:space-y-14 shadow-2xl relative overflow-hidden">
-               <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 blur-3xl rounded-full" />
+            <motion.div variants={itemVariants} className="rune-panel bg-black/60 border border-amber-500/20 rounded-2xl md:rounded-[3rem] p-6 md:p-10 space-y-8 md:space-y-14 shadow-2xl relative overflow-hidden">
+               <div className="absolute top-0 right-0 w-32 h-32 bg-amber-500/5 blur-3xl rounded-full" />
                
                <div className="space-y-6 md:space-y-8 relative z-10">
                  <h3 className="text-lg md:text-2xl font-magic font-black text-white uppercase tracking-widest border-b border-white/10 pb-4 md:pb-6 flex items-center gap-3 md:gap-4">
-                   <Zap className="w-4 h-4 md:w-5 h-5 text-cyan-400 animate-pulse" />
+                   <Zap className="w-4 h-4 md:w-5 h-5 text-amber-400 animate-pulse" />
                    Overwinning
                  </h3>
                  <div className="space-y-6 md:space-y-10">
                    <div className="space-y-2 md:space-y-3 group/win">
-                     <p className="text-[9px] md:text-[11px] font-magic font-black text-orange-500 uppercase tracking-widest flex items-center gap-2">
-                       <span className="w-1.5 h-1.5 bg-orange-500 rounded-full" />
+                     <p className="text-[9px] md:text-[11px] font-magic font-black text-amber-500 uppercase tracking-widest flex items-center gap-2">
+                       <span className="w-1.5 h-1.5 bg-amber-500 rounded-full" />
                        Sheriff en Deputy('s)
                      </p>
                      <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
@@ -8528,8 +8710,8 @@ function OutlawSheriff() {
                      </p>
                    </div>
                    <div className="space-y-2 md:space-y-3 group/win border-t border-white/5 pt-6 md:pt-8">
-                     <p className="text-[9px] md:text-[11px] font-magic font-black text-cyan-400 uppercase tracking-widest flex items-center gap-2">
-                        <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full" />
+                     <p className="text-[9px] md:text-[11px] font-magic font-black text-amber-400 uppercase tracking-widest flex items-center gap-2">
+                        <span className="w-1.5 h-1.5 bg-amber-400 rounded-full" />
                         Renegade
                      </p>
                      <p className="text-[11px] md:text-[13px] text-white/70 italic leading-relaxed pl-3 md:pl-4 border-l border-white/5">
@@ -8619,6 +8801,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
   const [showUserDetailsMobile, setShowUserDetailsMobile] = useState(false);
   const [userDecks, setUserDecks] = useState<any[]>([]);
   const [userDeckbox, setUserDeckbox] = useState<any[]>([]);
+  const [adminSubTab, setAdminSubTab] = useState<"decks" | "deckbox">("decks");
   const [loading, setLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [systemStats, setSystemStats] = useState({
@@ -8868,10 +9051,26 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
                 </div>
               </div>
 
+              {/* Mobile Sub-tabs for Decks / Deckbox */}
+              <div className="lg:hidden flex bg-black border-b border-white/10 relative z-30 shrink-0 select-none">
+                <button
+                  onClick={() => setAdminSubTab("decks")}
+                  className={`flex-1 py-4 text-center text-xs font-magic font-extrabold uppercase tracking-widest border-r border-white/10 transition-all ${adminSubTab === "decks" ? "text-orange-500 bg-orange-500/5 border-b-2 border-b-orange-500 font-extrabold" : "text-white/40 hover:text-white"}`}
+                >
+                  Decks ({userDecks.length})
+                </button>
+                <button
+                  onClick={() => setAdminSubTab("deckbox")}
+                  className={`flex-1 py-4 text-center text-xs font-magic font-extrabold uppercase tracking-widest transition-all ${adminSubTab === "deckbox" ? "text-cyan-400 bg-cyan-400/5 border-b-2 border-b-cyan-400 font-extrabold" : "text-white/40 hover:text-white"}`}
+                >
+                  Deckbox ({userDeckbox.length})
+                </button>
+              </div>
+
               {/* Data Grid */}
               <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-px bg-white/5 shrink-0">
                 {/* DECK REPOSITORY */}
-                <div className="flex flex-col bg-[#030303] overflow-hidden">
+                <div className={`flex flex-col bg-[#030303] overflow-hidden ${adminSubTab === "decks" ? "flex" : "hidden lg:flex"}`}>
                    <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
                       <div className="flex items-center gap-2">
                         <Database className="w-3.5 h-3.5 text-orange-500" />
@@ -8956,7 +9155,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
                 </div>
 
                 {/* DECKBOX ARTIFACTS */}
-                <div className="flex flex-col bg-[#030303] border-l border-white/10 overflow-hidden">
+                <div className={`flex flex-col bg-[#030303] border-l border-white/10 overflow-hidden ${adminSubTab === "deckbox" ? "flex" : "hidden lg:flex"}`}>
                    <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
                       <div className="flex items-center gap-2">
                         <Box className="w-3.5 h-3.5 text-cyan-400" />
