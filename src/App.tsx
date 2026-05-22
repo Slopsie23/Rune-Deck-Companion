@@ -2166,7 +2166,7 @@ export default function App() {
       // Query refinements: 
       // - Single legends MUST have exact CI (id=ciString)
       // - Partners and Backgrounds CAN have smaller CI (id<=ciString) because they only form the CI when paired
-      const query = `f:commander ((t:legendary t:creature id=${ciString}) or ((is:partner or is:background) id<=${ciString}))`;
+      const query = `f:commander ((t:legendary t:creature id=${ciString}) or ((is:partner or is:background) id<=${ciString})) -is:digital -is:alchemy`;
       const response = await fetch(
         `/api/sf/cards/search?q=${encodeURIComponent(query)}&order=edhrec`,
       );
@@ -2308,14 +2308,16 @@ export default function App() {
       // System / Format Filters
       if (!options?.skipFormatFilters) {
         queryParts.push(
-          "(-is:digital OR is:paper)",
+          "is:paper",
+          "-is:digital",
+          "-is:alchemy",
           "-is:funny",
           "include:extras",
         );
       }
 
-      // Universal Exclusions - ALWAYS exclude tokens and emblems
-      queryParts.push("-is:token", "-t:token", "-t:emblem", "-is:art_series");
+      // Universal Exclusions - ALWAYS exclude tokens, emblems, art series, digital, and alchemy cards
+      queryParts.push("-is:token", "-t:token", "-t:emblem", "-is:art_series", "-is:digital", "-is:alchemy");
 
       // Color Identity Enforcement
       if (ci && ci !== "Any" && !options?.skipCI) {
@@ -3594,7 +3596,7 @@ Return ONLY JSON. No markdown backticks.`;
       <div className="absolute top-0 right-0 w-[50vh] h-[50vh] bg-cyan-500/5 blur-[150px] rounded-full pointer-events-none" />
 
       {/* Mobile Top Bar */}
-      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#0c0c0c]/90 backdrop-blur-3xl border-b border-white/[0.04] z-[120] flex items-center justify-between px-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
+      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-[#1f2125]/90 backdrop-blur-3xl border-b border-white/[0.04] z-[120] flex items-center justify-between px-5 shadow-[0_10px_40px_rgba(0,0,0,0.5)]">
         <div
           className="flex items-center gap-3 cursor-pointer"
           onClick={goHome}
@@ -3625,7 +3627,7 @@ Return ONLY JSON. No markdown backticks.`;
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="md:hidden fixed top-16 left-0 right-0 z-[110] bg-[#0c0c0c]/95 backdrop-blur-2xl border-b border-white/10 p-5 shadow-2xl overflow-y-auto max-h-[70vh] no-scrollbar"
+            className="md:hidden fixed top-16 left-0 right-0 z-[110] bg-[#1f2125]/95 backdrop-blur-2xl border-b border-white/10 p-5 shadow-2xl overflow-y-auto max-h-[70vh] no-scrollbar"
           >
             <div className="flex items-center justify-between mb-4 pb-2 border-b border-white/5">
               <h3 className="text-xs font-magic font-black uppercase tracking-widest text-cyan-400">Live Filters</h3>
@@ -3669,7 +3671,7 @@ Return ONLY JSON. No markdown backticks.`;
       <aside
         id="sidebar-root"
         className={`
-        fixed inset-y-0 left-0 z-[100] w-[300px] bg-[#0c0c0c] border-r-2 border-[#1a1a1a] shadow-[4px_0_24px_rgba(0,0,0,0.8)] flex flex-col shrink-0 transition-transform duration-500 ease-in-out md:relative md:translate-x-0
+        fixed inset-y-0 left-0 z-[100] w-[300px] bg-[#1f2125] border-r-2 border-[#2b2b30] shadow-[4px_0_24px_rgba(0,0,0,0.8)] flex flex-col shrink-0 transition-transform duration-500 ease-in-out md:relative md:translate-x-0
         ${isMobileMenuOpen ? "translate-x-0" : "-translate-x-full"}
       `}
       >
@@ -6119,7 +6121,7 @@ Return ONLY JSON. No markdown backticks.`;
               initial={{ x: "100%" }}
               animate={{ x: 0 }}
               exit={{ x: "100%" }}
-              className="fixed inset-y-0 right-0 w-full sm:w-[400px] bg-[#0c0c0c] border-l-2 border-[#1a1a1a] shadow-[-50px_0_100px_rgba(0,0,0,0.8)] z-[110] p-6 flex flex-col gap-6"
+              className="fixed inset-y-0 right-0 w-full sm:w-[400px] bg-[#1f2125] border-l-2 border-[#2b2b30] shadow-[-50px_0_100px_rgba(0,0,0,0.8)] z-[110] p-6 flex flex-col gap-6"
             >
               <div className="absolute top-0 bottom-0 left-0 w-px bg-gradient-to-b from-transparent via-cyan-500/30 to-transparent" />
 
@@ -7976,7 +7978,7 @@ function SetExplorer({
       labels: ["masters", "draft_innovation"],
       name: "Masters/Draft",
     },
-    { id: "modern", labels: ["eternal", "alchemy"], name: "Modern/Eternal" },
+    { id: "modern", labels: ["eternal"], name: "Modern/Eternal" },
     {
       id: "masterpiece",
       labels: ["masterpiece", "arsenal", "spellbook", "from_the_vault"],
@@ -8035,7 +8037,8 @@ function SetExplorer({
           .filter((s: ScryfallSet) => {
             return (
               s.card_count > 0 &&
-              (!s.digital || s.set_type === "alchemy") &&
+              !s.digital &&
+              s.set_type !== "alchemy" &&
               !excludedCodes.includes(s.code.toLowerCase()) &&
               !s.name.toLowerCase().includes("omenpaths")
             );
@@ -8135,7 +8138,45 @@ function SetExplorer({
 
   return (
     <div className="h-full relative overflow-hidden flex flex-col w-full bg-transparent">
-      {/* Background Runes - Minimal & Non-Scrolling Fixed with Viewport removed to avoid double background */}
+      {/* Background Runes - Beautiful Runic Temporal Chrono-Grid Backdrop */}
+      <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden select-none opacity-25">
+        {/* Luminous Temporal Axis Guides */}
+        <div className="absolute left-[12%] top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-cyan-500/20 to-transparent" />
+        <div className="absolute left-[28%] top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-cyan-500/10 to-transparent" />
+        <div className="absolute left-[50%] top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-orange-500/15 to-transparent animate-pulse" />
+        <div className="absolute left-[72%] top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-cyan-500/10 to-transparent" />
+        <div className="absolute left-[88%] top-0 bottom-0 w-px bg-gradient-to-b from-transparent via-orange-500/20 to-transparent" />
+
+        {/* Chrono Timeline Horizontal Intersects */}
+        <div className="absolute left-0 right-0 top-[20%] h-px bg-gradient-to-r from-transparent via-cyan-500/10 to-transparent" />
+        <div className="absolute left-0 right-0 top-[45%] h-px bg-gradient-to-r from-transparent via-orange-500/10 to-transparent" />
+        <div className="absolute left-0 right-0 top-[75%] h-px bg-gradient-to-r from-transparent via-cyan-500/10 to-transparent" />
+
+        {/* Slow-Rotating Multiverse Celestial Rings */}
+        <div className="absolute -top-[5%] -left-[5%] w-[480px] h-[480px] rounded-full border border-cyan-500/10 animate-[spin_120s_linear_infinite] flex items-center justify-center">
+          <div className="w-[420px] h-[420px] rounded-full border border-dashed border-cyan-500/5" />
+          <div className="absolute w-[360px] h-[360px] rounded-full border border-double border-orange-500/5 animate-[spin_80s_linear_infinite]" />
+          <div className="absolute w-2.5 h-2.5 rounded-full bg-cyan-400/30 top-[40px] blur-[1px]" />
+          <div className="absolute w-1.5 h-1.5 rounded-full bg-orange-400/30 bottom-[60px]" />
+        </div>
+
+        <div className="absolute -bottom-[10%] -right-[10%] w-[540px] h-[540px] rounded-full border border-orange-500/10 animate-[spin_160s_linear_infinite_reverse] flex items-center justify-center">
+          <div className="w-[490px] h-[490px] rounded-full border border-dashed border-orange-500/5" />
+          <div className="absolute w-[420px] h-[420px] rounded-full border border-cyan-500/5 animate-[spin_90s_linear_infinite]" />
+          <div className="absolute w-2.5 h-2.5 rounded-full bg-orange-400/30 top-[80px]" />
+          <div className="absolute w-1.5 h-1.5 rounded-full bg-cyan-400/30 bottom-[100px]" />
+        </div>
+
+        {/* Immersive Holographic Nebula Glows in User's Cyan & Orange Theme */}
+        <div className="absolute top-[25%] left-[30%] -translate-x-1/2 w-[550px] h-[550px] rounded-full bg-radial from-cyan-500/5 to-transparent blur-[130px]" />
+        <div className="absolute bottom-[20%] left-[70%] -translate-x-1/2 w-[650px] h-[650px] rounded-full bg-radial from-orange-500/5 to-transparent blur-[140px]" />
+
+        {/* Ambient runic letters drifting along the temporal background */}
+        <div className="absolute top-[18%] left-[6%] text-[10px] font-magic text-cyan-400/10 tracking-[0.3em]">ᛋ ᛉ ᛊ ᛗ</div>
+        <div className="absolute top-[52%] right-[8%] text-[10px] font-magic text-orange-400/10 tracking-[0.3em]">ᚺ ᚠ ᛏ ᛒ</div>
+        <div className="absolute bottom-[30%] left-[8%] text-[10px] font-magic text-orange-400/10 tracking-[0.3em]">ᛉ ᛊ ᛗ ᚺ</div>
+        <div className="absolute bottom-[12%] right-[12%] text-[10px] font-magic text-cyan-400/10 tracking-[0.3em]">ᚠ ᛏ ᛒ ᛋ</div>
+      </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar pb-20 relative z-10 p-4 sm:p-8">
         <div className="max-w-6xl mx-auto space-y-12">
@@ -8144,9 +8185,9 @@ function SetExplorer({
           {/* Title Area */}
           <div className="text-center space-y-4 mb-20 relative">
             <div className="flex items-center justify-center gap-4 text-orange-500/30 font-magic">
-              <span className="text-4xl">ᛉ</span>
-              <div className="h-[1px] w-12 bg-orange-500/20" />
-              <span className="text-4xl">ᛊ</span>
+              <span className="text-4xl text-cyan-500/40">ᛉ</span>
+              <div className="h-[1px] w-12 bg-gradient-to-r from-cyan-500/20 to-orange-500/20" />
+              <span className="text-4xl text-orange-500/40">ᛊ</span>
             </div>
             <h1 className="text-3xl md:text-5xl font-magic font-black text-white uppercase tracking-[0.2em] drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">
               Expansions
@@ -8158,13 +8199,13 @@ function SetExplorer({
 
           <div className="flex flex-col items-center gap-4 max-w-lg mx-auto mb-10 relative z-20">
             <div className="relative group w-3/4 opacity-60 focus-within:opacity-100 transition-opacity">
-              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-blue-400 transition-colors" />
+              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-cyan-400 transition-colors" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Sync set code..."
-                className="w-full bg-white/[0.05] border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-[11px] focus:border-blue-500/30 outline-none transition-all font-sans tracking-wide text-white/70"
+                className="w-full bg-white/[0.05] border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-[11px] focus:border-cyan-500/30 outline-none transition-all font-sans tracking-wide text-white/70"
               />
             </div>
 
@@ -8175,7 +8216,7 @@ function SetExplorer({
                   <button
                     key={f.id}
                     onClick={() => toggleFilter(f.labels)}
-                    className={`px-3 py-1.5 rounded-xl text-[8px] font-magic font-bold uppercase tracking-widest border transition-all shrink-0 ${isActive ? "bg-blue-500/10 text-blue-400 border-blue-500/30 shadow-[0_0_15px_rgba(59,130,246,0.15)]" : "bg-white/[0.02] text-white/20 border-white/5 hover:border-blue-500/20"}`}
+                    className={`px-3 py-1.5 rounded-xl text-[8px] font-magic font-bold uppercase tracking-widest border transition-all shrink-0 ${isActive ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "bg-white/[0.02] text-white/20 border-white/5 hover:border-cyan-500/20"}`}
                   >
                     {f.name}
                   </button>
@@ -8186,57 +8227,107 @@ function SetExplorer({
 
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
-              <RotateCw className="w-8 h-8 text-blue-400 animate-spin" />
+              <RotateCw className="w-8 h-8 text-cyan-400 animate-spin" />
               <p className="text-[10px] font-magic font-bold text-white/20 uppercase tracking-widest">
                 Expansions loading...
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 gap-x-2 gap-y-4 sm:gap-x-4 sm:gap-y-6 px-2 relative z-10 w-full">
-              {filteredSets.map((set) => (
-                <div
-                  key={set.id || set.code}
-                  onClick={() => onSetClick(set.queryCodes || [set.code])}
-                  className="group relative aspect-square flex items-center justify-center p-2 hover:scale-[1.15] active:scale-[0.95] transition-all duration-500"
-                >
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-x-6 gap-y-10 sm:gap-x-8 sm:gap-y-12 px-2 relative z-10 w-full animate-fade-in">
+              {filteredSets.map((set) => {
+                const gradId = `set-grad-${set.code}`;
+                const maskId = `set-mask-${set.code}`;
+                return (
                   <div
-                    className={`absolute inset-0 rounded-full opacity-0 group-hover:opacity-20 blur-xl transition-opacity duration-500 pointer-events-none
-                    ${set.isFuture ? "bg-orange-500" : "bg-blue-500"}
-                  `}
-                  />
-
-                  <img
-                    src={set.icon_svg_uri}
-                    className={`w-full h-full object-contain invert transition-all duration-500 relative z-10
-                      ${set.isFuture ? "opacity-30 group-hover:opacity-100 grayscale brightness-125 drop-shadow-[0_0_8px_rgba(249,115,22,0.5)]" : "opacity-40 group-hover:opacity-100 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]"}
-                    `}
-                    alt={set.code}
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).src =
-                        "https://svgs.scryfall.io/sets/modern.svg";
-                    }}
-                  />
-
-                  {set.isFuture && (
-                    <div className="absolute top-0 right-0 w-1.5 h-1.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)] z-20" />
-                  )}
-
-                  <div className="absolute inset-x-0 -bottom-8 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none translate-y-2 group-hover:translate-y-0 z-[100]">
-                    <div className="mx-auto w-fit bg-black/90 px-3 py-1 rounded border border-white/10 shadow-2xl backdrop-blur-md whitespace-nowrap flex items-center gap-2">
-                      <span
-                        className={`text-[9px] font-magic font-bold uppercase tracking-widest drop-shadow-md flex-1 text-center
-                        ${set.isFuture ? "text-orange-400" : "text-blue-400"}
+                    key={set.id || set.code}
+                    onClick={() => onSetClick(set.queryCodes || [set.code])}
+                    className="group relative flex flex-col items-center justify-center p-1 hover:scale-115 active:scale-95 transition-all duration-500 cursor-pointer"
+                  >
+                    {/* Glowing background aura under the logo cell on hover */}
+                    <div
+                      className={`absolute inset-0 rounded-full opacity-0 group-hover:opacity-15 blur-xl transition-opacity duration-500 pointer-events-none
+                        ${set.isFuture ? "from-orange-500 to-amber-500 bg-gradient-to-t" : "from-cyan-400 to-blue-500 bg-gradient-to-t"}
                       `}
-                      >
-                        {set.name}
-                      </span>
-                      <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 font-sans tracking-widest font-bold">
-                        {set.code.toUpperCase()}
-                      </span>
+                    />
+
+                    {/* Vector outline & gradient-fill using high-compatibility dual dropshadow filters to provide perfect contrast */}
+                    <svg 
+                      className="w-16 h-16 sm:w-20 sm:h-20 relative z-10 transition-all duration-300 drop-shadow-[0_2px_4px_rgba(0,0,0,0.95)] drop-shadow-[0_4px_10px_rgba(0,0,0,0.7)] group-hover:scale-105"
+                      style={{
+                        filter: set.isFuture 
+                          ? "drop-shadow(0 2px 6px rgba(251,146,60,0.45))" 
+                          : "drop-shadow(0 2px 6px rgba(6,182,212,0.5))"
+                      }}
+                      viewBox="0 0 100 100"
+                    >
+                      <defs>
+                        {/* Dynamic linear gradient to create beautiful deep color variations */}
+                        <linearGradient id={gradId} x1="0%" y1="0%" x2="0%" y2="100%">
+                          {set.isFuture ? (
+                            <>
+                              <stop offset="0%" stopColor="#f97316" /> {/* Orange-500 */}
+                              <stop offset="50%" stopColor="#f59e0b" /> {/* Amber-500 */}
+                              <stop offset="100%" stopColor="#dc2626" /> {/* Red-600 */}
+                            </>
+                          ) : (
+                            <>
+                              <stop offset="0%" stopColor="#22d3ee" /> {/* Cyan-400 */}
+                              <stop offset="50%" stopColor="#6366f1" /> {/* Indigo-500 */}
+                              <stop offset="100%" stopColor="#1d4ed8" /> {/* Blue-700 */}
+                            </>
+                          )}
+                        </linearGradient>
+                        
+                        {/* SVG mask with dynamic inverted image input fallback */}
+                        <mask id={maskId} maskUnits="userSpaceOnUse" maskContentUnits="userSpaceOnUse">
+                          <image 
+                            href={set.icon_svg_uri} 
+                            width="84" 
+                            height="84"
+                            x="8"
+                            y="8"
+                            style={{ filter: "invert(1) brightness(4)" }}
+                            onError={(e) => {
+                              const target = e.target as SVGImageElement;
+                              if (target.getAttribute("href") !== "https://svgs.scryfall.io/sets/modern.svg") {
+                                target.setAttribute("href", "https://svgs.scryfall.io/sets/modern.svg");
+                              }
+                            }}
+                          />
+                        </mask>
+                      </defs>
+                      
+                      {/* Rect with custom-created linear gradient masked directly to the SVG icon shape */}
+                      <rect 
+                        width="100" 
+                        height="100" 
+                        fill={`url(#${gradId})`} 
+                        mask={`url(#${maskId})`}
+                      />
+                    </svg>
+
+                    {set.isFuture && (
+                      <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.8)] z-20" />
+                    )}
+
+                    {/* Detailed namecard projection on hover */}
+                    <div className="absolute inset-x-0 -bottom-8 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none translate-y-2 group-hover:translate-y-0 z-[100]">
+                      <div className="mx-auto w-fit bg-zinc-950/95 px-3 py-1 rounded border border-white/10 shadow-2xl backdrop-blur-md whitespace-nowrap flex items-center gap-2">
+                        <span
+                          className={`text-[9px] font-magic font-bold uppercase tracking-widest drop-shadow-md flex-1 text-center
+                          ${set.isFuture ? "text-orange-400" : "text-cyan-400"}
+                        `}
+                        >
+                          {set.name}
+                        </span>
+                        <span className="text-[8px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 font-sans tracking-widest font-bold">
+                          {set.code.toUpperCase()}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -8871,7 +8962,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[2000] bg-[#030303] flex flex-col font-mono text-white overflow-hidden">
+    <div className="fixed inset-0 z-[2000] bg-[#1f2125] flex flex-col font-mono text-white overflow-hidden">
       {/* Top Status Bar */}
       <div className="h-14 border-b border-orange-500/20 bg-black flex items-center justify-between px-4 lg:px-6 shrink-0 relative overflow-hidden">
         <div className="absolute inset-0 bg-gradient-to-r from-orange-500/5 via-transparent to-transparent opacity-50" />
@@ -8996,7 +9087,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
 
         {/* Main Content Area */}
         <div className={`
-          flex-1 flex flex-col relative overflow-hidden bg-[#030303] z-10 transition-transform duration-300
+          flex-1 flex flex-col relative overflow-hidden bg-[#1f2125] z-10 transition-transform duration-300
           ${showUserDetailsMobile ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
         `}>
           {/* Background Decor */}
@@ -9070,7 +9161,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
               {/* Data Grid */}
               <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-px bg-white/5 shrink-0">
                 {/* DECK REPOSITORY */}
-                <div className={`flex flex-col bg-[#030303] overflow-hidden ${adminSubTab === "decks" ? "flex" : "hidden lg:flex"}`}>
+                <div className={`flex flex-col bg-[#1f2125] overflow-hidden ${adminSubTab === "decks" ? "flex" : "hidden lg:flex"}`}>
                    <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
                       <div className="flex items-center gap-2">
                         <Database className="w-3.5 h-3.5 text-orange-500" />
@@ -9155,7 +9246,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
                 </div>
 
                 {/* DECKBOX ARTIFACTS */}
-                <div className={`flex flex-col bg-[#030303] border-l border-white/10 overflow-hidden ${adminSubTab === "deckbox" ? "flex" : "hidden lg:flex"}`}>
+                <div className={`flex flex-col bg-[#1f2125] border-l border-white/10 overflow-hidden ${adminSubTab === "deckbox" ? "flex" : "hidden lg:flex"}`}>
                    <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
                       <div className="flex items-center gap-2">
                         <Box className="w-3.5 h-3.5 text-cyan-400" />
