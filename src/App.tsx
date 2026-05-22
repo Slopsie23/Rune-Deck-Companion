@@ -3144,12 +3144,19 @@ export default function App() {
   // --- Render Helpers ---
   const autoAddCommanderTags = async (
     deckId: string,
-    commanderNames: string[],
+    commanderNames: any[],
   ) => {
     try {
       if (!commanderNames || commanderNames.length === 0) return;
 
-      const validNames = commanderNames.filter((n) => !n.startsWith("http"));
+      const rawNames: string[] = commanderNames.map((c: any) => {
+        if (!c) return "";
+        if (typeof c === "string") return c;
+        if (typeof c === "object" && c.name) return c.name;
+        return "";
+      }).filter((n) => n && n.trim() !== "");
+
+      const validNames = rawNames.filter((n) => !n.startsWith("http"));
       if (validNames.length === 0) {
         showMessage("Legacy deck detected. Please reload this deck first.");
         return;
