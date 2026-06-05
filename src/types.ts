@@ -14,6 +14,8 @@ export interface Card {
   prices?: {
     eur?: string;
     usd?: string;
+    eur_foil?: string;
+    [key: string]: any;
   };
   type_line: string;
   rarity: string;
@@ -37,6 +39,8 @@ export interface DeckCard {
   highRes?: string;
   prices?: {
     eur?: string;
+    eur_foil?: string;
+    [key: string]: any;
   };
 }
 

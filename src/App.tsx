@@ -109,7 +109,7 @@ import {
 } from "recharts";
 // import runesBackground from './assets/images/runes_background_1777929551380.png';
 const runesBackground = "/runebg.png";
-const VERSION = "V2.10.0";
+const VERSION = "V2.11.0";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
@@ -541,59 +541,178 @@ export default function App() {
     const deck = savedDecks.find(d => d.id === deckId);
     if (!deck) return;
     
-    startArcaneLoading("Rune-overeenstemming berekenen...");
+    startArcaneLoading("Calculating strategic rune alignment...");
     try {
-      const cardsSnapshot = await getDocs(collection(db, "users", user.uid, "decks", deck.id, "cards"));
-      const cards: any[] = cardsSnapshot.docs.map(d => d.data());
+      // 1. Fetch internal subcollection cards (local decks)
+      const dbCardsSnap = await getDocs(collection(db, "users", user.uid, "decks", deck.id, "cards"));
+      let cardsListArray: { name: string; qty: number; type_line?: string }[] = [];
       
-      const cardList = cards.map(c => `${c.qty}x ${c.name} (${c.type_line || ''})`).join("\n");
-      const commanders = deck.commanders.join(", ");
+      if (!dbCardsSnap.empty) {
+        cardsListArray = dbCardsSnap.docs.map(doc => {
+          const d = doc.data();
+          return {
+            name: d.name,
+            qty: d.qty || d.quantity || 1,
+            type_line: d.type_line || ""
+          };
+        });
+      } else {
+        // 2. Fallback to viewingDeckCards (if active/loaded)
+        if (viewingDeckId === deck.id && viewingDeckCards && viewingDeckCards.length > 0) {
+          cardsListArray = viewingDeckCards.map(c => {
+            const cardObj = c.card || {};
+            const sf = cardObj.scryfallData || cardObj.scryfall_data || {};
+            return {
+              name: cardObj.oracleCard?.name || cardObj.name || c.name || "",
+              qty: c.quantity || c.qty || 1,
+              type_line: sf.type_line || cardObj.type_line || ""
+            };
+          }).filter(c => c.name);
+        }
+        
+        // 3. Fallback: Parse dynamically if it's an imported online deck
+        if (cardsListArray.length === 0 && (deck.importUrl || deck.source)) {
+          try {
+            const id = deck.id;
+            const source = deck.source || (id.length > 15 ? "moxfield" : /^\d+$/.test(id) ? "archidekt" : "tappedout");
+            let parsedCards: any[] = [];
+            
+            if (source === "moxfield") {
+              const { data } = await axios.get(`/api/mf/${id}`);
+              const cards: any[] = [];
+              if (data.commanders) {
+                Object.keys(data.commanders).forEach(name => {
+                  cards.push({ name, qty: data.commanders[name].quantity || 1 });
+                });
+              }
+              if (data.commandersPartner) {
+                Object.keys(data.commandersPartner).forEach(name => {
+                  cards.push({ name, qty: data.commandersPartner[name].quantity || 1 });
+                });
+              }
+              if (data.mainboard) {
+                Object.keys(data.mainboard).forEach(name => {
+                  cards.push({ name, qty: data.mainboard[name].quantity || 1 });
+                });
+              }
+              parsedCards = cards;
+            } else if (source === "archidekt") {
+              const { data } = await axios.get(`/api/ad/${id}`);
+              const rawCards = data.cards || (data.data && data.data.cards) || [];
+              parsedCards = rawCards
+                .filter((dc: any) => {
+                  const categories = (dc.categories || []).map((cat: any) =>
+                    typeof cat === "string" ? cat.toLowerCase() : cat,
+                  );
+                  return !categories.includes("sideboard") && !categories.includes("maybeboard");
+                })
+                .map((dc: any) => {
+                  const c = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                  return {
+                    name: c?.name || dc.card?.name || "",
+                    qty: dc.quantity || 1,
+                    type_line: c?.type_line || ""
+                  };
+                });
+            } else if (source === "tappedout") {
+              const { data } = await axios.get(`/api/to/${id}`);
+              if (data.rawText) {
+                const lines = data.rawText.split("\n");
+                lines.forEach((line: string) => {
+                  const trimmed = line.trim();
+                  if (!trimmed || trimmed.startsWith("//") || trimmed.startsWith("#")) return;
+                  let cardName = trimmed;
+                  let qty = 1;
+                  if (cardName.includes("Sideboard:")) return;
+                  const match = cardName.match(/^(\d+)x?\s+(.+)$/i);
+                  if (match) {
+                    qty = parseInt(match[1]);
+                    cardName = match[2].trim();
+                  }
+                  cardName = cardName.replace(/\*CMDR\*/g, "").trim();
+                  cardName = cardName.replace(/\*F\*/g, "").trim();
+                  cardName = cardName.replace(/\*A\*/g, "").trim();
+                  cardName = cardName.split(" #")[0].trim();
+                  if (cardName) {
+                    parsedCards.push({ name: cardName, qty });
+                  }
+                });
+              }
+            }
+            
+            if (parsedCards.length > 0) {
+              cardsListArray = parsedCards.map(c => ({
+                name: c.name,
+                qty: c.qty || c.quantity || 1,
+                type_line: c.type_line || ""
+              }));
+            }
+          } catch (e) {
+            console.error("Failed to dynamically fetch deck for audit:", e);
+          }
+        }
+        
+        // 4. Default fallback to deck.existingNames
+        if (cardsListArray.length === 0 && deck.existingNames && deck.existingNames.length > 0) {
+          cardsListArray = deck.existingNames.map(name => ({
+            name,
+            qty: 1,
+            type_line: ""
+          }));
+        }
+      }
       
-      const prompt = `Je bent een wereldklasse Magic: The Gathering Deck Architect en Strategisch Analist.
-      Voer een diepgaande SYNERGIE-AUDIT en STRATEGISCHE EVALUATIE uit voor dit Commander deck.
+      const cardList = cardsListArray.length > 0
+        ? cardsListArray.map(c => `${c.qty}x ${c.name} (${c.type_line || ""})`).join("\n")
+        : "No card list data available.";
+
+      const commanders = (deck.commanderNames || deck.commanders || []).map((c: any) => typeof c === "string" ? c : c.name).join(", ");
       
-      Deck Naam: ${deck.name}
+      const prompt = `You are a world-class Magic: The Gathering Deck Architect and Strategic Analyst.
+      Perform an in-depth SYNERGY AUDIT and STRATEGIC EVALUATION for this Commander deck.
+      
+      Deck Name: ${deck.name}
       Commanders: ${commanders}
       Decklist:
-      ${cardList || "Geen kaartdata beschikbaar."}
+      ${cardList}
       
       INSTRUCTIES:
-      - TAAL: Schrijf het volledige rapport in het NEDERLANDS.
-      - TOON: Uiterst professioneel, analytisch en gezaghebbend. Geen 'beer-lore', geen rollenspel, puur technische MTG analyse.
-      - JARGON: Gebruik correct MTG-jargon. Termen die in de internationale community in het Engels worden gebruikt (mulligan, ramp, curve, stack, triggers, lethal, board state, sequencing, tech) mogen in het Engels blijven staan binnen de Nederlandse zinsstructuur.
-      - KWALITEIT: Gebruik grammaticaal correcte, lopende Nederlandse zinnen. Vermijd AI-clichés of vreemde opmerkingen over data-encapsulatie.
+      - TAAL: Schrijf de gehele analyse/het gehele rapport rigoureus in het NEDERLANDS.
+      - TOON: Uiterst professioneel, analytisch en gezaghebbend. Geen 'roleplay' of informele introducties, maar puur technische MTG-analyse.
+      - JARGON: Gebruik en behoud het officiële Engelse MTG-jargon (zoals mulligan, ramp, curve, stack, triggers, lethal, board state, sequencing, tech, card advantage, synergy loops, keepable hands, engine, win condition, commanders) in de Nederlandse zinsstructuur. Vertaal deze technische speltitels of jargontermen dus NIET naar het Nederlands.
+      - KWALITEIT: Schrijf in grammaticaal vlekkeloos en elegant lopend Nederlands.
       
-      STRUCTUREER het rapport exact met deze koppen (gebruik # en ##):
+      STRUCTUREER het rapport exact met deze Nederlandse koppen (gebruik # en ##):
       # Strategische Rune Audit: ${deck.name}
       
       ## 1. Strategische Kern & Archetype
-      Analyseer de fundamentele identiteit van het deck. Wat is de 'game plan'? Hoe verhoudt dit deck zich tot de huidige Commander meta?
+      Analyseer de fundamentele identiteit van het deck. Wat is de game plan? Hoe verhoudt dit deck zich tot de huidige Commander meta?
       
       ## 2. Kritieke Synergie-Knooppunten
-      Identificeer specifieke kaart-combinaties en 'resource loops' die de motor van het deck vormen. Focus op interacties die niet direct voor de hand liggen.
+      Identificeer specifieke kaartcombinaties en resource loops die de motor van het deck vormen. Focus op interacties die niet direct voor de hand liggen.
       
-      ## 3. Technische Diepgang & Lijnen
-      Bespreek complexe interacties, 'stack management' en eventuele 'win-lines' of combo's. Wees specifiek over hoe verschillende lagen (layers) of triggers interacteren.
+      ## 3. Technische Diepgang & Stack Interacties
+      Bespreek complexe interacties, stack management, en win-conditions of combo's. Wees specifiek over hoe triggers of spelregelfases interacteren.
       
-      ## 4. Piloting: Mulligan & Sequencing
-      Geef concreet advies over welke handen te houden ('keepable hands') en hoe de eerste 4-5 beurten optimaal uitgespeeld moeten worden voor maximaal momentum.
+      ## 4. Piloting: Mulligans & Sequencing
+      Geef concreet advies over welke startkaarten te houden ('keepable hands') en hoe de eerste 4-5 beurten optimaal uitgespeeld moeten worden voor maximaal momentum.
       
-      ## 5. Optimalisatie & Krachtniveau
-      Geef 3-5 gerichte suggesties voor upgrades. Focus op het verbeteren van de 'mana curve', card draw consistentie en interactie-pakketten.
+      ## 5. Optimalisatie & Upgradepaden
+      Geef 3-5 gerichte suggesties voor upgrades. Focus op het gladstrijken van de mana curve, het verhogen van card draw consistentie en het optimaliseren van interactie-pakketten.
       
       FORMATTERING:
-      - Gebruik standard {T} voor tap en {W}{U}{B}{R}{G}{C} voor mana symbolen.
+      - Gebruik de standaard {T} voor tap en {W}{U}{B}{R}{G}{C} for mana symbols.
       - Gebruik vetgedrukte tekst voor kaartnamen en sleutelconcepten.
-      - Gebruik duidelijke bullet-points voor leesbaarheid.`;
-
+      - Gebruik overzichtelijke bullet-points voor maximale leesbaarheid.`;
+ 
       const response = await callGemini({
         model: "gemini-3.5-flash",
         contents: [{ parts: [{ text: prompt }] }],
       });
-
+ 
       const reportText = response.text;
       if (!reportText) {
-        throw new Error("Het AI-orakel gaf geen antwoord. Probeer het later opnieuw.");
+        throw new Error("The AI oracle did not respond. Please try again later.");
       }
       
       const analysisRef = collection(db, "users", user.uid, "decks", deck.id, "analysis");
@@ -671,8 +790,6 @@ export default function App() {
           photoURL: updates.photoURL || user.photoURL
         });
       }
-
-      showMessage("IDENTITY_SYNC_COMPLETE", "success");
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `users/${user.uid}`);
     }
@@ -1253,7 +1370,7 @@ export default function App() {
           // We won't show the toast yet to avoid annoying the user if it's just a slow cold start
         } else if (error?.message?.includes('Database \'(default)\' not found')) {
             console.error("[Connectivity] Firestore Error: Database ID mismatch in config.");
-            showMessage("Magische database configuratiefout. Contacteer de arcana meester.", "error");
+            showMessage("Magic database configuration error. Contact the arcana master.", "error");
         } else {
           console.error("[Connectivity] Firestore connection check failed:", error);
         }
@@ -1991,7 +2108,7 @@ export default function App() {
       const msg = error.response?.data?.error || error.message || "Failed to load deck from Moxfield";
       
       if (error.response?.status === 403 || msg.includes("403") || msg.includes("Forbidden")) {
-        showMessage("Moxfield blokkeert de automatische import. Probeer het over een paar minuten nog eens.", "error");
+        showMessage("Moxfield is blocking automated imports. Please try again in a few minutes.", "error");
       } else {
         showMessage(msg, "error");
       }
@@ -2082,7 +2199,6 @@ export default function App() {
     startArcaneLoading(`Synchronizing with ${deck.source || "source"}...`);
     try {
       await fetchAnyDeck(url, false);
-      showMessage("SYNC_COMPLETE", "success");
     } catch (err) {
       console.error("Sync failed:", err);
       showMessage("SYNC_FAILED", "error");
@@ -2543,7 +2659,7 @@ export default function App() {
   };
 
   const addCardByNameToDeckbox = async (cardName: string) => {
-    if (!user) return showMessage("Log in om kaarten toe te voegen aan je deckbox.", "error");
+    if (!user) return showMessage("Log in to add cards to your deckbox.", "error");
     const cleanName = cardName.replace(/[\[\]]/g, "").trim();
     try {
       const response = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(cleanName)}`);
@@ -2551,9 +2667,9 @@ export default function App() {
         const isSelected = deckbox.find((c) => c.name.toLowerCase() === response.data.name.toLowerCase());
         if (!isSelected) {
           await toggleCardSelection(response.data);
-          showMessage(`${response.data.name.toUpperCase()} toegevoegd aan Deckbox!`, "success");
+          showMessage(`${response.data.name.toUpperCase()} added to Deckbox!`, "success");
         } else {
-          showMessage(`${response.data.name.toUpperCase()} is al in je Deckbox!`, "info");
+          showMessage(`${response.data.name.toUpperCase()} is already in your Deckbox!`, "info");
         }
       }
     } catch (err) {
@@ -2564,16 +2680,16 @@ export default function App() {
           const isSelected = deckbox.find((c) => c.name.toLowerCase() === card.name.toLowerCase());
           if (!isSelected) {
             await toggleCardSelection(card);
-            showMessage(`${card.name.toUpperCase()} toegevoegd aan Deckbox!`, "success");
+            showMessage(`${card.name.toUpperCase()} added to Deckbox!`, "success");
           } else {
-            showMessage(`${card.name.toUpperCase()} is al in je Deckbox!`, "info");
+            showMessage(`${card.name.toUpperCase()} is already in your Deckbox!`, "info");
           }
         } else {
-          showMessage(`Kon '${cleanName}' niet vinden op Scryfall.`, "error");
+          showMessage(`Could not find '${cleanName}' on Scryfall.`, "error");
         }
       } catch (err2: any) {
         console.error("Could not add card to deckbox", err2);
-        showMessage(`Fout bij toevoegen: ${err2.message || "onbekend"}`, "error");
+        showMessage(`Error adding card: ${err2.message || "unknown"}`, "error");
       }
     }
   };
@@ -2602,7 +2718,7 @@ export default function App() {
   };
 
   const onCreateNewDeckFromCodie = async (commanderName: string, deckName: string, suggestedList?: string[]) => {
-    if (!user) return showMessage("Meld u aan om deck-architectuur op te slaan.", "error");
+    if (!user) return showMessage("Log in to save deck architecture.", "error");
     try {
       const response = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(commanderName)}`);
       if (response.data) {
@@ -2676,11 +2792,11 @@ export default function App() {
         setActiveDeckId(id);
         setActiveDeckName(deckName);
         setViewMode("manage_decks");
-        showMessage(`Deck rondom ${commanderName} met succes gesmeed!`, "success");
+        showMessage(`Deck centered around ${commanderName} successfully forged!`, "success");
       }
     } catch (e) {
       console.error("Could not make customized deck", e);
-      showMessage("Kon geen nieuw deck aanmaken rond deze Commander.", "error");
+      showMessage("Could not create a new deck around this Commander.", "error");
     }
   };
 
@@ -3162,7 +3278,7 @@ export default function App() {
         return;
       }
 
-      startArcaneLoading("Rune Synergie Analyseren...");
+      startArcaneLoading("Analyzing Rune Synergy...");
 
       // Fetch card details for all commanders
       const cardData = await Promise.all(
@@ -4213,7 +4329,7 @@ Return ONLY JSON. No markdown backticks.`;
               >
                 <Calendar className="w-4 h-4 group-hover:scale-110 transition-transform text-orange-500" />
                 <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
-                  Timeline
+                  Calendar
                 </span>
               </button>
               <button
@@ -4380,7 +4496,7 @@ Return ONLY JSON. No markdown backticks.`;
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     { label: 'Codie Codex', icon: Sparkles, action: () => handleFunModeClick("codie"), color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10 border-cyan-400/30' },
-                    { label: 'Expansions', icon: Library, action: () => handleFunModeClick("sets"), color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/5' },
+                    { label: 'Expansions', icon: Library, action: () => handleFunModeClick("sets"), color: 'text-violet-400 border-violet-500/20 bg-violet-500/5' },
                     { label: 'Calendar', icon: Calendar, action: () => handleFunModeClick("calendar"), color: 'text-orange-400 border-orange-500/20 bg-orange-500/5' },
                     { label: 'Sheriff', icon: Shield, action: () => handleFunModeClick("sheriff"), color: 'text-amber-400 border-amber-500/20 bg-amber-500/5' },
                     { label: 'Judge_AI', icon: Gavel, action: () => handleFunModeClick("judge"), color: 'text-green-400 border-green-500/20 bg-green-500/5' },
@@ -4435,79 +4551,86 @@ Return ONLY JSON. No markdown backticks.`;
                   initial={{ scale: 0.95, opacity: 0, y: 10 }}
                   animate={{ scale: 1, opacity: 1, y: 0 }}
                   exit={{ scale: 0.95, opacity: 0, y: 10 }}
-                  className="w-full max-w-lg bg-zinc-950 border border-white/10 shadow-2xl rounded-[2rem] overflow-hidden relative flex flex-col max-h-[90vh] z-10"
+                  className="w-full max-w-2xl bg-zinc-950 border border-white/10 shadow-2xl rounded-2xl overflow-hidden relative flex flex-col max-h-[90vh] z-10"
                 >
-                  <header className="p-6 border-b border-white/5 flex items-center justify-between bg-black/40">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
-                        <Settings className="w-5 h-5 text-orange-500" />
+                  <header className="px-5 py-4 border-b border-white/5 flex items-center justify-between bg-black/40">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-orange-500/10 border border-orange-500/20 flex items-center justify-center">
+                        <Settings className="w-4 h-4 text-orange-500" />
                       </div>
                       <div>
-                        <h3 className="font-magic font-black text-sm uppercase tracking-widest text-white">Profile Settings</h3>
-                        <p className="text-[11px] font-mono text-white/50 uppercase tracking-widest">Manage your identity and interface</p>
+                        <h3 className="font-magic font-black text-xs uppercase tracking-widest text-white leading-none">Profile Settings</h3>
+                        <p className="text-[9px] font-mono text-white/40 uppercase tracking-widest mt-1">Identity & layout preferences</p>
                       </div>
                     </div>
-                    <button onClick={() => setIsSettingsOpen(false)} className="w-10 h-10 flex items-center justify-center hover:bg-white/5 rounded-full text-white/20 transition-all">
-                      <X className="w-5 h-5" />
+                    <button onClick={() => setIsSettingsOpen(false)} className="w-8 h-8 flex items-center justify-center hover:bg-white/5 rounded-full text-white/30 hover:text-white transition-all">
+                      <X className="w-4 h-4" />
                     </button>
                   </header>
 
-                  <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
-                    {/* Identity Section */}
-                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-3">
-                      <h4 className="text-[9px] font-magic font-black text-white/30 uppercase tracking-[0.2em] flex items-center gap-2">
-                        <User className="w-3 h-3" /> Identity Matrix
+                  <div className="flex-1 overflow-y-auto p-5 space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-6 custom-scrollbar">
+                    {/* Left Column: Identity Section */}
+                    <div className="space-y-3.5">
+                      <h4 className="text-[10px] font-magic font-black text-white/40 uppercase tracking-[0.2em] flex items-center gap-1.5 pb-2 border-b border-white/5">
+                        <User className="w-3 h-3 text-orange-400" /> Identity Matrix
                       </h4>
+                      
                       <div className="grid grid-cols-2 gap-3">
                         <div className="space-y-1 text-left">
-                          <label className="text-[10px] font-mono font-black text-white/40 uppercase tracking-widest ml-1">Username</label>
+                          <label className="text-[9px] font-mono font-black text-white/40 uppercase tracking-widest block ml-0.5">Username</label>
                           <input
                             type="text"
                             value={userName}
                             onChange={(e) => setUserName(e.target.value)}
                             onBlur={() => saveUserSettings({ userName })}
-                            className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[10px] font-magic font-black text-white focus:border-cyan-500/50 outline-none transition-all uppercase"
+                            className="w-full bg-white/[0.02] border border-white/10 rounded-lg px-2.5 py-1.5 text-[10px] font-magic font-black text-white focus:border-cyan-500/50 outline-none transition-all uppercase"
                           />
                         </div>
                         <div className="space-y-1 text-left">
-                          <label className="text-[10px] font-mono font-black text-white/40 uppercase tracking-widest ml-1">Title</label>
+                          <label className="text-[9px] font-mono font-black text-white/40 uppercase tracking-widest block ml-0.5">Title</label>
                           <input
                             type="text"
                             value={userTitle}
                             onChange={(e) => setUserTitle(e.target.value)}
                             onBlur={() => saveUserSettings({ userTitle })}
-                            className="w-full bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[10px] font-magic font-black text-white focus:border-orange-500/50 outline-none transition-all uppercase"
+                            className="w-full bg-white/[0.02] border border-white/10 rounded-lg px-2.5 py-1.5 text-[10px] font-magic font-black text-white focus:border-orange-500/50 outline-none transition-all uppercase"
                           />
                         </div>
                       </div>
+
                       <div className="space-y-1 text-left">
-                        <label className="text-[10px] font-mono font-black text-white/40 uppercase tracking-widest ml-1">Profile Photo URL</label>
+                        <label className="text-[9px] font-mono font-black text-white/40 uppercase tracking-widest block ml-0.5">Profile Photo URL</label>
                         <div className="flex gap-2">
                           <input
                             type="text"
                             value={photoURL}
                             onChange={(e) => setPhotoURL(e.target.value)}
                             onBlur={() => saveUserSettings({ photoURL })}
-                            className="flex-1 bg-white/[0.03] border border-white/10 rounded-lg px-3 py-2 text-[9px] font-mono text-cyan-400 focus:border-cyan-500/50 outline-none transition-all"
+                            className="flex-1 bg-white/[0.02] border border-white/10 rounded-lg px-2.5 py-1.5 text-[9px] font-mono text-cyan-400 focus:border-cyan-500/50 outline-none transition-all"
                             placeholder="https://scryfall.com/..."
                           />
                           {photoURL && (
-                            <button onClick={() => { setPhotoURL(""); saveUserSettings({ photoURL: "" }); }} className="px-3 py-2 bg-red-500/10 border border-red-500/20 text-red-500 text-[8px] font-magic font-black uppercase rounded-lg">Reset</button>
+                            <button 
+                              onClick={() => { setPhotoURL(""); saveUserSettings({ photoURL: "" }); }} 
+                              className="px-2.5 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 text-[8px] font-magic font-black uppercase rounded-lg transition-all"
+                            >
+                              Reset
+                            </button>
                           )}
                         </div>
                       </div>
                     </div>
 
-                    {/* Preferences Section */}
-                    <div className="bg-white/[0.02] border border-white/5 rounded-2xl p-4 space-y-4">
-                      
-                      <div className="space-y-3">
+                    {/* Right Column: Preferences Section */}
+                    <div className="space-y-3.5">
+                      <h4 className="text-[10px] font-magic font-black text-white/40 uppercase tracking-[0.2em] flex items-center gap-1.5 pb-2 border-b border-white/5">
+                        <Settings2 className="w-3 h-3 text-cyan-400" /> Interface Curves
+                      </h4>
+
+                      <div className="space-y-2 bg-white/[0.01] border border-white/5 rounded-xl p-3">
                         <div className="flex items-center justify-between">
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Interface Density</span>
-                            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Desktop Grid Scaling</span>
-                          </div>
-                          <span className="text-[11px] font-mono text-orange-500 font-bold bg-orange-500/5 px-2 py-0.5 rounded border border-orange-500/20 tracking-tighter">
+                          <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Desktop Density</span>
+                          <span className="text-[9.5px] font-mono text-orange-500 font-bold bg-orange-500/5 px-2 py-0.5 rounded border border-orange-500/15 tracking-tight">
                             {cardsPerRowDesktop === 0 ? "AUTO_CALC" : `${cardsPerRowDesktop}_UNITS`}
                           </span>
                         </div>
@@ -4518,80 +4641,73 @@ Return ONLY JSON. No markdown backticks.`;
                           step="1"
                           value={cardsPerRowDesktop}
                           onChange={(e) => saveUserSettings({ cardsPerRowDesktop: parseInt(e.target.value) })}
-                          className="w-full h-1 bg-white/20 rounded-full appearance-none cursor-pointer accent-orange-500"
+                          className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-orange-500"
                         />
-                        <div className="flex justify-between mt-2 px-1">
-                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">Auto</span>
-                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">2</span>
-                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">4</span>
-                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">6</span>
-                          <span className="text-[9px] font-mono text-white/40 uppercase font-black">8</span>
+                        <div className="flex justify-between px-0.5 text-[8px] font-mono text-white/30 uppercase font-black">
+                          <span>Auto</span>
+                          <span>2</span>
+                          <span>4</span>
+                          <span>6</span>
+                          <span>8</span>
                         </div>
                       </div>
 
-                      <div className="space-y-3 pt-2 border-t border-white/5">
+                      <div className="space-y-2 bg-white/[0.01] border border-white/5 rounded-xl p-3">
                         <div className="flex items-center justify-between">
-                          <div className="flex flex-col">
-                            <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Mobile Columns</span>
-                            <span className="text-[10px] font-mono text-white/40 uppercase tracking-widest">Layout Adaptation</span>
-                          </div>
-                          <span className="text-[11px] font-mono text-cyan-400 font-bold bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/20 tracking-tighter">{cardsPerRowMobile} COL</span>
+                          <span className="text-[9px] font-magic font-black text-white uppercase tracking-wider">Mobile Columns</span>
+                          <span className="text-[9.5px] font-mono text-cyan-400 font-bold bg-cyan-400/5 px-2 py-0.5 rounded border border-cyan-400/15 tracking-tight">{cardsPerRowMobile} COL</span>
                         </div>
-                        <div className="px-2">
-                          <input 
-                            type="range" 
-                            min="1" 
-                            max="4" 
-                            step="1"
-                            value={cardsPerRowMobile}
-                            onChange={(e) => saveUserSettings({ cardsPerRowMobile: parseInt(e.target.value) })}
-                            className="w-full h-1 bg-white/20 rounded-full appearance-none cursor-pointer accent-cyan-400"
-                          />
-                          <div className="flex justify-between mt-2 px-1">
-                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">1</span>
-                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">2</span>
-                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">3</span>
-                            <span className="text-[9px] font-mono text-white/40 uppercase font-black">4</span>
-                          </div>
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="4" 
+                          step="1"
+                          value={cardsPerRowMobile}
+                          onChange={(e) => saveUserSettings({ cardsPerRowMobile: parseInt(e.target.value) })}
+                          className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-cyan-400"
+                        />
+                        <div className="flex justify-between px-0.5 text-[8px] font-mono text-white/30 uppercase font-black">
+                          <span>1 COL</span>
+                          <span>2 COL</span>
+                          <span>3 COL</span>
+                          <span>4 COL</span>
                         </div>
                       </div>
                     </div>
-
-                    {/* ADMIN SECTION */}
-                    {isAdmin && (
-                      <div className="bg-orange-500/5 border-y border-orange-500/10 p-4 space-y-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <ShieldCheck className="w-4 h-4 text-orange-500" />
-                          <div>
-                            <h4 className="text-[10px] font-magic font-black text-white uppercase tracking-widest">Grand Arbiter Matrix</h4>
-                            <p className="text-[7px] font-mono text-orange-500/40 uppercase tracking-widest leading-none">Restricted Administrator Access</p>
-                          </div>
-                        </div>
-                        
-                        <button 
-                          onClick={() => {
-                            setViewMode("admin");
-                            setIsSettingsOpen(false);
-                          }}
-                          className="w-full py-4 bg-orange-500 text-black rounded-xl font-magic font-black uppercase tracking-widest text-[10px] shadow-[0_0_20px_rgba(249,115,22,0.2)] hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-3"
-                        >
-                          <Terminal className="w-4 h-4" />
-                          Open Admin Dashboard
-                        </button>
-                      </div>
-                    )}
                   </div>
 
-                  <footer className="p-4 border-t border-white/5 bg-black/40 flex items-center justify-between gap-4">
-                    <div className="flex items-center gap-2">
+                  {/* ADMIN SECTION */}
+                  {isAdmin && (
+                    <div className="bg-orange-500/5 border-t border-white/5 px-5 py-3 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 shrink-0">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="w-4.5 h-4.5 text-orange-500" />
+                        <div>
+                          <h4 className="text-[9px] font-magic font-black text-white uppercase tracking-widest leading-none">Grand Arbiter Matrix</h4>
+                          <p className="text-[7.5px] font-mono text-orange-500/40 uppercase tracking-widest leading-none mt-1">Restricted Administrator Access</p>
+                        </div>
+                      </div>
+                      
+                      <button 
+                        onClick={() => {
+                          setViewMode("admin");
+                          setIsSettingsOpen(false);
+                        }}
+                        className="py-1.5 px-3.5 bg-orange-500 hover:bg-orange-400 text-black rounded-lg font-magic font-black uppercase tracking-widest text-[8.5px] transition-all flex items-center justify-center gap-1.5 shrink-0"
+                      >
+                        <Terminal className="w-3.5 h-3.5" />
+                        Admin Dashboard
+                      </button>
+                    </div>
+                  )}
+
+                  <footer className="px-5 py-3 border-t border-white/5 bg-black/40 flex items-center justify-between gap-4 shrink-0">
+                    <div className="flex items-center gap-1.5">
                       <div className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
                       <span className="text-[7px] font-mono font-black text-white/20 uppercase tracking-widest">Leyline Active</span>
                     </div>
-                    <div className="flex gap-2">
-                      <button onClick={logout} className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/20 text-red-500 rounded-lg text-[8px] font-magic font-black uppercase tracking-widest hover:bg-red-50 hover:text-black transition-all active:scale-95">
-                        <LogOut className="w-3 h-3" /> Logout
-                      </button>
-                    </div>
+                    <button onClick={logout} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-[8px] font-magic font-black uppercase tracking-widest hover:bg-red-500 hover:text-white transition-all active:scale-95">
+                      <LogOut className="w-3 h-3" /> Logout
+                    </button>
                   </footer>
                 </motion.div>
               </motion.div>
@@ -4934,6 +5050,11 @@ Return ONLY JSON. No markdown backticks.`;
                           referrerPolicy="no-referrer"
                         />
                       </div>
+                      {(card.prices?.eur || card.prices?.eur_foil) && (
+                        <div className="absolute bottom-2 left-2 bg-black/80 backdrop-blur-[2px] px-2 py-0.5 rounded-lg text-[9px] text-emerald-400 font-mono border border-white/5 pointer-events-none group-hover:scale-105 group-hover:bg-black transition-all shadow-md z-[5]">
+                          €{parseFloat(card.prices.eur || card.prices.eur_foil).toFixed(2)}
+                        </div>
+                      )}
                       {isSelected && (
                         <div className="absolute top-2 right-2 bg-orange-500 text-black p-1 rounded-full shadow-lg">
                           <PlusCircle className="w-3.5 h-3.5" />
@@ -5259,7 +5380,7 @@ Return ONLY JSON. No markdown backticks.`;
                             <button
                                onClick={() => deepAnalysis[deck.id] ? setViewingAnalysis(deck.id) : generateDeepAnalysis(deck.id)}
                                className={`p-3 border rounded-xl transition-all group flex-1 flex items-center justify-center ${deepAnalysis[deck.id] ? 'bg-purple-500/10 border-purple-500/30' : 'bg-white/5 border-white/5 hover:bg-white/10'}`}
-                               title={deepAnalysis[deck.id] ? "Bekijk Rune Audit" : "Genereer Rune Audit"}
+                               title={deepAnalysis[deck.id] ? "View Rune Synergy Audit" : "Generate Rune Synergy Audit"}
                              >
                                <Brain className={`w-4 h-4 transition-colors ${deepAnalysis[deck.id] ? 'text-purple-400' : 'text-white/10 group-hover:text-purple-400'}`} />
                              </button>
@@ -5448,8 +5569,12 @@ Return ONLY JSON. No markdown backticks.`;
                                   onClick={() => {
                                     setSelectedDeckCard(img);
                                     setHoveredPreviewCard(img);
+                                    setHoveredPreviewPrice(scryfall?.prices?.eur || cardData?.prices?.eur || dc?.prices?.eur || null);
                                   }}
-                                  onMouseEnter={() => setHoveredPreviewCard(img)}
+                                  onMouseEnter={() => {
+                                    setHoveredPreviewCard(img);
+                                    setHoveredPreviewPrice(scryfall?.prices?.eur || cardData?.prices?.eur || dc?.prices?.eur || null);
+                                  }}
                                   className={`group flex items-center justify-between py-2 px-3 rounded-xl transition-all border cursor-pointer text-left ${
                                     isSelected
                                       ? "bg-cyan-500/15 border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)]"
@@ -5471,6 +5596,11 @@ Return ONLY JSON. No markdown backticks.`;
                                     </span>
                                   </div>
                                   <div className="flex items-center gap-1 shrink-0 ml-4">
+                                    {(scryfall?.prices?.eur || cardData?.prices?.eur || dc?.prices?.eur) && (
+                                      <span className="text-[10px] font-mono text-emerald-400 font-semibold mr-1.5 opacity-85 group-hover:opacity-100 transition-opacity">
+                                        €{parseFloat(scryfall?.prices?.eur || cardData?.prices?.eur || dc?.prices?.eur || "0").toFixed(2)}
+                                      </span>
+                                    )}
                                     {renderManaSymbols(manaCost, "w-3.5 h-3.5")}
                                   </div>
                                 </button>
@@ -5516,6 +5646,11 @@ Return ONLY JSON. No markdown backticks.`;
                             className="w-[23vh] xl:w-[26vh] max-w-[70vw] h-auto object-contain rounded-[1.5rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
                             referrerPolicy="no-referrer"
                           />
+                          {hoveredPreviewPrice && (
+                            <div className="absolute bottom-10 right-10 bg-black/90 px-2.5 py-1 rounded-xl border border-cyan-500/30 text-xs font-mono font-bold text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] z-[25] flex items-center gap-1.5 animate-fade-in pointer-events-none">
+                              <span>€{parseFloat(hoveredPreviewPrice).toFixed(2)}</span>
+                            </div>
+                          )}
 
                           {/* Corner Tech Brackets */}
                           <div className="absolute top-0 left-0 w-12 h-12 border-t-2 border-l-2 border-cyan-400 rounded-tl-2xl z-20 opacity-60" />
@@ -5669,17 +5804,24 @@ Return ONLY JSON. No markdown backticks.`;
                           </div>
                           <div className="flex-1 ml-4 grid grid-cols-2 gap-y-1 gap-x-3">
                             {(() => {
-                              let totalCmc = 0, nonLandCount = 0, landCount = 0, creatureCount = 0, artifactCount = 0, spellCount = 0;
-                              viewingDeckCards.forEach((c) => {
-                                const card = c.card?.oracleCard || c.card?.card || c;
-                                const tl = (card?.type_line || "").toLowerCase();
-                                if (tl.includes("land")) landCount += (c.quantity || 1);
-                                else {
-                                  nonLandCount += (c.quantity || 1);
-                                  totalCmc += (card?.cmc || 0) * (c.quantity || 1);
-                                  if (tl.includes("creature")) creatureCount += (c.quantity || 1);
-                                  else if (tl.includes("artifact")) artifactCount += (c.quantity || 1);
-                                  else if (tl.includes("instant") || tl.includes("sorcery")) spellCount += (c.quantity || 1);
+                              let totalCmc = 0, nonLandCount = 0, landCount = 0, creatureCount = 0, spellCount = 0;
+                              viewingDeckCards.forEach((dc) => {
+                                const card = dc.card?.oracleCard || dc.card?.oracle_card || dc.card;
+                                const scryfall = dc.card?.scryfallData || dc.card?.scryfall_data;
+                                const tl = (card?.type_line || scryfall?.type_line || "").toLowerCase();
+                                const cmc = typeof card?.cmc === "number" ? card.cmc : (typeof scryfall?.cmc === "number" ? scryfall.cmc : 0);
+                                const qty = dc.quantity || 1;
+
+                                if (tl.includes("land")) {
+                                  landCount += qty;
+                                } else {
+                                  nonLandCount += qty;
+                                  totalCmc += cmc * qty;
+                                  if (tl.includes("creature")) {
+                                    creatureCount += qty;
+                                  } else {
+                                    spellCount += qty;
+                                  }
                                 }
                               });
                               const avg = nonLandCount > 0 ? (totalCmc / nonLandCount).toFixed(2) : "0.00";
@@ -5763,6 +5905,11 @@ Return ONLY JSON. No markdown backticks.`;
                 className="w-full h-auto rounded-xl"
                 alt="Preview"
               />
+              {hoveredPreviewPrice && (
+                <div className="absolute bottom-4 right-4 bg-black/90 px-2.5 py-1 rounded-xl border border-cyan-500/30 text-xs font-mono font-bold text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] z-[25] flex items-center gap-1.5 animate-fade-in pointer-events-none">
+                  <span>€{parseFloat(hoveredPreviewPrice).toFixed(2)}</span>
+                </div>
+              )}
             </div>
           </motion.div>
         )}
@@ -5843,7 +5990,7 @@ Return ONLY JSON. No markdown backticks.`;
                           }}
                         >
                           <div
-                            className="h-full w-full rounded-[14px] overflow-hidden border-2 border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(6,182,212,0.4)] transition-all duration-300 bg-black/40"
+                            className="h-full w-full rounded-[14px] overflow-hidden border-2 border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(6,182,212,0.4)] transition-all duration-300 bg-black/40 relative"
                           >
                             <img
                               src={img}
@@ -5852,6 +5999,11 @@ Return ONLY JSON. No markdown backticks.`;
                               loading="lazy"
                               referrerPolicy="no-referrer"
                             />
+                            {(c?.prices?.eur || c?.prices?.eur_foil) && (
+                              <div className="absolute bottom-2 left-2 bg-black/80 backdrop-blur-[2px] px-2 py-0.5 rounded-lg text-[9px] text-emerald-400 font-mono border border-white/5 pointer-events-none group-hover:scale-105 group-hover:bg-black transition-all shadow-md z-[5]">
+                                €{parseFloat(c.prices.eur || c.prices.eur_foil).toFixed(2)}
+                              </div>
+                            )}
                           </div>
                           <div className="absolute inset-x-0 bottom-0 bg-black/85 px-2 py-1.5 opacity-0 group-hover:opacity-100 transition-opacity rounded-b-[14px] border-t border-white/5">
                             <p className="text-[8px] font-magic font-black text-cyan-400 uppercase tracking-widest text-center truncate">
@@ -5982,7 +6134,7 @@ Return ONLY JSON. No markdown backticks.`;
                   onClick={() => setViewingAnalysis(null)}
                   className="px-8 py-3 bg-purple-500 text-black font-magic font-black uppercase text-[11px] tracking-widest rounded-xl hover:scale-105 transition-all shadow-xl shadow-purple-500/20"
                 >
-                  Gelezen en Begrepen
+                  Dismiss
                 </button>
               </div>
             </motion.div>
@@ -6178,10 +6330,14 @@ Return ONLY JSON. No markdown backticks.`;
                   <div
                     key={item.name}
                     className="flex gap-3 rune-panel bg-black/40 p-3 rounded-sm hover:border-cyan-500/30 transition-all z-10 group relative"
-                    onMouseEnter={() =>
-                      setHoveredPreviewCard(item.highRes || item.thumb)
-                    }
-                    onMouseLeave={() => setHoveredPreviewCard(null)}
+                    onMouseEnter={() => {
+                      setHoveredPreviewCard(item.highRes || item.thumb);
+                      setHoveredPreviewPrice(item.prices?.eur || item.prices?.eur_foil || null);
+                    }}
+                    onMouseLeave={() => {
+                      setHoveredPreviewCard(null);
+                      setHoveredPreviewPrice(null);
+                    }}
                   >
                     <div className="w-14 h-18 rounded overflow-hidden border border-white/10 shrink-0 group-hover:border-cyan-500/50 transition-colors">
                       <img
@@ -6195,9 +6351,16 @@ Return ONLY JSON. No markdown backticks.`;
                         <h4 className="text-[11px] font-black uppercase text-white/80 group-hover:text-cyan-400 transition-colors truncate">
                           {item.name}
                         </h4>
-                        <p className="text-[8px] font-mono text-orange-500/60 uppercase tracking-widest leading-none">
-                          {item.from_deck}
-                        </p>
+                        <div className="flex items-center justify-between">
+                          <p className="text-[8px] font-mono text-orange-500/60 uppercase tracking-widest leading-none">
+                            {item.from_deck}
+                          </p>
+                          {(item.prices?.eur || item.prices?.eur_foil) && (
+                            <span className="text-[9px] font-mono text-emerald-400 font-bold leading-none">
+                              €{parseFloat(item.prices.eur || item.prices.eur_foil).toFixed(2)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
@@ -6246,12 +6409,17 @@ Return ONLY JSON. No markdown backticks.`;
                       exit={{ opacity: 0, x: 20, scale: 0.9 }}
                       className="fixed right-[420px] top-1/2 -translate-y-1/2 w-[280px] z-[200] pointer-events-none hidden lg:block"
                     >
-                      <div className="rune-panel p-2 bg-black/95 shadow-[0_0_80px_rgba(0,0,0,1)] border-cyan-500/40 transform -rotate-1">
+                      <div className="rune-panel p-2 bg-black/95 shadow-[0_0_80px_rgba(0,0,0,1)] border-cyan-500/40 transform -rotate-1 relative">
                         <img
                           src={hoveredPreviewCard}
                           className="w-full h-auto rounded-lg shadow-2xl"
                           alt="Preview"
                         />
+                        {hoveredPreviewPrice && (
+                          <div className="absolute bottom-12 right-4 bg-black/95 px-2.5 py-1 rounded-xl border border-cyan-500/30 text-xs font-mono font-bold text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] z-30 flex items-center gap-1.5 animate-fade-in pointer-events-none">
+                            <span>€{parseFloat(hoveredPreviewPrice).toFixed(2)}</span>
+                          </div>
+                        )}
                         <div className="absolute inset-0 bg-gradient-to-t from-cyan-500/20 to-transparent pointer-events-none" />
                         <div className="mt-2 text-center">
                           <span className="text-[11px] font-magic font-black text-cyan-400 uppercase tracking-[0.2em] animate-pulse">
@@ -6562,16 +6730,24 @@ Return ONLY JSON. No markdown backticks.`;
                   sc.card_faces?.[0]?.image_uris?.normal ||
                   sc.image_uris?.png ||
                   cmd.art_crop;
+                const eurPrice = sc.prices?.eur || cmd.prices?.eur || sc.prices?.eur_foil || cmd.prices?.eur_foil;
 
                 return (
                   <div key={i} className="relative group">
                     <div className="absolute -inset-4 bg-orange-500/20 blur-3xl opacity-0 group-hover:opacity-100 transition-opacity" />
-                    <img
-                      src={imgSrc}
-                      alt={cmd.name}
-                      className="w-[300px] sm:w-[400px] h-auto rounded-[1.5rem] shadow-[0_25px_80px_rgba(0,0,0,0.8),0_0_40px_rgba(249,115,22,0.3)] border-2 border-white/10 group-hover:border-orange-500/50 transition-all duration-500"
-                      referrerPolicy="no-referrer"
-                    />
+                    <div className="relative">
+                      <img
+                        src={imgSrc}
+                        alt={cmd.name}
+                        className="w-[300px] sm:w-[400px] h-auto rounded-[1.5rem] shadow-[0_25px_80px_rgba(0,0,0,0.8),0_0_40px_rgba(249,115,22,0.3)] border-2 border-white/10 group-hover:border-orange-500/50 transition-all duration-500"
+                        referrerPolicy="no-referrer"
+                      />
+                      {eurPrice && (
+                        <div className="absolute bottom-4 right-4 bg-black/90 px-3 py-1 rounded-xl border border-orange-500/30 text-sm font-mono font-bold text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.3)] z-10 flex items-center gap-1.5 animate-fade-in pointer-events-none">
+                          <span>€{parseFloat(eurPrice).toFixed(2)}</span>
+                        </div>
+                      )}
+                    </div>
                     <div className="mt-6 text-center">
                       <h3 className="text-xl font-magic font-black text-white uppercase tracking-widest">
                         {cmd.name}
@@ -6625,6 +6801,7 @@ Return ONLY JSON. No markdown backticks.`;
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                 {commanderSelection.candidates.map((card, i) => {
                   const images = getCardImages(card);
+                  const eurPrice = card.prices?.eur || card.prices?.eur_foil;
                   return (
                     <button
                       key={card.id || i}
@@ -6636,6 +6813,11 @@ Return ONLY JSON. No markdown backticks.`;
                         alt={card.name}
                         className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
                       />
+                      {eurPrice && (
+                        <div className="absolute top-2 left-2 bg-black/80 backdrop-blur-[2px] px-2 py-0.5 rounded-lg text-[9px] text-emerald-450 font-mono border border-white/5 pointer-events-none group-hover:scale-105 group-hover:bg-black transition-all shadow-md z-[5]">
+                          €{parseFloat(eurPrice).toFixed(2)}
+                        </div>
+                      )}
                       <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-end p-4">
                         <p className="text-[10px] font-magic font-bold text-white uppercase tracking-wider">
                           {card.name}
@@ -6684,6 +6866,16 @@ function RoadmapModal({
   }, [isOpen, initialShowChangelog]);
 
   const releaseHistory = [
+    {
+      version: "V2.11.0",
+      date: "June 5, 2026",
+      changes: [
+        "Expansion Palette Redesign: Transitioned set collections to a softer, elegant violet and purple aesthetic, moving away from high-contrast cyan to improve reading comfort.",
+        "Mana Alignment Fix: Resolved an engine mismatch under the deck detail screen; type lines and CMC calculations are now accurately calculated for lands, creatures, and spells in real-time.",
+        "Pricing Aesthetic Clean-up: Removed redundant 'MKM' text from all Cardmarket-priced popovers across the library, deck-viewers, and search systems for a clean, professional Euros value.",
+        "Profile Settings Optimization: Replaced the long scrolling interface with a sleek, space-saving two-column desktop grid and a highly-polished, responsive mobile layout."
+      ]
+    },
     {
       version: "V2.10.0",
       date: "May 20, 2026",
@@ -7885,14 +8077,14 @@ function JudgeView({ user }: { user: any }) {
               <div className="flex items-center gap-2 mb-4">
                 <Scale className="w-3.5 h-3.5 text-green-400" />
                 <span className="text-[9px] font-magic font-black text-green-400 uppercase tracking-widest">
-                  Identificatie Verifiëren
+                  Verify Identification
                 </span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 {Object.entries(suggestions).map(([term, choices]) => (
                   <div key={term} className="space-y-1">
                     <p className="text-[10px] font-bold text-green-500/90 uppercase pl-1">
-                      Voor "{term}":
+                      For "{term}":
                     </p>
                     <select
                       onChange={(e) =>
@@ -7903,13 +8095,13 @@ function JudgeView({ user }: { user: any }) {
                       }
                       className="w-full bg-black/60 border border-green-500/20 rounded-xl px-4 py-2.5 text-[10px] text-green-100 outline-none focus:border-green-400 transition-all cursor-pointer"
                     >
-                      <option value="">Selecteer kaart...</option>
+                      <option value="">Select card...</option>
                       {(choices as string[]).map((c, cidx) => (
                         <option key={`${c}-${cidx}`} value={c}>
                           {c}
                         </option>
                       ))}
-                      <option value={`Negeer ${term}`}>Negeer "{term}"</option>
+                      <option value={`Negeer ${term}`}>Ignore "{term}"</option>
                     </select>
                   </div>
                 ))}
@@ -7918,7 +8110,7 @@ function JudgeView({ user }: { user: any }) {
                 onClick={handleSelectionConfirm}
                 className="mt-4 w-full py-3 bg-green-500/20 hover:bg-green-500/30 text-green-400 border border-green-500/30 rounded-2xl text-[10px] font-black uppercase tracking-[0.3em] transition-all"
               >
-                Bevestig Selectie
+                Confirm Selection
               </button>
             </div>
           )}
@@ -7930,7 +8122,7 @@ function JudgeView({ user }: { user: any }) {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                placeholder="Stel een regelsvraag aan Ruxa..."
+                placeholder="Ask Ruxa a rules question..."
                 disabled={isProcessing || waitingForSelection}
                 className="flex-1 bg-green-500/[0.03] border border-green-500/10 rounded-2xl px-6 py-4 text-base sm:text-xs font-sans text-green-100 placeholder:text-green-500/20 outline-none focus:border-green-500/40 focus:bg-green-500/[0.05] transition-all disabled:opacity-50"
               />
@@ -7945,8 +8137,7 @@ function JudgeView({ user }: { user: any }) {
               </button>
             </form>
             <p className="text-[11px] text-green-500/60 font-black uppercase tracking-[0.15em] mt-4 text-center">
-              Beer Judge Ruxa is een AI-assistent. Verifieer uitspraken altijd
-              met de officiële regels.
+              Bear Judge Ruxa is an AI assistant. Always verify rulings with the official rules.
             </p>
           </div>
         </div>
@@ -8163,26 +8354,26 @@ function SetExplorer({
         <div className="absolute -top-[5%] -left-[5%] w-[480px] h-[480px] rounded-full border border-cyan-500/10 animate-[spin_120s_linear_infinite] flex items-center justify-center">
           <div className="w-[420px] h-[420px] rounded-full border border-dashed border-cyan-500/5" />
           <div className="absolute w-[360px] h-[360px] rounded-full border border-double border-orange-500/5 animate-[spin_80s_linear_infinite]" />
-          <div className="absolute w-2.5 h-2.5 rounded-full bg-cyan-400/30 top-[40px] blur-[1px]" />
+          <div className="absolute w-2.5 h-2.5 rounded-full bg-violet-400/30 top-[40px] blur-[1px]" />
           <div className="absolute w-1.5 h-1.5 rounded-full bg-orange-400/30 bottom-[60px]" />
         </div>
 
         <div className="absolute -bottom-[10%] -right-[10%] w-[540px] h-[540px] rounded-full border border-orange-500/10 animate-[spin_160s_linear_infinite_reverse] flex items-center justify-center">
           <div className="w-[490px] h-[490px] rounded-full border border-dashed border-orange-500/5" />
-          <div className="absolute w-[420px] h-[420px] rounded-full border border-cyan-500/5 animate-[spin_90s_linear_infinite]" />
+          <div className="absolute w-[420px] h-[420px] rounded-full border border-violet-500/5 animate-[spin_90s_linear_infinite]" />
           <div className="absolute w-2.5 h-2.5 rounded-full bg-orange-400/30 top-[80px]" />
-          <div className="absolute w-1.5 h-1.5 rounded-full bg-cyan-400/30 bottom-[100px]" />
+          <div className="absolute w-1.5 h-1.5 rounded-full bg-violet-400/30 bottom-[100px]" />
         </div>
 
-        {/* Immersive Holographic Nebula Glows in User's Cyan & Orange Theme */}
-        <div className="absolute top-[25%] left-[30%] -translate-x-1/2 w-[550px] h-[550px] rounded-full bg-radial from-cyan-500/5 to-transparent blur-[130px]" />
+        {/* Immersive Holographic Nebula Glows in User's Violet & Orange Theme */}
+        <div className="absolute top-[25%] left-[30%] -translate-x-1/2 w-[550px] h-[550px] rounded-full bg-radial from-violet-500/5 to-transparent blur-[130px]" />
         <div className="absolute bottom-[20%] left-[70%] -translate-x-1/2 w-[650px] h-[650px] rounded-full bg-radial from-orange-500/5 to-transparent blur-[140px]" />
 
         {/* Ambient runic letters drifting along the temporal background */}
-        <div className="absolute top-[18%] left-[6%] text-[10px] font-magic text-cyan-400/10 tracking-[0.3em]">ᛋ ᛉ ᛊ ᛗ</div>
+        <div className="absolute top-[18%] left-[6%] text-[10px] font-magic text-violet-400/10 tracking-[0.3em]">ᛋ ᛉ ᛊ ᛗ</div>
         <div className="absolute top-[52%] right-[8%] text-[10px] font-magic text-orange-400/10 tracking-[0.3em]">ᚺ ᚠ ᛏ ᛒ</div>
         <div className="absolute bottom-[30%] left-[8%] text-[10px] font-magic text-orange-400/10 tracking-[0.3em]">ᛉ ᛊ ᛗ ᚺ</div>
-        <div className="absolute bottom-[12%] right-[12%] text-[10px] font-magic text-cyan-400/10 tracking-[0.3em]">ᚠ ᛏ ᛒ ᛋ</div>
+        <div className="absolute bottom-[12%] right-[12%] text-[10px] font-magic text-violet-400/10 tracking-[0.3em]">ᚠ ᛏ ᛒ ᛋ</div>
       </div>
 
       <div className="flex-1 overflow-y-auto no-scrollbar pb-20 relative z-10 p-4 sm:p-8">
@@ -8192,8 +8383,8 @@ function SetExplorer({
           {/* Title Area */}
           <div className="text-center space-y-4 mb-20 relative">
             <div className="flex items-center justify-center gap-4 text-orange-500/30 font-magic">
-              <span className="text-4xl text-cyan-500/40">ᛉ</span>
-              <div className="h-[1px] w-12 bg-gradient-to-r from-cyan-500/20 to-orange-500/20" />
+              <span className="text-4xl text-violet-500/40">ᛉ</span>
+              <div className="h-[1px] w-12 bg-gradient-to-r from-violet-500/20 to-orange-500/20" />
               <span className="text-4xl text-orange-500/40">ᛊ</span>
             </div>
             <h1 className="text-3xl md:text-5xl font-magic font-black text-white uppercase tracking-[0.2em] drop-shadow-[0_0_15px_rgba(255,255,255,0.1)]">
@@ -8206,13 +8397,13 @@ function SetExplorer({
 
           <div className="flex flex-col items-center gap-4 max-w-lg mx-auto mb-10 relative z-20">
             <div className="relative group w-3/4 opacity-60 focus-within:opacity-100 transition-opacity">
-              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-cyan-400 transition-colors" />
+              <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-violet-400 transition-colors" />
               <input
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="Sync set code..."
-                className="w-full bg-white/[0.05] border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-[11px] focus:border-cyan-500/30 outline-none transition-all font-sans tracking-wide text-white/70"
+                className="w-full bg-white/[0.05] border border-white/10 rounded-2xl pl-12 pr-4 py-3 text-[11px] focus:border-violet-500/30 outline-none transition-all font-sans tracking-wide text-white/70"
               />
             </div>
 
@@ -8223,7 +8414,7 @@ function SetExplorer({
                   <button
                     key={f.id}
                     onClick={() => toggleFilter(f.labels)}
-                    className={`px-3 py-1.5 rounded-xl text-[8px] font-magic font-bold uppercase tracking-widest border transition-all shrink-0 ${isActive ? "bg-cyan-500/10 text-cyan-400 border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]" : "bg-white/[0.02] text-white/20 border-white/5 hover:border-cyan-500/20"}`}
+                    className={`px-3 py-1.5 rounded-xl text-[8px] font-magic font-bold uppercase tracking-widest border transition-all shrink-0 ${isActive ? "bg-violet-500/10 text-violet-400 border-violet-500/30 shadow-[0_0_15px_rgba(139,92,246,0.15)]" : "bg-white/[0.02] text-white/20 border-white/5 hover:border-violet-500/20"}`}
                   >
                     {f.name}
                   </button>
@@ -8234,7 +8425,7 @@ function SetExplorer({
 
           {loading ? (
             <div className="flex flex-col items-center justify-center py-20 gap-4">
-              <RotateCw className="w-8 h-8 text-cyan-400 animate-spin" />
+              <RotateCw className="w-8 h-8 text-violet-400 animate-spin" />
               <p className="text-[10px] font-magic font-bold text-white/20 uppercase tracking-widest">
                 Expansions loading...
               </p>
@@ -8253,7 +8444,7 @@ function SetExplorer({
                     {/* Glowing background aura under the logo cell on hover */}
                     <div
                       className={`absolute inset-0 rounded-full opacity-0 group-hover:opacity-15 blur-xl transition-opacity duration-500 pointer-events-none
-                        ${set.isFuture ? "from-orange-500 to-amber-500 bg-gradient-to-t" : "from-cyan-400 to-blue-500 bg-gradient-to-t"}
+                        ${set.isFuture ? "from-orange-500 to-amber-500 bg-gradient-to-t" : "from-violet-500 to-purple-700 bg-gradient-to-t"}
                       `}
                     />
 
@@ -8263,7 +8454,7 @@ function SetExplorer({
                       style={{
                         filter: set.isFuture 
                           ? "drop-shadow(0 2px 6px rgba(251,146,60,0.45))" 
-                          : "drop-shadow(0 2px 6px rgba(6,182,212,0.5))"
+                          : "drop-shadow(0 2px 6px rgba(139,92,246,0.4))"
                       }}
                       viewBox="0 0 100 100"
                     >
@@ -8278,9 +8469,9 @@ function SetExplorer({
                             </>
                           ) : (
                             <>
-                              <stop offset="0%" stopColor="#22d3ee" /> {/* Cyan-400 */}
-                              <stop offset="50%" stopColor="#6366f1" /> {/* Indigo-500 */}
-                              <stop offset="100%" stopColor="#1d4ed8" /> {/* Blue-700 */}
+                              <stop offset="0%" stopColor="#c084fc" /> {/* Purple-400 */}
+                              <stop offset="50%" stopColor="#a78bfa" /> {/* Violet-400 */}
+                              <stop offset="100%" stopColor="#6d28d9" /> {/* Violet-700 */}
                             </>
                           )}
                         </linearGradient>
@@ -8322,7 +8513,7 @@ function SetExplorer({
                       <div className="mx-auto w-fit bg-zinc-950/95 px-3 py-1 rounded border border-white/10 shadow-2xl backdrop-blur-md whitespace-nowrap flex items-center gap-2">
                         <span
                           className={`text-[9px] font-magic font-bold uppercase tracking-widest drop-shadow-md flex-1 text-center
-                          ${set.isFuture ? "text-orange-400" : "text-cyan-400"}
+                          ${set.isFuture ? "text-orange-400" : "text-violet-400"}
                         `}
                         >
                           {set.name}
@@ -8398,22 +8589,123 @@ function ReleaseCalendar({
           );
         });
 
-        filtered.push({
-          code: "stk",
-          name: "Universes Beyond: Star Trek",
-          released_at: "2026-11-01",
-          set_type: "expansion",
-          icon_svg_uri: "",
-          queryCodes: ["stk"],
-          fullName: "Universes Beyond: Star Trek",
+        // Baseline official / speculative releases for the 2026 roadmap 
+        const roadmapSets = [
+          { name: "Lorwyn Eclipsed", released_at: "2026-01-30", code: "lor", queryCodes: ["lor"] },
+          { name: "Teenage Mutant Ninja Turtles", released_at: "2026-03-27", code: "tmn", queryCodes: ["tmn"] },
+          { name: "Secrets of Strixhaven", released_at: "2026-05-01", code: "stx2", queryCodes: ["stx2"] },
+          { name: "Marvel Super Heroes", released_at: "2026-06-26", code: "mvl", queryCodes: ["mvl"] },
+          { name: "The Hobbit", released_at: "2026-08-28", code: "hbt", queryCodes: ["hbt"] },
+          { name: "Reality Fracture", released_at: "2026-10-23", code: "rf", queryCodes: ["rf"] },
+          { name: "Star Trek", released_at: "2026-11-20", code: "stk", queryCodes: ["stk"] },
+        ];
+
+        // Ensure baseline sets are appended if not present
+        roadmapSets.forEach((rs: any) => {
+          const nameLower = rs.name.toLowerCase();
+          const alreadyExists = filtered.some((m: any) => 
+            m.name.toLowerCase().includes(nameLower) || m.code.toLowerCase() === rs.code.toLowerCase()
+          );
+          if (!alreadyExists) {
+            filtered.push({
+              id: `roadmap-${rs.code}`,
+              name: rs.name,
+              released_at: rs.released_at,
+              set_type: "expansion",
+              code: rs.code,
+              queryCodes: rs.queryCodes,
+              icon_svg_uri: "",
+              fullName: rs.name,
+            } as any);
+          }
         });
 
-        filtered.sort(
+        // Map and enrich sets with unified names and precise event timelines
+        const enrichSetDates = (s: any) => {
+          const nameLower = s.name.toLowerCase();
+          
+          let realRelease = s.released_at;
+          let prerelease = s.prerelease || "";
+          let spoilers = s.spoilers || "";
+          let cleanName = s.name;
+
+          if (nameLower.includes("star trek") || s.code.toLowerCase() === "stk") {
+            cleanName = "Star Trek";
+            realRelease = "2026-11-20";
+            prerelease = "2026-11-13";
+            spoilers = "2026-11-02";
+          } else if (nameLower.includes("lorwyn") || s.code.toLowerCase() === "lor") {
+            cleanName = "Lorwyn Eclipsed";
+            realRelease = "2026-01-30";
+            prerelease = "2026-01-23";
+            spoilers = "2026-01-12";
+          } else if (nameLower.includes("tmnt") || nameLower.includes("ninja turtles") || s.code.toLowerCase() === "tmn") {
+            cleanName = "Teenage Mutant Ninja Turtles";
+            realRelease = "2026-03-27";
+            prerelease = "2026-03-20";
+            spoilers = "2026-03-09";
+          } else if (nameLower.includes("strixhaven") || s.code.toLowerCase() === "stx2" || s.code.toLowerCase() === "stx") {
+            cleanName = "Secrets of Strixhaven";
+            realRelease = "2026-05-01";
+            prerelease = "2026-04-24";
+            spoilers = "2026-04-13";
+          } else if (nameLower.includes("marvel") || s.code.toLowerCase() === "mvl") {
+            cleanName = "Marvel Super Heroes";
+            realRelease = "2026-06-26";
+            prerelease = "2026-06-19";
+            spoilers = "2026-06-08";
+          } else if (nameLower.includes("hobbit") || s.code.toLowerCase() === "hbt") {
+            cleanName = "The Hobbit";
+            realRelease = "2026-08-28";
+            prerelease = "2026-08-21";
+            spoilers = "2026-08-10";
+          } else if (nameLower.includes("reality fracture") || s.code.toLowerCase() === "rf") {
+            cleanName = "Reality Fracture";
+            realRelease = "2026-10-23";
+            prerelease = "2026-10-16";
+            spoilers = "2026-10-05";
+          }
+
+          // Fallback calculations for other sets
+          if (!prerelease && realRelease) {
+            const rDate = new Date(realRelease);
+            if (!isNaN(rDate.getTime())) {
+              const preDate = new Date(rDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+              const spoilDate = new Date(rDate.getTime() - 17 * 24 * 60 * 60 * 1000);
+              prerelease = preDate.toISOString().split("T")[0];
+              spoilers = spoilDate.toISOString().split("T")[0];
+            }
+          }
+
+          return {
+            ...s,
+            name: cleanName,
+            fullName: cleanName,
+            released_at: realRelease,
+            prerelease,
+            spoilers,
+          };
+        };
+
+        let enriched = filtered.map(item => enrichSetDates(item));
+
+        // Deduplicate elements by clean unified name
+        const seenNames = new Set<string>();
+        const uniqueEnriched: any[] = [];
+        for (const item of enriched) {
+          const normName = item.name.toLowerCase().trim();
+          if (!seenNames.has(normName)) {
+            seenNames.add(normName);
+            uniqueEnriched.push(item);
+          }
+        }
+
+        uniqueEnriched.sort(
           (a: any, b: any) =>
             new Date(a.released_at).getTime() -
             new Date(b.released_at).getTime(),
         );
-        setTimeline(filtered);
+        setTimeline(uniqueEnriched);
       } catch (err) {
         console.error("Failed to fetch calendar", err);
       } finally {
@@ -8442,7 +8734,7 @@ function ReleaseCalendar({
         style={{ backgroundImage: `url(${runesBackground})` }}
       />
       <div className="absolute inset-0 pointer-events-none select-none overflow-hidden text-center opacity-100">
-        <div className="absolute top-0 right-0 text-[60vw] font-magic leading-none opacity-[0.015] text-cyan-500 translate-x-1/4 -translate-y-1/4">
+        <div className="absolute top-0 right-0 text-[60vw] font-magic leading-none opacity-[0.015] text-violet-500 translate-x-1/4 -translate-y-1/4">
           Ж
         </div>
         <div className="absolute bottom-0 left-0 text-[50vw] font-magic leading-none opacity-[0.015] text-orange-500 -translate-x-1/4 translate-y-1/4">
@@ -8464,11 +8756,11 @@ function ReleaseCalendar({
           <RotateCw className="w-10 h-10 text-orange-500 animate-spin" />
         </div>
       ) : (
-        <div className="flex-1 relative mt-10 overflow-x-auto overflow-y-hidden w-full pb-32 touch-pan-x">
+        <div className="flex-1 relative mt-4 lg:mt-6 overflow-x-auto lg:overflow-x-visible overflow-y-hidden w-full pb-32 lg:pb-0 touch-pan-x flex items-center justify-center">
           {/* Main Horizontal Timeline Line */}
-          <div className="absolute left-12 right-12 h-[2px] bg-gradient-to-r from-transparent via-orange-500 to-amber-500 top-1/2 -translate-y-1/2 opacity-30 shadow-[0_0_30px_rgba(249,115,22,0.5)] z-0 min-w-[1200px] md:min-w-[1600px]" />
+          <div className="absolute left-6 right-6 lg:left-12 lg:right-12 h-[2px] bg-gradient-to-r from-transparent via-orange-500 to-amber-500 top-1/2 -translate-y-1/2 opacity-35 shadow-[0_0_30px_rgba(249,115,22,0.5)] z-0 min-w-[1240px] lg:min-w-0 lg:w-[calc(100%-6rem)]" />
 
-          <div className="flex items-center justify-between h-full relative z-20 overflow-visible flex-nowrap px-12 min-w-[1200px] md:min-w-[1600px]">
+          <div className="flex items-center justify-between h-full relative z-20 overflow-visible flex-nowrap px-6 lg:px-12 min-w-[1240px] lg:min-w-0 lg:w-full lg:max-w-7xl lg:mx-auto gap-4 lg:gap-2">
             {timeline.map((set, idx) => {
               const isTop = idx % 2 === 0;
               const releaseDate = new Date(set.released_at);
@@ -8488,12 +8780,12 @@ function ReleaseCalendar({
               return (
                 <div
                   key={set.id || set.code || idx}
-                  className="relative flex-1 flex justify-center group h-full items-center shrink-0 min-w-[80px]"
+                  className="relative flex-1 flex justify-center group h-full items-center shrink-0 lg:shrink min-w-[160px] lg:min-w-0 lg:w-auto"
                 >
                   {/* Vertical Connector Path */}
                   <div
                     className={`absolute left-1/2 -translate-x-1/2 w-[1px] md:w-px bg-white/10 transition-all duration-700
-                    ${isTop ? "bottom-1/2 h-16 sm:h-24 lg:h-32" : "top-1/2 h-16 sm:h-24 lg:h-32"}
+                    ${isTop ? "bottom-1/2 h-16 sm:h-24 lg:h-16 xl:h-24" : "top-1/2 h-16 sm:h-24 lg:h-16 xl:h-24"}
                     group-hover:bg-orange-500/50 group-hover:opacity-100 opacity-20
                   `}
                   />
@@ -8510,22 +8802,22 @@ function ReleaseCalendar({
 
                   {/* Content Stack (Alternating) */}
                   <div
-                    className={`flex flex-col justify-center items-center gap-1 sm:gap-4 lg:gap-8 absolute left-1/2 -translate-x-1/2 transition-all duration-1000 w-24 sm:w-32 lg:w-40 z-30
-                    ${isTop ? "bottom-1/2 mb-4 sm:mb-6 lg:mb-10" : "top-1/2 mt-4 sm:mt-6 lg:mt-10"}
-                    group-hover:${isTop ? "mb-6 sm:mb-8 lg:mb-12" : "mt-6 sm:mt-8 lg:mt-12"}
+                    className={`flex flex-col justify-center items-center gap-1 sm:gap-4 lg:gap-3 xl:gap-6 absolute left-1/2 -translate-x-1/2 transition-all duration-1000 w-40 sm:w-48 lg:w-[94%] xl:w-[90%] z-30
+                    ${isTop ? "bottom-1/2 mb-4 sm:mb-6 lg:mb-4 xl:mb-8" : "top-1/2 mt-4 sm:mt-6 lg:mt-4 xl:mt-8"}
+                    group-hover:${isTop ? "mb-6 sm:mb-8 lg:mb-6 xl:mb-10" : "mt-6 sm:mt-8 lg:mt-6 xl:mt-10"}
                   `}
                   >
                     {/* Icon Circle */}
                     <button
                       onClick={() => onReleaseClick(set.queryCodes)}
-                      className={`w-10 h-10 sm:w-16 sm:h-16 lg:w-20 lg:h-20 rounded-full flex items-center justify-center bg-black border-2 border-white/5 relative z-30 shadow-[0_10px_30px_rgba(0,0,0,0.8)] transition-all duration-700 group-hover:scale-125 shrink-0 focus:outline-none cursor-pointer
+                      className={`w-10 h-10 sm:w-14 sm:h-14 lg:w-10 lg:h-10 xl:w-14 xl:h-14 rounded-full flex items-center justify-center bg-black border-2 border-white/5 relative z-30 shadow-[0_10px_30px_rgba(0,0,0,0.8)] transition-all duration-700 group-hover:scale-125 shrink-0 focus:outline-none cursor-pointer
                       ${isFarFuture ? "group-hover:border-orange-500 shadow-orange-500/20" : "group-hover:border-amber-500 shadow-amber-500/20"}
                     `}
                     >
                       <div className="absolute inset-0 rounded-full bg-radial-gradient from-white/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
 
                       <div
-                        className={`w-5 h-5 sm:w-8 sm:h-8 lg:w-10 lg:h-10 transition-all duration-700 z-10 opacity-40 group-hover:opacity-100`}
+                        className={`w-5 h-5 sm:w-7 sm:h-7 lg:w-5 lg:h-5 xl:w-7 xl:h-7 transition-all duration-700 z-10 opacity-40 group-hover:opacity-100`}
                         style={{
                           filter: `drop-shadow(0 0 10px ${glowColor}) drop-shadow(0 0 15px ${glowColor})`,
                         }}
@@ -8545,19 +8837,45 @@ function ReleaseCalendar({
                     {/* Info Box */}
                     <button
                       onClick={() => onReleaseClick(set.queryCodes)}
-                      className="w-full text-center rune-panel p-2 sm:p-4 lg:p-6 bg-black/90 hover:border-white/30 transition-all cursor-pointer group/box shadow-2xl relative"
+                      className="w-full text-center rune-panel p-3 lg:p-2.5 xl:p-4 bg-black/95 hover:border-violet-500/30 hover:shadow-[0_0_25px_rgba(139,92,246,0.15)] transition-all cursor-pointer group/box shadow-2xl relative border border-white/5 rounded-lg text-left"
                     >
-                      <h4 className="text-[9px] sm:text-[11px] lg:text-[13px] font-magic font-black text-white uppercase tracking-[0.05em] lg:tracking-[0.1em] mb-1 lg:mb-2 group-hover/box:text-orange-400 transition-all leading-tight line-clamp-2 drop-shadow-md">
+                      <h4 className="text-[10.5px] sm:text-[12px] lg:text-[10px] xl:text-[12px] font-magic font-black text-white uppercase tracking-[0.05em] lg:tracking-[0.02em] xl:tracking-[0.08em] mb-2 lg:mb-1.5 xl:mb-2.5 group-hover/box:text-orange-400 transition-all leading-tight drop-shadow-md text-center min-h-[2.5em] flex items-center justify-center">
                         {set.name}
                       </h4>
-                      <p
-                        className={`text-[5px] sm:text-[6px] lg:text-[8px] font-mono uppercase tracking-[0.1em] lg:tracking-[0.2em] font-black opacity-60 group-hover:opacity-100 transition-opacity whitespace-nowrap ${accentColor}`}
-                      >
-                        {releaseDate.toLocaleDateString("en-US", {
-                          month: "short",
-                          year: "numeric",
-                        })}
-                      </p>
+
+                      <div className="space-y-1 xl:space-y-1.5 border-t border-white/10 pt-2 lg:pt-1.5 xl:pt-2.5 font-mono text-[8px] sm:text-[9.5px] lg:text-[7.5px] xl:text-[9.5px] text-left">
+                        {set.spoilers && (
+                          <div className="flex justify-between items-center gap-1">
+                            <span className="text-white/40 uppercase tracking-widest font-sans text-[7px] sm:text-[8px] lg:text-[6.5px] xl:text-[7.5px]">SPOILERS</span>
+                            <span className="text-violet-400 font-bold">
+                              {new Date(set.spoilers).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </span>
+                          </div>
+                        )}
+                        {set.prerelease && (
+                          <div className="flex justify-between items-center gap-1">
+                            <span className="text-white/40 uppercase tracking-widest font-sans text-[7px] sm:text-[8px] lg:text-[6.5px] xl:text-[7.5px]">PRERELEASE</span>
+                            <span className="text-amber-400 font-bold">
+                              {new Date(set.prerelease).toLocaleDateString("en-US", {
+                                month: "short",
+                                day: "numeric",
+                              })}
+                            </span>
+                          </div>
+                        )}
+                        <div className="flex justify-between items-center gap-1">
+                          <span className="text-white/40 uppercase tracking-widest font-sans text-[7px] sm:text-[8px] lg:text-[6.5px] xl:text-[7.5px]">RELEASE</span>
+                          <span className={`${accentColor} font-extrabold`}>
+                            {releaseDate.toLocaleDateString("en-US", {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                          </span>
+                        </div>
+                      </div>
                     </button>
                   </div>
                 </div>
@@ -8964,67 +9282,64 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
     }
   };
 
-  const resolveCardImage_Admin = (card: any) => {
-    return resolveCardImage(card);
-  };
-
   return (
-    <div className="fixed inset-0 z-[2000] bg-[#1f2125] flex flex-col font-mono text-white overflow-hidden">
+    <div className="fixed inset-0 z-[2000] bg-[#09090b] flex flex-col font-sans text-zinc-100 overflow-hidden">
       {/* Top Status Bar */}
-      <div className="h-14 border-b border-orange-500/20 bg-black flex items-center justify-between px-4 lg:px-6 shrink-0 relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-orange-500/5 via-transparent to-transparent opacity-50" />
+      <div className="h-20 border-b border-zinc-800 bg-[#0c0c0e] flex items-center justify-between px-6 shrink-0 relative overflow-hidden">
+        <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-orange-500/20 via-orange-500/5 to-transparent" />
         
-        <div className="flex items-center gap-4 lg:gap-6 relative z-10 overflow-hidden">
+        <div className="flex items-center gap-6 relative z-10 overflow-hidden">
           {showUserDetailsMobile && (
             <button 
               onClick={() => setShowUserDetailsMobile(false)}
-              className="lg:hidden p-2 text-white/40 hover:text-orange-500 transition-colors"
+              className="lg:hidden p-2.5 rounded-xl bg-zinc-800/50 text-zinc-400 hover:text-orange-500 hover:bg-orange-500/10 transition-all"
             >
               <ChevronLeft className="w-5 h-5" />
             </button>
           )}
-          <div className="flex items-center gap-3 shrink-0">
-            <div className="w-8 h-8 rounded bg-orange-500 flex items-center justify-center text-black shrink-0">
-              <ShieldCheck className="w-5 h-5" />
+          <div className="flex items-center gap-4 shrink-0">
+            <div className="w-11 h-11 rounded-xl bg-orange-500 flex items-center justify-center text-black shrink-0 shadow-lg shadow-orange-500/10 border border-orange-400">
+              <ShieldCheck className="w-6 h-6" />
             </div>
-            <div className="hidden sm:block">
-              <h1 className="text-[10px] font-magic font-black uppercase tracking-[0.3em] leading-none mb-1">Admin Dashboard</h1>
-              <div className="flex items-center gap-2">
-                <span className="w-1 h-1 rounded-full bg-emerald-500 animate-pulse" />
-                <span className="text-[8px] opacity-40 uppercase font-bold tracking-widest leading-none">Management Session Active</span>
+            <div>
+              <h1 className="text-sm font-semibold uppercase tracking-[0.2em] text-white">Admin Matrix Dashboard</h1>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider">Management Session Active</span>
               </div>
             </div>
           </div>
 
-          <div className="h-6 w-px bg-white/10 hidden md:block" />
+          <div className="h-8 w-px bg-zinc-800 hidden md:block" />
 
           {/* System Metrics */}
-          <div className="hidden lg:flex items-center gap-8">
+          <div className="hidden lg:flex items-center gap-10">
             <div className="flex flex-col">
-              <span className="text-[7px] text-white/20 uppercase font-black tracking-widest">Total Users</span>
-              <span className="text-[12px] text-orange-500 font-magic font-black tracking-tighter">{systemStats.totalUsers}</span>
+              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider mb-1">Total Users</span>
+              <span className="text-xl text-orange-400 font-mono font-semibold">{systemStats.totalUsers}</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-[7px] text-white/20 uppercase font-black tracking-widest">Total Decks</span>
-              <span className="text-[12px] text-cyan-400 font-magic font-black tracking-tighter">{systemStats.totalDecks}</span>
+              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider mb-1">Total Decks</span>
+              <span className="text-xl text-cyan-400 font-mono font-semibold">{systemStats.totalDecks}</span>
             </div>
             <div className="flex flex-col">
-              <span className="text-[7px] text-white/20 uppercase font-black tracking-widest">Total Global Value</span>
-              <span className="text-[12px] text-emerald-400 font-magic font-black tracking-tighter">€{systemStats.totalValue.toFixed(2)}</span>
+              <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-wider mb-1">Total Global Value</span>
+              <span className="text-xl text-emerald-400 font-mono font-bold">€{systemStats.totalValue.toLocaleString('nl-NL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-4 relative z-10">
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-white/5 border border-white/10 rounded font-mono text-[9px] text-white/40">
-             <Clock className="w-3 h-3 text-orange-500" />
+          <div className="flex items-center gap-2.5 px-3 py-1.5 bg-zinc-900 border border-zinc-800 rounded-xl font-mono text-xs text-zinc-450 shadow-inner">
+             <Clock className="w-4 h-4 text-orange-450" />
              {new Date().toLocaleTimeString()}
           </div>
           <button 
             onClick={() => setViewMode("cards")}
-            className="p-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-500 rounded transition-all group"
+            className="px-4 py-2.5 bg-zinc-850 hover:bg-zinc-700/80 border border-zinc-750 text-zinc-305 rounded-xl transition-all shadow-md flex items-center gap-2 hover:text-white"
           >
-            <X className="w-4 h-4 group-hover:rotate-90 transition-transform" />
+            <X className="w-4 h-4" />
+            <span className="text-xs font-semibold uppercase tracking-wider">Close</span>
           </button>
         </div>
       </div>
@@ -9032,219 +9347,226 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
       <div className="flex-1 flex overflow-hidden relative">
         {/* Left Sidebar: User Directory */}
         <div className={`
-          absolute inset-0 lg:relative lg:inset-auto lg:w-80 border-r border-white/5 flex flex-col bg-[#050505] shrink-0 z-20 transition-transform duration-300
+          absolute inset-0 lg:relative lg:inset-auto lg:w-96 border-r border-zinc-800/80 flex flex-col bg-[#0b0b0d] shrink-0 z-20 transition-all duration-300
           ${showUserDetailsMobile ? '-translate-x-full lg:translate-x-0' : 'translate-x-0'}
         `}>
-          <div className="p-4 border-b border-white/5 bg-black/40">
+          <div className="p-5 border-b border-zinc-800 bg-[#070709]">
             <div className="relative group">
-               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/20 group-focus-within:text-orange-500 transition-colors" />
+               <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500 group-focus-within:text-orange-500 transition-colors" />
                <input 
                  type="text" 
-                 placeholder="Search Users..." 
+                 placeholder="Search user profile..." 
                  value={searchQuery}
                  onChange={(e) => setSearchQuery(e.target.value)}
-                 className="w-full bg-white/5 border border-white/10 rounded-lg pl-10 pr-4 py-2.5 text-[10px] outline-none focus:border-orange-500/40 transition-all font-mono"
+                 className="w-full bg-zinc-900/80 border border-zinc-800 rounded-xl pl-11 pr-4 py-3 text-sm text-white placeholder:text-zinc-500 outline-none focus:border-orange-500/50 focus:ring-2 focus:ring-orange-500/10 transition-all font-sans"
                />
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
-            <div className="space-y-1">
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-3 space-y-2">
+            <span className="text-[10px] pl-3 py-1 block uppercase font-bold tracking-wider text-zinc-500">System Directory</span>
+            
+            <div className="space-y-1.5 font-sans">
               {filteredUsers.length === 0 && !loading && (
-                <div className="p-8 text-center opacity-20 uppercase text-[8px] tracking-[0.2em]">No Users Found</div>
+                <div className="p-12 text-center text-zinc-500 uppercase text-xs tracking-wider">No Users Found</div>
               )}
               {filteredUsers.map(u => (
                 <button 
                   key={u.id}
                   onClick={() => selectUser(u)}
-                  className={`w-full text-left p-3 rounded-lg border transition-all flex items-center justify-between group relative overflow-hidden ${selectedUser?.id === u.id ? 'bg-orange-500/10 border-orange-500/30' : 'border-transparent hover:bg-white/5'}`}
+                  className={`w-full text-left p-3.5 rounded-xl border transition-all flex items-center justify-between group relative overflow-hidden ${selectedUser?.id === u.id ? 'bg-orange-500/[0.06] border-orange-500/40' : 'border-transparent hover:bg-zinc-800/40 hover:border-zinc-800'}`}
                 >
-                  <div className="flex items-center gap-3 relative z-10">
-                    <div className={`w-10 h-10 rounded border overflow-hidden shrink-0 ${selectedUser?.id === u.id ? 'border-orange-500/50 scale-105' : 'border-white/10 opacity-60'} transition-all`}>
+                  <div className="flex items-center gap-3.5 relative z-10 min-w-0 flex-1">
+                    <div className={`w-11 h-11 rounded-xl border overflow-hidden shrink-0 ${selectedUser?.id === u.id ? 'border-orange-500 shadow-md shadow-orange-500/15 scale-105' : 'border-zinc-800 opacity-80'} transition-all bg-zinc-950`}>
                       {u.photoURL ? (
-                        <img src={u.photoURL} alt="Avatar" className="w-full h-full object-cover grayscale group-hover:grayscale-0 transition-all" />
+                        <img src={u.photoURL} alt="Avatar" className="w-full h-full object-cover grayscale-0 transition-all" />
                       ) : (
-                        <div className="w-full h-full bg-white/10 flex items-center justify-center">
-                          <User className="w-4 h-4 opacity-20 text-orange-500" />
+                        <div className="w-full h-full flex items-center justify-center bg-zinc-900 text-zinc-500">
+                          <User className="w-5 h-5 text-orange-500/70" />
                         </div>
                       )}
                     </div>
-                    <div className="flex flex-col min-w-0">
-                      <span className={`text-[10px] font-magic font-black uppercase truncate tracking-widest ${selectedUser?.id === u.id ? 'text-orange-400' : 'text-white/60 group-hover:text-white'}`}>
+                    <div className="flex flex-col min-w-0 flex-1">
+                      <span className={`text-sm font-semibold truncate tracking-wide ${selectedUser?.id === u.id ? 'text-orange-400' : 'text-zinc-100 group-hover:text-white'}`}>
                         {u.userName || u.displayName || "Unknown User"}
                       </span>
-                      <span className="text-[7px] opacity-30 truncate uppercase">{u.id}</span>
+                      <span className="text-[10px] text-zinc-500 font-mono truncate uppercase mt-0.5">{u.id}</span>
                     </div>
                   </div>
-                  {selectedUser?.id === u.id && (
+                  {selectedUser?.id === u.id ? (
                     <div className="absolute right-0 top-0 bottom-0 w-1 bg-orange-500 shadow-[0_0_15px_rgba(249,115,22,0.8)]" />
+                  ) : (
+                    <ChevronRight className="w-4 h-4 text-zinc-600 transition-transform group-hover:translate-x-1" />
                   )}
-                  <ChevronRight className={`w-3 h-3 transition-all ${selectedUser?.id === u.id ? 'translate-x-0 opacity-100' : '-translate-x-2 opacity-0'}`} />
                 </button>
               ))}
-              {loading && <div className="p-4 flex flex-col items-center gap-2"><Loader2 className="w-4 h-4 animate-spin text-orange-500 opacity-20" /></div>}
+              {loading && <div className="p-4 flex flex-col items-center gap-2"><Loader2 className="w-5 h-5 animate-spin text-orange-500 opacity-60" /></div>}
             </div>
           </div>
 
-          <div className="p-4 border-t border-white/5 bg-black/60 text-[7px] text-white/10 uppercase tracking-widest font-black flex items-center justify-between">
+          <div className="p-4.5 border-t border-zinc-800 bg-[#070709] text-xs text-zinc-500 font-medium flex items-center justify-between font-mono">
             <span>Admin Console</span>
-            <span>v1.0</span>
+            <span>v1.2</span>
           </div>
         </div>
 
         {/* Main Content Area */}
         <div className={`
-          flex-1 flex flex-col relative overflow-hidden bg-[#1f2125] z-10 transition-transform duration-300
+          flex-1 flex flex-col relative overflow-hidden bg-[#121215] z-10 transition-all duration-350
           ${showUserDetailsMobile ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
         `}>
           {/* Background Decor */}
-          <div className="absolute inset-0 pointer-events-none opacity-[0.02]">
+          <div className="absolute inset-0 pointer-events-none opacity-[0.03]">
             <div className="absolute top-0 left-0 w-full h-full" style={{ backgroundImage: `radial-gradient(circle at 2px 2px, white 1px, transparent 0)`, backgroundSize: '40px 40px' }} />
           </div>
 
           {selectedUser ? (
             <div className="flex-1 flex flex-col overflow-hidden relative z-10">
-              {/* User Header */}
-              <div className="p-3 lg:p-8 bg-gradient-to-b from-white/5 to-transparent border-b border-white/5 flex flex-col lg:flex-row items-center lg:items-start justify-between gap-4 lg:gap-0">
-                <div className="flex flex-col lg:flex-row items-center gap-3 lg:gap-8 text-center lg:text-left">
-                  <div className="w-16 h-16 lg:w-24 lg:h-24 rounded-2xl border-2 border-orange-500/20 p-1 bg-black shadow-[0_0_50px_rgba(249,115,22,0.1)]">
-                    <div className="w-full h-full rounded-xl overflow-hidden grayscale">
-                      {selectedUser.photoURL ? <img src={selectedUser.photoURL} alt="Large Avatar" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-white/5 flex items-center justify-center"><User className="w-6 h-6 lg:w-10 lg:h-10 opacity-20" /></div>}
+               {/* User Header */}
+              <div className="p-6 lg:p-8 bg-gradient-to-b from-[#18181c] to-transparent border-b border-zinc-800/80 flex flex-col lg:flex-row items-center lg:items-start justify-between gap-6 lg:gap-0">
+                <div className="flex flex-col sm:flex-row items-center gap-5 sm:gap-6 text-center sm:text-left">
+                  <div className="w-20 h-20 lg:w-24 lg:h-24 rounded-2xl border-2 border-orange-500/20 p-1 bg-black shadow-[0_4px_30px_rgba(0,0,0,0.4)]">
+                    <div className="w-full h-full rounded-xl overflow-hidden bg-zinc-950">
+                      {selectedUser.photoURL ? <img src={selectedUser.photoURL} alt="Large Avatar" className="w-full h-full object-cover" /> : <div className="w-full h-full bg-zinc-900 flex items-center justify-center"><User className="w-8 h-8 opacity-25" /></div>}
                     </div>
                   </div>
-                  <div className="space-y-2 lg:space-y-4 max-w-full">
+                  <div className="space-y-2 max-w-full">
                     <div>
-                      <div className="flex flex-wrap items-center justify-center lg:justify-start gap-2 mb-1">
-                        <span className="px-2 py-0.5 bg-orange-500 text-black text-[6px] lg:text-[7px] font-black uppercase rounded tracking-widest">Active User</span>
-                        <span className="text-[9px] lg:text-[12px] opacity-20 font-bold uppercase tracking-widest leading-none truncate max-w-[120px]">ID: {selectedUser.id.slice(0,8)}...</span>
+                      <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2 mb-1.5">
+                        <span className="px-2.5 py-0.5 bg-orange-500/10 border border-orange-500/30 text-orange-400 text-[9px] font-semibold uppercase tracking-wider rounded-md">Active User</span>
+                        <span className="text-[10px] text-zinc-500 font-mono uppercase truncate max-w-[150px]">ID: {selectedUser.id}</span>
                       </div>
-                      <h2 className="text-xl sm:text-2xl lg:text-5xl font-magic font-black text-white uppercase tracking-tighter leading-none italic truncate max-w-[280px] lg:max-w-none">
-                        {selectedUser.userName || selectedUser.displayName || "Unknown"}
+                      <h2 className="text-2xl sm:text-3xl lg:text-4xl font-magic text-white uppercase tracking-tight leading-none italic truncate max-w-[280px] sm:max-w-[400px] lg:max-w-none">
+                        {selectedUser.userName || selectedUser.displayName || "Unknown User"}
                       </h2>
                     </div>
-                    <div className="flex flex-wrap items-center justify-center lg:justify-start gap-3 lg:gap-6">
+                    <div className="flex flex-wrap items-center justify-center sm:justify-start gap-6 pt-1">
                        <div className="flex flex-col">
-                         <span className="text-[7px] lg:text-[8px] text-white/20 uppercase font-black text-center lg:text-left">Role</span>
-                         <span className="text-[9px] lg:text-[11px] text-orange-500 font-magic font-black uppercase tracking-widest whitespace-nowrap">{selectedUser.userTitle || "User"}</span>
+                         <span className="text-[10px] text-zinc-500 uppercase font-bold">Role</span>
+                         <span className="text-xs lg:text-sm text-orange-400 font-semibold uppercase tracking-wider whitespace-nowrap mt-0.5">{selectedUser.userTitle || "Rune Crafter"}</span>
                        </div>
+                       <div className="h-6 w-px bg-zinc-805" />
                        <div className="flex flex-col">
-                         <span className="text-[7px] lg:text-[8px] text-white/20 uppercase font-black text-center lg:text-left">Account Total</span>
-                         <span className="text-[9px] lg:text-[11px] text-emerald-400 font-mono uppercase tracking-widest font-black">€{userDecks.reduce((sum, d) => sum + (d.totalCost || 0), 0).toFixed(2)}</span>
+                         <span className="text-[10px] text-zinc-500 uppercase font-bold">Account Total Net Worth</span>
+                         <span className="text-xs lg:text-sm text-emerald-400 font-mono font-bold whitespace-nowrap mt-0.5">€{userDecks.reduce((sum, d) => sum + (d.totalCost || 0), 0).toFixed(2)}</span>
                        </div>
                     </div>
                   </div>
                 </div>
 
-                <div className="flex gap-2 lg:gap-4 w-full lg:w-auto overflow-x-auto pb-1 lg:pb-0 custom-scrollbar shrink-0">
-                   <div className="rune-panel p-2 lg:p-4 bg-orange-500/5 border-orange-500/20 text-center flex flex-col justify-center min-w-[100px] lg:min-w-[120px] shrink-0">
-                      <Library className="w-3.5 h-3.5 lg:w-5 lg:h-5 mx-auto mb-1 text-orange-500" />
-                      <span className="text-lg lg:text-2xl font-magic font-black text-white leading-none">{userDecks.length}</span>
-                      <span className="text-[6px] lg:text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Decks</span>
+                <div className="flex gap-4 w-full sm:w-auto overflow-x-auto pb-1 lg:pb-0 custom-scrollbar justify-center sm:justify-start shrink-0">
+                   <div className="p-4 bg-orange-500/5 hover:bg-orange-500/[0.08] border border-orange-500/20 rounded-2xl text-center flex flex-col justify-center min-w-[100px] sm:min-w-[120px] transition-all">
+                      <Library className="w-5 h-5 mx-auto mb-1 text-orange-500" />
+                      <span className="text-lg sm:text-2xl font-mono font-bold text-white leading-none">{userDecks.length}</span>
+                      <span className="text-[10px] text-zinc-400 uppercase font-semibold mt-1 tracking-wider">Decks</span>
                    </div>
-                   <div className="rune-panel p-2 lg:p-4 bg-cyan-500/5 border-cyan-500/20 text-center flex flex-col justify-center min-w-[100px] lg:min-w-[120px] shrink-0">
-                      <Box className="w-3.5 h-3.5 lg:w-5 lg:h-5 mx-auto mb-1 text-cyan-400" />
-                      <span className="text-lg lg:text-2xl font-magic font-black text-white leading-none">{userDeckbox.length}</span>
-                      <span className="text-[6px] lg:text-[7px] text-white/30 uppercase font-black mt-1 tracking-widest">Cards</span>
+                   <div className="p-4 bg-cyan-500/5 hover:bg-cyan-500/[0.08] border border-cyan-500/20 rounded-2xl text-center flex flex-col justify-center min-w-[100px] sm:min-w-[120px] transition-all">
+                      <Box className="w-5 h-5 mx-auto mb-1 text-cyan-400" />
+                      <span className="text-lg sm:text-2xl font-mono font-bold text-white leading-none">{userDeckbox.length}</span>
+                      <span className="text-[10px] text-zinc-400 uppercase font-semibold mt-1 tracking-wider">Deckbox</span>
                    </div>
                 </div>
               </div>
 
               {/* Mobile Sub-tabs for Decks / Deckbox */}
-              <div className="lg:hidden flex bg-black border-b border-white/10 relative z-30 shrink-0 select-none">
+              <div className="lg:hidden flex bg-[#0c0c0e] border-b border-zinc-800 relative z-30 shrink-0 select-none">
                 <button
                   onClick={() => setAdminSubTab("decks")}
-                  className={`flex-1 py-4 text-center text-xs font-magic font-extrabold uppercase tracking-widest border-r border-white/10 transition-all ${adminSubTab === "decks" ? "text-orange-500 bg-orange-500/5 border-b-2 border-b-orange-500 font-extrabold" : "text-white/40 hover:text-white"}`}
+                  className={`flex-1 py-4 text-center text-xs font-semibold uppercase tracking-widest border-r border-zinc-800 transition-all ${adminSubTab === "decks" ? "text-orange-500 bg-orange-500/5 border-b-2 border-b-orange-500 font-bold" : "text-zinc-500 hover:text-white"}`}
                 >
                   Decks ({userDecks.length})
                 </button>
                 <button
                   onClick={() => setAdminSubTab("deckbox")}
-                  className={`flex-1 py-4 text-center text-xs font-magic font-extrabold uppercase tracking-widest transition-all ${adminSubTab === "deckbox" ? "text-cyan-400 bg-cyan-400/5 border-b-2 border-b-cyan-400 font-extrabold" : "text-white/40 hover:text-white"}`}
+                  className={`flex-1 py-4 text-center text-xs font-semibold uppercase tracking-widest transition-all ${adminSubTab === "deckbox" ? "text-cyan-400 bg-cyan-400/5 border-b-2 border-b-cyan-400 font-bold" : "text-zinc-500 hover:text-white"}`}
                 >
                   Deckbox ({userDeckbox.length})
                 </button>
               </div>
 
               {/* Data Grid */}
-              <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-px bg-white/5 shrink-0">
+              <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-px bg-zinc-800/80 shrink-0">
                 {/* DECK REPOSITORY */}
-                <div className={`flex flex-col bg-[#1f2125] overflow-hidden ${adminSubTab === "decks" ? "flex" : "hidden lg:flex"}`}>
-                   <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
+                <div className={`flex flex-col bg-[#121215] overflow-hidden ${adminSubTab === "decks" ? "flex" : "hidden lg:flex"}`}>
+                   <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-[#161619]">
                       <div className="flex items-center gap-2">
-                        <Database className="w-3.5 h-3.5 text-orange-500" />
-                        <span className="text-[9px] lg:text-[10px] font-magic font-black uppercase tracking-[0.2em]">Saved Decks</span>
+                        <Database className="w-4 h-4 text-orange-500" />
+                        <span className="text-xs font-semibold uppercase tracking-wider">Saved Decks Library</span>
                       </div>
-                      <span className="text-[7px] lg:text-[8px] font-mono text-white/20 font-black">{userDecks.length} DECKS</span>
+                      <span className="text-xs font-mono font-bold text-orange-400 bg-orange-400/5 px-2 py-0.5 border border-orange-400/20 rounded">{userDecks.length} DECKS</span>
                    </div>
-                   <div className="flex-1 overflow-y-auto custom-scrollbar p-3 lg:p-6 space-y-3 lg:space-y-4">
+                   
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-6 space-y-4">
                       {userDecks.length === 0 && (
-                        <div className="h-60 flex flex-col items-center justify-center gap-4 opacity-10 border border-dashed border-white/10 rounded-2xl">
-                          <Library className="w-12 h-12" />
-                          <span className="text-[10px] uppercase tracking-widest">No Decks Found</span>
+                        <div className="h-60 flex flex-col items-center justify-center gap-3 opacity-30 border border-dashed border-zinc-800 rounded-2xl">
+                          <Library className="w-10 h-10 text-zinc-500" />
+                          <span className="text-sm uppercase tracking-widest text-zinc-500">No Decks Found</span>
                         </div>
                       )}
+                      
                       {userDecks.map(deck => (
-                        <div key={deck.id} className="rune-panel p-3 lg:p-5 bg-black border-white/5 hover:border-orange-500/30 transition-all group flex flex-col gap-3 lg:gap-4">
-                           <div className="flex items-start justify-between">
-                              <div className="flex gap-3 lg:gap-4">
+                        <div key={deck.id} className="p-5 bg-[#18181c] border border-zinc-800/80 rounded-2xl hover:border-orange-500/35 transition-all group flex flex-col gap-4 shadow-sm hover:shadow-orange-500/[0.02]">
+                           <div className="flex items-start justify-between gap-4">
+                              <div className="flex gap-4 min-w-0 flex-1">
                                  {/* Commander Thumbnails */}
-                                 <div className="flex -space-x-3 lg:-space-x-4">
+                                 <div className="flex -space-x-3.5 shrink-0">
                                     {(deck.commanders || []).map((cmdr: any, cidx: number) => {
                                       let imgSrc = resolveCardImage(cmdr);
-                                      // Fallback to art_crops if cmdr was just a name
                                       if (!imgSrc && deck.art_crops && deck.art_crops[cidx]) {
                                         imgSrc = deck.art_crops[cidx];
                                       }
                                       return (
-                                        <div key={cmdr.id || cmdr.name || cidx} className="w-12 h-16 rounded overflow-hidden border border-white/20 shadow-lg relative z-[10-cidx] hover:z-20 hover:scale-110 transition-all bg-white/5">
+                                        <div key={cmdr.id || cmdr.name || cidx} className="w-11 h-15 rounded-lg overflow-hidden border border-zinc-800 shadow-md relative z-[10-cidx] hover:z-20 hover:scale-115 hover:border-zinc-550 transition-all bg-zinc-950">
                                           {imgSrc ? (
                                             <img src={imgSrc} className="w-full h-full object-cover" />
-                                          ) : <div className="w-full h-full flex items-center justify-center font-magic text-[8px] opacity-20 text-center px-1">
+                                          ) : <div className="w-full h-full flex items-center justify-center font-mono text-[8px] text-zinc-600 font-bold text-center px-1">
                                                 {typeof cmdr === "string" ? cmdr.substring(0, 3) : cmdr.name?.substring(0, 3) || "CMD"}
                                               </div>}
                                         </div>
                                       );
                                     })}
                                     {(!deck.commanders || deck.commanders.length === 0) && (
-                                       <div className="w-12 h-16 rounded border border-white/5 bg-white/[0.02] flex items-center justify-center">
-                                          <User className="w-4 h-4 opacity-10" />
+                                       <div className="w-11 h-15 rounded-lg border border-zinc-800 bg-zinc-900 flex items-center justify-center">
+                                          <User className="w-4 h-4 text-zinc-700" />
                                        </div>
                                     )}
                                  </div>
 
-                                 <div className="space-y-1">
-                                   <h3 className="text-xl font-magic font-black text-white uppercase tracking-tight group-hover:text-orange-400 transition-colors">{deck.name}</h3>
-                                   <div className="flex items-center gap-2 text-[8px] font-mono font-bold">
-                                      <span className="text-orange-500/60 uppercase">IDENTITY: {deck.ci || "C"}</span>
-                                      <span className="text-white/10 h-3 w-px mx-1 bg-white/5" />
-                                      <span className="text-white/40 uppercase">{deck.commanders?.length || 0} COMMANDERS</span>
-                                   </div>
+                                 <div className="space-y-1.5 min-w-0 flex-1 text-left">
+                                    <h3 className="text-base font-bold text-white uppercase tracking-wide group-hover:text-orange-400 transition-colors truncate">{deck.name}</h3>
+                                    <div className="flex items-center gap-2 text-[10px] font-medium uppercase tracking-wider text-zinc-400">
+                                       <span className="text-orange-500 font-mono font-bold bg-orange-505/10 px-2 py-0.5 rounded-md">ID: {deck.ci || "C"}</span>
+                                       <span className="text-zinc-650 block">•</span>
+                                       <span>{deck.commanders?.length || 0} Commander(s)</span>
+                                    </div>
                                  </div>
                               </div>
-                              <div className="text-right">
-                                <span className="text-lg font-magic font-black text-emerald-400">€{deck.totalCost?.toFixed(2)}</span>
-                                <p className="text-[7px] text-white/20 uppercase font-black tracking-widest mt-0.5">Value</p>
+                              <div className="text-right shrink-0">
+                                <span className="text-base sm:text-lg font-mono font-bold text-emerald-400">€{deck.totalCost?.toFixed(2)}</span>
+                                <p className="text-[9px] text-zinc-500 uppercase font-semibold tracking-wider mt-0.5">Estimated Value</p>
                               </div>
                            </div>
                            
                            {deck.tags && deck.tags.length > 0 && (
-                             <div className="flex flex-wrap gap-1.5 pt-3 border-t border-white/5">
+                             <div className="flex flex-wrap gap-1 border-t border-zinc-805 pt-3">
                                {deck.tags.map(tag => (
-                                 <span key={tag} className="px-2 py-0.5 bg-white/5 border border-white/10 rounded text-[7px] text-white/40 uppercase font-black tracking-widest">
+                                 <span key={tag} className="px-2.5 py-0.5 bg-zinc-900 border border-zinc-800 rounded-md text-[9px] text-zinc-450 uppercase tracking-widest font-mono">
                                    {tag.split(":::")[0]}
                                  </span>
                                ))}
                              </div>
                            )}
 
-                           <div className="grid grid-cols-2 gap-2 pt-2">
-                             <div className="flex flex-col p-2 bg-white/5 rounded border border-white/5">
-                               <span className="text-[6px] text-white/20 uppercase font-black">Deck ID</span>
-                               <span className="text-[8px] font-mono text-white/40 truncate">{deck.id}</span>
+                           <div className="grid grid-cols-2 gap-3 pt-1">
+                             <div className="flex flex-col p-2 bg-zinc-900/60 rounded-xl border border-zinc-800 min-w-0 text-left">
+                               <span className="text-[8px] text-zinc-500 uppercase font-semibold">Deck UUID</span>
+                               <span className="text-[10px] font-mono text-zinc-400 truncate">{deck.id}</span>
                              </div>
-                             <div className="flex flex-col p-2 bg-white/5 rounded border border-white/5">
-                               <span className="text-[6px] text-white/20 uppercase font-black">Source</span>
-                               <span className="text-[8px] font-mono text-cyan-500/60 uppercase">{deck.importUrl?.includes('moxfield') ? 'Moxfield' : deck.importUrl?.includes('archidekt') ? 'Archidekt' : 'Local Forge'}</span>
+                             <div className="flex flex-col p-2 bg-zinc-900/60 rounded-xl border border-zinc-800 min-w-0 text-left">
+                               <span className="text-[8px] text-zinc-500 uppercase font-semibold">Source Integration</span>
+                               <span className="text-[10px] font-bold text-[#f59e0b]/80 uppercase truncate">
+                                 {deck.importUrl?.includes('moxfield') ? 'Moxfield API' : deck.importUrl?.includes('archidekt') ? 'Archidekt API' : 'Local Deckbuilder'}
+                               </span>
                              </div>
                            </div>
                         </div>
@@ -9253,118 +9575,115 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
                 </div>
 
                 {/* DECKBOX ARTIFACTS */}
-                <div className={`flex flex-col bg-[#1f2125] border-l border-white/10 overflow-hidden ${adminSubTab === "deckbox" ? "flex" : "hidden lg:flex"}`}>
-                   <div className="p-3 lg:p-4 border-b border-white/5 flex items-center justify-between bg-black/40 lg:bg-black/60">
+                <div className={`flex flex-col bg-[#121215] border-l border-zinc-800/80 overflow-hidden ${adminSubTab === "deckbox" ? "flex" : "hidden lg:flex"}`}>
+                   <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-[#161619]">
                       <div className="flex items-center gap-2">
-                        <Box className="w-3.5 h-3.5 text-cyan-400" />
-                        <span className="text-[9px] lg:text-[10px] font-magic font-black uppercase tracking-[0.2em]">Saved Deckbox</span>
+                        <Box className="w-4 h-4 text-cyan-400" />
+                        <span className="text-xs font-semibold uppercase tracking-wider">Saved Deckbox Inventory</span>
                       </div>
-                      <span className="text-[7px] lg:text-[8px] font-mono text-white/20 font-black">{userDeckbox.reduce((acc, curr) => acc + (curr.qty || curr.count || 1), 0)} CARDS</span>
+                      <span className="text-xs font-mono font-bold text-cyan-400 bg-cyan-400/5 px-2 py-0.5 border border-cyan-400/20 rounded">{userDeckbox.reduce((acc, curr) => acc + (curr.qty || curr.count || 1), 0)} CARDS</span>
                    </div>
-                   <div className="flex-1 overflow-y-auto custom-scrollbar p-3 lg:p-6">
-                      <div className="grid grid-cols-1 gap-1">
+
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-6 text-left">
+                      <div className="grid grid-cols-1 gap-2">
                         {userDeckbox.length === 0 && (
-                          <div className="h-60 flex flex-col items-center justify-center gap-4 opacity-10 border border-dashed border-white/10 rounded-2xl">
-                            <Box className="w-12 h-12" />
-                            <span className="text-[10px] uppercase tracking-widest">Deckbox Empty</span>
+                          <div className="h-60 flex flex-col items-center justify-center gap-3 opacity-30 border border-dashed border-zinc-800 rounded-2xl">
+                            <Box className="w-10 h-10 text-zinc-500" />
+                            <span className="text-sm uppercase tracking-widest text-zinc-500">Deckbox Empty</span>
                           </div>
                         )}
                         {userDeckbox.map((card: any, idx) => {
                           const imgSrc = resolveCardImage(card);
                           return (
-                            <div key={card.id || card.uniqueId || idx} className="flex items-center gap-4 p-2 hover:bg-white/5 transition-all group rounded">
-                               <div className="w-12 h-16 rounded overflow-hidden border border-white/10 shrink-0 group-hover:border-cyan-500/50 transition-all bg-white/5">
+                            <div key={card.id || card.uniqueId || idx} className="flex items-center gap-4 p-3 hover:bg-zinc-800/[0.3] border border-transparent hover:border-zinc-800 rounded-2xl transition-all group">
+                               <div className="w-10 h-14 rounded-lg overflow-hidden border border-zinc-800 shrink-0 group-hover:border-cyan-500/50 transition-all bg-zinc-950 shadow-sm">
                                  {imgSrc ? (
                                    <img 
                                      src={imgSrc} 
                                      className="w-full h-full object-cover transition-transform group-hover:scale-110" 
                                    />
-                                 ) : <div className="flex items-center justify-center h-full"><Box className="w-4 h-4 opacity-10" /></div>}
+                                 ) : <div className="flex items-center justify-center h-full"><Box className="w-4 h-4 text-zinc-800" /></div>}
                                </div>
-                               <div className="w-8 h-8 rounded bg-cyan-500/10 border border-cyan-500/20 flex flex-col items-center justify-center text-[10px] font-mono font-black text-cyan-400 shrink-0">
-                               {card.qty || card.count || 1}
-                               <span className="text-[6px] opacity-40">QTY</span>
-                             </div>
-                             <div className="flex-1 min-w-0">
-                               <p className="text-[11px] font-magic font-black uppercase text-white tracking-widest group-hover:text-cyan-400 transition-colors truncate">{card.name}</p>
-                               <div className="flex items-center gap-2">
-                                  <span className="text-[7px] font-mono text-white/20 uppercase font-black">{card.type_line?.split("—")[0] || "Spell"}</span>
-                                  <span className="text-[7px] text-emerald-400/40 font-mono">€{parseFloat(card.prices?.eur || "0").toFixed(2)}</span>
-                               </div>
-                             </div>
-                             <div className="flex flex-col items-end shrink-0">
-                                <span className="text-[9px] font-mono text-white/20 uppercase tracking-widest italic">{card.from_deck || "Unsorted"}</span>
-                             </div>
-                          </div>
-                        );
-                      })}
+                               <div className="w-9 h-9 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex flex-col items-center justify-center text-xs font-mono font-bold text-cyan-400 shrink-0 shadow-inner">
+                                {card.qty || card.count || 1}
+                                <span className="text-[7px] opacity-55 font-sans uppercase font-bold leading-none mt-0.5">QTY</span>
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-bold text-white uppercase tracking-wide group-hover:text-cyan-400 transition-colors truncate">{card.name}</p>
+                                <div className="flex items-center gap-2 mt-0.5">
+                                   <span className="text-[10px] text-zinc-500 uppercase font-semibold">{card.type_line?.split("—")[0].trim() || "Spell"}</span>
+                                   <span className="text-zinc-700 block">•</span>
+                                   <span className="text-[10px] text-emerald-400 font-mono font-semibold">€{parseFloat(card.prices?.eur || "0").toFixed(2)}</span>
+                                </div>
+                              </div>
+                              <div className="flex flex-col items-end shrink-0 pl-1">
+                                 <span className="text-[9px] font-mono text-zinc-500 bg-zinc-800/40 px-2.5 py-1 border border-zinc-800 rounded-md lowercase tracking-wide font-medium">{card.from_deck || "Unsorted"}</span>
+                              </div>
+                           </div>
+                          );
+                        })}
                       </div>
                    </div>
                 </div>
               </div>
 
               {/* Bottom Analysis Bar */}
-              <div className="h-10 bg-black border-t border-white/10 px-6 flex items-center justify-between shrink-0">
+              <div className="h-12 bg-[#0c0c0e] border-t border-zinc-800 px-6 flex items-center justify-between shrink-0 select-none text-[11px] font-mono text-zinc-500">
                 <div className="flex items-center gap-4">
                   <div className="flex items-center gap-2">
-                    <Activity className="w-3.5 h-3.5 text-emerald-500" />
-                    <span className="text-[8px] uppercase tracking-[0.2em] font-black opacity-30 animate-pulse">Monitoring System Stability...</span>
+                    <Activity className="w-4 h-4 text-emerald-500" />
+                    <span className="uppercase tracking-[0.2em] font-medium opacity-50 animate-pulse">Monitoring Live DB stability...</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-6">
                    <div className="flex items-center gap-2">
-                     <span className="text-[8px] text-white/20 lowercase">latency:</span>
-                     <span className="text-[8px] font-mono text-emerald-500">12ms</span>
+                     <span>latency:</span>
+                     <span className="text-emerald-400">12ms</span>
                    </div>
                    <div className="flex items-center gap-2">
-                     <span className="text-[8px] text-white/20 lowercase">integrity:</span>
-                     <span className="text-[8px] font-mono text-emerald-500 font-black">100% SECURE</span>
+                     <span>integrity:</span>
+                     <span className="text-emerald-400 font-semibold uppercase">100% SECURE</span>
                    </div>
                 </div>
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col items-center justify-center p-20 text-center relative">
-              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/[0.03] to-transparent pointer-events-none" />
+            <div className="flex-1 flex flex-col items-center justify-center p-8 sm:p-20 text-center relative">
+              <div className="absolute inset-0 bg-gradient-to-br from-orange-500/[0.015] to-transparent pointer-events-none" />
               
-              <motion.div 
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="space-y-8 relative z-10"
-              >
-                <div className="relative mx-auto w-40 h-40">
-                  <div className="absolute inset-0 bg-orange-500/20 blur-[100px] rounded-full animate-pulse" />
-                  <div className="relative z-10 w-full h-full flex items-center justify-center bg-[#070707] border border-orange-500/30 rounded-[48px] shadow-2xl overflow-hidden group">
-                    <ShieldCheck className="w-20 h-20 text-orange-500/20 group-hover:text-orange-500 group-hover:scale-110 transition-all duration-700" />
-                    <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
+              <div className="space-y-8 relative z-10 max-w-xl mx-auto">
+                <div className="relative mx-auto w-36 h-36">
+                  <div className="absolute inset-0 bg-orange-500/10 blur-[80px] rounded-full animate-pulse" />
+                  <div className="relative z-10 w-full h-full flex items-center justify-center bg-[#0d0d0f] border border-zinc-800 rounded-[36px] shadow-2xl overflow-hidden group">
+                    <ShieldCheck className="w-16 h-16 text-orange-500/20 group-hover:text-orange-500 group-hover:scale-110 transition-all duration-700" />
                   </div>
                 </div>
 
-                <div className="space-y-4 max-w-lg mx-auto">
-                  <h2 className="text-5xl font-magic font-black text-white uppercase tracking-tighter leading-none italic">
+                <div className="space-y-3 px-4">
+                  <h2 className="text-3xl sm:text-4xl font-black text-white uppercase tracking-tight leading-none italic">
                     User Management <br />
-                    <span className="text-orange-500">Admin Console</span>
+                    <span className="text-orange-500 font-sans tracking-wide not-italic font-bold text-xl sm:text-2xl mt-2 block">Admin Operations Center</span>
                   </h2>
-                  <p className="text-[11px] text-white/20 uppercase tracking-[0.4em] font-mono leading-loose font-black px-12">
-                    Select a user from the directory to view their saved decks and current deckbox contents.
+                  <p className="text-xs sm:text-sm text-zinc-500 uppercase tracking-[0.25em] font-sans leading-relaxed font-semibold max-w-md mx-auto pt-2">
+                    Select a user from the directory to review their saved decks and current deckbox contents.
                   </p>
                 </div>
 
-                <div className="flex items-center justify-center gap-12 pt-8">
+                <div className="flex items-center justify-center gap-8 sm:gap-12 pt-6">
                   <div className="flex flex-col items-center gap-2">
-                    <Globe className="w-6 h-6 text-orange-400/40" />
-                    <span className="text-[8px] font-mono uppercase text-white/10 tracking-widest font-black">Global Access</span>
+                    <Globe className="w-6 h-6 text-zinc-650" />
+                    <span className="text-[9px] font-mono uppercase text-zinc-500 tracking-wider font-semibold">Global Access</span>
                   </div>
                   <div className="flex flex-col items-center gap-2">
-                    <Database className="w-6 h-6 text-orange-400/40" />
-                    <span className="text-[8px] font-mono uppercase text-white/10 tracking-widest font-black">Realtime Sync</span>
+                    <Database className="w-6 h-6 text-zinc-650" />
+                    <span className="text-[9px] font-mono uppercase text-zinc-500 tracking-wider font-semibold">Realtime Sync</span>
                   </div>
                   <div className="flex flex-col items-center gap-2">
-                    <Cpu className="w-6 h-6 text-orange-400/40" />
-                    <span className="text-[8px] font-mono uppercase text-white/10 tracking-widest font-black">Matrix Compute</span>
+                    <Cpu className="w-6 h-6 text-zinc-650" />
+                    <span className="text-[9px] font-mono uppercase text-zinc-500 tracking-wider font-semibold">Operations</span>
                   </div>
                 </div>
-              </motion.div>
+              </div>
             </div>
           )}
         </div>
@@ -9377,15 +9696,14 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0 }}
-            className="fixed bottom-8 right-8 z-[3000] p-4 bg-black border border-orange-500/40 rounded-xl shadow-[0_0_50px_rgba(249,115,22,0.2)] flex items-center gap-4"
+            className="fixed bottom-8 right-8 z-[3000] p-4 bg-zinc-950 border border-orange-500/30 rounded-2xl shadow-[0_10px_50px_rgba(0,0,0,0.7)] flex items-center gap-4"
           >
             <div className="relative">
                <RotateCw className="w-5 h-5 text-orange-500 animate-spin" />
-               <div className="absolute inset-0 bg-orange-500 blur-md animate-pulse opacity-50" />
             </div>
-            <div className="flex flex-col">
-               <span className="text-[10px] font-magic font-black uppercase text-white tracking-widest">Syncing Dashboard Data</span>
-               <span className="text-[8px] font-mono text-orange-500/60 uppercase font-black">Retrieving user records...</span>
+            <div className="flex flex-col text-left">
+               <span className="text-xs font-semibold uppercase text-white tracking-wider">Syncing Dashboard Data</span>
+               <span className="text-[10px] font-mono text-orange-400/70 uppercase">Retrieving user records...</span>
             </div>
           </motion.div>
         )}

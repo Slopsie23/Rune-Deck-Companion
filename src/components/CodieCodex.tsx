@@ -380,7 +380,7 @@ CARD BRACKETS:
             )}
 
             <p className="text-[10px] text-white/50 text-left mt-3 leading-relaxed border-t border-white/5 pt-3 w-full">
-              💡 *Tip:* "Beweeg uw cursor over kaartnamen in de tekst zoals <span className="text-pink-400 font-bold font-magic">[[Sol Ring]]</span> om direct een grote afbeelding te projecteren!"
+              💡 *Tip:* "Hover your cursor over card names in the text like <span className="text-pink-400 font-bold font-magic">[[Sol Ring]]</span> to instantly project a full-size image!"
             </p>
           </div>
 
@@ -396,7 +396,7 @@ CARD BRACKETS:
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleScryfallSearch()}
-                placeholder="Zoek kaart (bv: 'Korvold', 'Krenko')"
+                placeholder="Search card (e.g., 'Korvold', 'Krenko')"
                 className="flex-1 bg-white/[0.02] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-pink-500/50 transition-all uppercase font-magic"
               />
               <button
@@ -413,7 +413,7 @@ CARD BRACKETS:
               {scryfallResults.length === 0 ? (
                 <div className="h-full flex flex-col items-center justify-center text-center opacity-25 p-4 border border-dashed border-white/5 rounded-xl">
                   <BookOpen className="w-8 h-8 text-white/40 mb-2" />
-                  <span className="text-[9px] font-magic uppercase tracking-wider block">Scanresultaten verschijnen hier</span>
+                  <span className="text-[9px] font-magic uppercase tracking-wider block">Scan results will appear here</span>
                 </div>
               ) : (
                 scryfallResults.slice(0, 10).map((card) => {
@@ -436,8 +436,14 @@ CARD BRACKETS:
                           <p className="text-[10px] font-magic font-extrabold text-white uppercase tracking-wider truncate group-hover:text-pink-400 transition-colors leading-tight">
                             {card.name}
                           </p>
-                          <p className="text-[8px] font-mono text-white/40 truncate uppercase font-bold mt-0.5">
-                            {card.type_line}
+                          <p className="text-[8px] font-mono text-white/40 truncate uppercase font-bold mt-0.5 flex items-center gap-1.5 flex-wrap">
+                            <span>{card.type_line}</span>
+                            {(card.prices?.eur || card.prices?.eur_foil) && (
+                              <>
+                                <span className="text-white/20">•</span>
+                                <span className="text-emerald-400">€{parseFloat(card.prices.eur || card.prices.eur_foil).toFixed(2)}</span>
+                              </>
+                            )}
                           </p>
                         </div>
                       </div>
@@ -445,7 +451,7 @@ CARD BRACKETS:
                       <div className="flex gap-1.5">
                         <button
                           onClick={() => handleAddCard(card.name)}
-                          title="Voeg toe aan Deckbox"
+                          title="Add to Deckbox"
                           className="w-7 h-7 rounded-md bg-white/5 border border-white/10 hover:bg-pink-500/10 hover:border-pink-500/30 text-white/60 hover:text-pink-400 flex items-center justify-center transition-all active:scale-90"
                         >
                           <Plus className="w-3.5 h-3.5" />
@@ -455,7 +461,7 @@ CARD BRACKETS:
                         {card.type_line?.toLowerCase().includes("legendary creature") && (
                           <button
                             onClick={() => handleCreateDeckFromCommander(card.name)}
-                            title="Bouw deck rond deze"
+                            title="Build deck around this"
                             className="w-7 h-7 rounded-md bg-orange-500/5 border border-orange-500/20 hover:bg-orange-500/15 hover:border-orange-500/40 text-orange-500/80 hover:text-orange-400 flex items-center justify-center transition-all active:scale-90"
                           >
                             <Gavel className="w-3.5 h-3.5" />
@@ -554,7 +560,7 @@ CARD BRACKETS:
                           <button 
                             className="hover:text-white transition-colors ml-1 border-l border-white/10 pl-1"
                             onClick={() => handleAddCard(cName)}
-                            title="Voeg toe aan Deckbox"
+                            title="Add to Deckbox"
                           >
                             <Plus className="w-3 h-3 text-pink-400 group-hover:scale-110" />
                           </button>
@@ -563,7 +569,7 @@ CARD BRACKETS:
                           <button
                             className="hover:text-white transition-colors ml-1 border-l border-white/10 pl-1"
                             onClick={() => handleCreateDeckFromCommander(cName, msg.suggestedCards)}
-                            title="Maak lokaal deck rond deze"
+                            title="Build local deck around this"
                           >
                             <Gavel className="w-3 h-3 text-pink-400 group-hover:scale-110" />
                           </button>
@@ -586,7 +592,7 @@ CARD BRACKETS:
                   <BookOpen className="w-4 h-4 animate-spin text-pink-500" />
                 </div>
                 <div className="p-3.5 bg-black/60 border border-white/5 rounded-2xl rounded-tl-none text-left flex items-center gap-2">
-                  <span className="text-[10px] font-magic font-extrabold uppercase tracking-widest text-[#e49cc3] animate-pulse">Codex Codie leest de registers...</span>
+                  <span className="text-[10px] font-magic font-extrabold uppercase tracking-widest text-[#e49cc3] animate-pulse">Codex Codie is reading the archives...</span>
                   <div className="flex gap-1">
                     <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: "0ms" }} />
                     <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-bounce" style={{ animationDelay: "150ms" }} />
@@ -601,7 +607,7 @@ CARD BRACKETS:
 
           {/* Quick suggestions area on bottom */}
           <div className="hidden md:flex p-3 border-t border-white/5 bg-black/40 gap-2 overflow-x-auto no-scrollbar justify-start items-center z-10 shrink-0 animate-fade-in w-full">
-            <span className="text-[8px] font-magic font-black uppercase text-white/30 tracking-widest shrink-0 whitespace-nowrap">Sneltips:</span>
+            <span className="text-[8px] font-magic font-black uppercase text-white/30 tracking-widest shrink-0 whitespace-nowrap">Quick Tips:</span>
             {presetPrompts.map((p, idx) => (
               <button
                 key={idx}
@@ -622,7 +628,7 @@ CARD BRACKETS:
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && !loading && handleSend()}
               disabled={loading}
-              placeholder="Vraag Codex Codie naar upgrades, speelstijlen of combinaties..."
+              placeholder="Ask Codex Codie about upgrades, playstyles or combinations..."
               className="flex-1 bg-white/[0.02] border border-white/10 rounded-xl px-4 py-2.5 text-xs text-white focus:outline-none focus:border-pink-500/40 transition-all font-sans"
             />
             
@@ -631,7 +637,7 @@ CARD BRACKETS:
               disabled={loading || !inputValue.trim()}
               className="px-5 py-2.5 rounded-xl bg-pink-500 hover:bg-pink-400 text-black font-magic font-black text-xs uppercase tracking-widest transition-all hover:scale-[1.03] active:scale-95 flex items-center gap-2 shadow-[0_4px_20px_rgba(236,72,153,0.3)] disabled:opacity-30 disabled:scale-100 disabled:shadow-none"
             >
-              <span>Vraag</span> <Send className="w-3.5 h-3.5" />
+              <span>Ask</span> <Send className="w-3.5 h-3.5" />
             </button>
           </footer>
 
