@@ -5,6 +5,27 @@ import cors from "cors";
 import axios from "axios";
 import fs from "fs";
 import * as cheerio from "cheerio";
+import { GoogleGenAI, Type } from "@google/genai";
+
+// Lazy-initialized Gemini Client
+let cachedAiClient: GoogleGenAI | null = null;
+function getGeminiClient(): GoogleGenAI {
+  if (!cachedAiClient) {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      throw new Error("GEMINI_API_KEY environment variable is required on the server.");
+    }
+    cachedAiClient = new GoogleGenAI({
+      apiKey: key,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+  }
+  return cachedAiClient;
+}
 
 // Load saved decks from local file (robust)
 const getDecks = () => {
@@ -36,6 +57,120 @@ async function startServer() {
   // Get saved decks from imported JSON
   app.get("/api/decks", (req, res) => {
     res.json(decks);
+  });
+
+  // In-memory cache for Scryfall queries to make card scanning real-time fast
+  const scryfallCache = new Map<string, any>();
+
+  // Card scanner endpoint with lazy Gemini client initialization
+  app.post("/api/scan-card", async (req, res) => {
+    try {
+      const { image, lockedSet, forceFoil } = req.body;
+      if (!image) {
+        return res.status(400).json({ error: "No image received" });
+      }
+
+      // Remove prefix if present
+      const cleanBase64 = image.replace(/^data:image\/\w+;base64,/, "");
+
+      const ai = getGeminiClient();
+
+      let systemInstruction = "You are an expert Magic: The Gathering card scanner. Identify the MTG card shown in the camera snapshot.";
+      if (lockedSet) {
+        systemInstruction += ` The user has locked the expansion set code to "${lockedSet}". You MUST prioritize finding this card within the "${lockedSet}" set.`;
+      }
+
+      systemInstruction += " Please analyze the card illustration, title, rules text, and set symbol to identify it correctly. Return a JSON object containing: 'name' (exact English card name), 'set' (3-4 character lowercase set code, or if unknown leave empty or guess), 'foil' (boolean, true if clearly foil, else false). Ensure you respond with pure JSON.";
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: [
+          {
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: cleanBase64,
+            },
+          },
+          "Scan this MTG card and output its details in JSON format."
+        ],
+        config: {
+          systemInstruction,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              name: {
+                type: Type.STRING,
+                description: "Exact English card name (e.g., 'Lightning Bolt', 'Fable of the Mirror-Breaker')."
+              },
+              set: {
+                type: Type.STRING,
+                description: "The 3-4 letter lowercase MTG set code (e.g., 'm20', 'neo', 'aer') if matched."
+              },
+              foil: {
+                type: Type.BOOLEAN,
+                description: "Set to true if you are confident it is a foil version of the card, otherwise false."
+              }
+            },
+            required: ["name"]
+          }
+        }
+      });
+
+      const text = response.text?.trim() || "{}";
+      const identified = JSON.parse(text);
+
+      // Now query Scryfall directly to fetch full card metadata based on the identified name (and set if provided)
+      let scryfallUrl = `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(identified.name)}`;
+      if (lockedSet) {
+        scryfallUrl += `&set=${encodeURIComponent(lockedSet.toLowerCase())}`;
+      } else if (identified.set) {
+        scryfallUrl += `&set=${encodeURIComponent(identified.set.toLowerCase())}`;
+      }
+
+      let cardData: any = null;
+      if (scryfallCache.has(scryfallUrl)) {
+        cardData = scryfallCache.get(scryfallUrl);
+      } else {
+        try {
+          const scryfallRes = await axios.get(scryfallUrl, {
+            headers: { "User-Agent": "RuneDeck/2.0", "Accept": "application/json" }
+          });
+          cardData = scryfallRes.data;
+          scryfallCache.set(scryfallUrl, cardData);
+        } catch (e) {
+          // Fallback to fuzzy search if exact set query failed
+          const fallbackUrl = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(identified.name)}`;
+          if (scryfallCache.has(fallbackUrl)) {
+            cardData = scryfallCache.get(fallbackUrl);
+          } else {
+            try {
+              const scryfallRes = await axios.get(fallbackUrl, {
+                headers: { "User-Agent": "RuneDeck/2.0", "Accept": "application/json" }
+              });
+              cardData = scryfallRes.data;
+              scryfallCache.set(fallbackUrl, cardData);
+            } catch (innerErr) {
+              console.error("Scryfall resolution failed for scanned card name:", identified.name);
+            }
+          }
+        }
+      }
+
+      res.json({
+        success: true,
+        identified: {
+          name: identified.name,
+          set: identified.set || (cardData ? cardData.set : ""),
+          foil: forceFoil === undefined ? !!identified.foil : !!forceFoil
+        },
+        cardData: cardData || null
+      });
+
+    } catch (error: any) {
+      console.error("Card Scan critical error:", error);
+      res.status(500).json({ error: error.message || "Interne fout bij het scannen van de kaart" });
+    }
   });
 
   // Proxy for Scryfall to avoid CORS and ad-blocker issues
