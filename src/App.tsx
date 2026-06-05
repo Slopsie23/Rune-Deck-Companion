@@ -94,7 +94,6 @@ import {
 import { motion, AnimatePresence } from "motion/react";
 import axios from "axios";
 import Markdown from 'react-markdown';
-import { CardScanner } from "./components/CardScanner";
 import {
   BarChart,
   Bar,
@@ -110,7 +109,7 @@ import {
 } from "recharts";
 // import runesBackground from './assets/images/runes_background_1777929551380.png';
 const runesBackground = "/runebg.png";
-const VERSION = "V2.12.0";
+const VERSION = "V2.11.0";
 
 let cachedScryfallSets: any = null;
 async function fetchScryfallSets() {
@@ -468,7 +467,6 @@ export default function App() {
     | "stats"
     | "search"
     | "codie"
-    | "card_scanner"
   >("cards");
   const [loading, setLoading] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState("Searching the Multiverse...");
@@ -2389,7 +2387,7 @@ export default function App() {
   };
 
   const handleFunModeClick = (
-    mode: "sets" | "calendar" | "sheriff" | "judge" | "codie" | "card_scanner",
+    mode: "sets" | "calendar" | "sheriff" | "judge" | "codie",
   ) => {
     clearDeckSelection();
     setViewMode(mode);
@@ -2725,90 +2723,6 @@ export default function App() {
       } catch (err2: any) {
         console.error("Could not add card to deckbox", err2);
         showMessage(`Error adding card: ${err2.message || "unknown"}`, "error");
-      }
-    }
-  };
-
-  const importScannedCardsToDeckbox = async (deckName: string, items: { name: string; quantity: number; foil: boolean; set: string }[]) => {
-    if (!user) {
-      // Offline mode fallback: just append directly to deckbox state
-      const nextDeckbox = [...deckbox];
-      for (const item of items) {
-        try {
-          const res = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(item.name)}&set=${encodeURIComponent(item.set.toLowerCase())}`);
-          const card = res.data;
-          const images = getCardImages(card);
-          const isSelectedIdx = nextDeckbox.findIndex(c => c.name.toLowerCase() === card.name.toLowerCase());
-          if (isSelectedIdx > -1) {
-            nextDeckbox[isSelectedIdx].qty = (nextDeckbox[isSelectedIdx].qty || 1) + item.quantity;
-          } else {
-            nextDeckbox.push({
-              userId: "offline",
-              name: card.name,
-              scryfallId: card.id,
-              addedAt: new Date().toISOString() as any,
-              thumb: images.small || "",
-              highRes: images.normal || images.large || "",
-              from_deck: deckName || activeDeckName || "Manual",
-              qty: item.quantity,
-              prices: card.prices || {},
-              foil: item.foil
-            } as any);
-          }
-        } catch (e) {
-          console.error("Offline import failed keying card", item.name, e);
-        }
-      }
-      setDeckbox(nextDeckbox);
-      return;
-    }
-
-    // Online mode: firestore sync using setDoc with merge for maximum resilience
-    for (const item of items) {
-      const cardId = item.name.replace(/[^a-zA-Z0-9]/g, "_");
-      const cardRef = doc(db, "users", user.uid, "deckbox", cardId);
-      
-      try {
-        const res = await axios.get(`/api/sf/cards/named?exact=${encodeURIComponent(item.name)}&set=${encodeURIComponent(item.set.toLowerCase())}`);
-        const card = res.data;
-        const images = getCardImages(card);
-        
-        const isSelected = deckbox.find((c) => c.name.toLowerCase() === card.name.toLowerCase());
-        
-        if (isSelected) {
-          // Update quantity using merge setDoc
-          const newQty = (isSelected.qty || 1) + item.quantity;
-          await setDoc(cardRef, { qty: newQty }, { merge: true }).catch((err) =>
-            handleFirestoreError(
-              err,
-              OperationType.WRITE,
-              `users/${user.uid}/deckbox/${cardId}`,
-            ),
-          );
-        } else {
-          // Create new record
-          const newCard = {
-            userId: user.uid,
-            name: card.name,
-            scryfallId: card.id || cardId,
-            addedAt: serverTimestamp(),
-            thumb: images.small || "",
-            highRes: images.normal || images.large || "",
-            from_deck: deckName || activeDeckName || "Manual",
-            qty: item.quantity,
-            prices: card.prices || {},
-            foil: item.foil
-          };
-          await setDoc(cardRef, newCard).catch((err) =>
-            handleFirestoreError(
-              err,
-              OperationType.WRITE,
-              `users/${user.uid}/deckbox/${cardId}`,
-            ),
-          );
-        }
-      } catch (err: any) {
-        console.error("Could not upload card to synchronized storage", item.name, err);
       }
     }
   };
@@ -4489,15 +4403,6 @@ Return ONLY JSON. No markdown backticks.`;
                   Bears
                 </span>
               </button>
-              <button
-                onClick={() => handleFunModeClick("card_scanner")}
-                className="flex flex-col items-center justify-center py-2.5 rune-panel text-cyan-500/85 hover:text-cyan-400 font-magic border border-cyan-500/20 hover:border-cyan-500/40 bg-cyan-500/5 hover:bg-cyan-500/10 transition-all group z-10 gap-1 rounded-md col-span-2 mt-1 sm:mt-0 sm:col-span-1"
-              >
-                <Camera className="w-4 h-4 group-hover:scale-110 transition-transform text-cyan-400 animate-pulse" />
-                <span className="text-[7.5px] font-magic font-bold uppercase tracking-widest leading-none">
-                  Card Scanner
-                </span>
-              </button>
             </div>
           </section>
         </div>
@@ -4624,7 +4529,6 @@ Return ONLY JSON. No markdown backticks.`;
                 <div className="grid grid-cols-2 gap-3">
                   {[
                     { label: 'Codie Codex', icon: Sparkles, action: () => handleFunModeClick("codie"), color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10 border-cyan-400/30' },
-                    { label: 'Card Scanner', icon: Camera, action: () => handleFunModeClick("card_scanner"), color: 'text-cyan-400 border-cyan-500/20 bg-cyan-500/10 border-cyan-400/30 font-bold' },
                     { label: 'Expansions', icon: Library, action: () => handleFunModeClick("sets"), color: 'text-violet-400 border-violet-500/20 bg-violet-500/5' },
                     { label: 'Calendar', icon: Calendar, action: () => handleFunModeClick("calendar"), color: 'text-orange-400 border-orange-500/20 bg-orange-500/5' },
                     { label: 'Sheriff', icon: Shield, action: () => handleFunModeClick("sheriff"), color: 'text-amber-400 border-amber-500/20 bg-amber-500/5' },
@@ -4699,43 +4603,7 @@ Return ONLY JSON. No markdown backticks.`;
 
                   <div className="flex-1 overflow-y-auto p-5 space-y-4 md:space-y-0 md:grid md:grid-cols-2 md:gap-6 custom-scrollbar">
                     {/* Left Column: Identity Section */}
-                    <div className="space-y-4">
-                      {/* Interactive Visual Profile Card for mobile & desktop */}
-                      <div className="flex flex-col sm:flex-row items-center gap-4 p-4 rounded-2xl bg-gradient-to-br from-orange-500/10 via-black/40 to-transparent border border-orange-500/20 shadow-xl relative overflow-hidden group">
-                        <div className="absolute top-0 right-0 w-24 h-24 bg-orange-500/5 rounded-full blur-2xl pointer-events-none" />
-                        
-                        <div className="relative shrink-0">
-                          <div className="w-16 h-16 rounded-full border-2 border-orange-500/60 p-0.5 overflow-hidden flex items-center justify-center bg-black/55 shadow-[0_0_15px_rgba(249,115,22,0.25)] transition-transform group-hover:scale-105 duration-300">
-                            {photoURL || user?.photoURL ? (
-                              <img src={photoURL || user?.photoURL || ""} alt="Profile" className="w-full h-full object-cover rounded-full" />
-                            ) : (
-                              <User className="w-7 h-7 text-white/20" />
-                            )}
-                          </div>
-                          <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-orange-500 flex items-center justify-center text-black text-[9px] font-mono font-bold">
-                            {deckbox.length > 0 ? deckbox.length : 0}
-                          </div>
-                        </div>
-
-                        <div className="text-center sm:text-left min-w-0 flex-1">
-                          <h4 className="text-[13px] font-magic font-black text-white tracking-widest uppercase truncate">
-                            {userName || user?.displayName || "Unregistered Mage"}
-                          </h4>
-                          <span className="inline-block text-[8px] font-magic text-orange-400 border border-orange-500/30 bg-orange-500/5 px-2.5 py-0.5 rounded-md uppercase tracking-[0.15em] mt-1 font-extrabold">
-                            {userTitle || "Leyline Initiate"}
-                          </span>
-                          <div className="flex flex-wrap justify-center sm:justify-start items-center gap-2 mt-2">
-                            <span className="text-[7px] font-mono text-white/30 uppercase">
-                              {user ? `UID: ${user.uid.slice(0, 8)}...` : "LOCAL GUEST BOX"}
-                            </span>
-                            <span className="w-1 h-1 bg-white/20 rounded-full" />
-                            <span className="text-[7.5px] font-mono text-cyan-400 uppercase">
-                              Active Leyline
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
+                    <div className="space-y-3.5">
                       <h4 className="text-[10px] font-magic font-black text-white/40 uppercase tracking-[0.2em] flex items-center gap-1.5 pb-2 border-b border-white/5">
                         <User className="w-3 h-3 text-orange-400" /> Identity Matrix
                       </h4>
@@ -5247,17 +5115,6 @@ Return ONLY JSON. No markdown backticks.`;
             )}
 
             {viewMode === "judge" && <JudgeView user={user} />}
-
-            {viewMode === "card_scanner" && (
-              <div className="h-full w-full absolute inset-0 z-40 bg-[#020404]">
-                <CardScanner 
-                  setViewMode={(v) => setViewMode(v as any)} 
-                  showMessage={showMessage}
-                  onAddCardsToDeck={importScannedCardsToDeckbox}
-                  savedDecks={savedDecks}
-                />
-              </div>
-            )}
 
             {viewMode === "manage_decks" && (
               <div className="space-y-4 lg:space-y-6 lg:p-8 relative">
@@ -7048,16 +6905,6 @@ function RoadmapModal({
   }, [isOpen, initialShowChangelog]);
 
   const releaseHistory = [
-    {
-      version: "V2.12.0",
-      date: "June 6, 2026",
-      changes: [
-        "ManaBox Camera Clone: Introduced a high-fidelity mobile Card Scanner module with guide borders, custom resolution framing, and real-time Leyline AI card identification using Gemini 3.5 Flash.",
-        "Set Locking & Foil Overrides: Added dedicated controls to lock scanning searches to specific expansion codes and toggle forced foil premium highlights across scanning lists.",
-        "OneDrive and CSV Syncing: Backported OneDrive cloud uploads and clipboard extraction tools to generate fully integrated CSVs compatible with Moxfield, ManaBox, and TappedOut.",
-        "Precision Deckbox Import: Implemented direct inline inventory additions, syncing card counts and print details seamlessly across logged-in account leylines or offline storages."
-      ]
-    },
     {
       version: "V2.11.0",
       date: "June 5, 2026",
@@ -9464,7 +9311,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[2000] bg-[#09090b] flex flex-col font-sans text-zinc-100 overflow-y-auto lg:overflow-hidden">
+    <div className="fixed inset-0 z-[2000] bg-[#09090b] flex flex-col font-sans text-zinc-100 overflow-hidden">
       {/* Top Status Bar */}
       <div className="h-20 border-b border-zinc-800 bg-[#0c0c0e] flex items-center justify-between px-6 shrink-0 relative overflow-hidden">
         <div className="absolute inset-x-0 bottom-0 h-px bg-gradient-to-r from-orange-500/20 via-orange-500/5 to-transparent" />
@@ -9593,7 +9440,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
 
         {/* Main Content Area */}
         <div className={`
-          flex-1 flex flex-col relative overflow-y-auto lg:overflow-hidden bg-[#121215] z-10 transition-all duration-350
+          flex-1 flex flex-col relative overflow-hidden bg-[#121215] z-10 transition-all duration-350
           ${showUserDetailsMobile ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'}
         `}>
           {/* Background Decor */}
@@ -9602,7 +9449,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
           </div>
 
           {selectedUser ? (
-            <div className="flex-1 flex flex-col overflow-y-auto lg:overflow-hidden relative z-10">
+            <div className="flex-1 flex flex-col overflow-hidden relative z-10">
                {/* User Header */}
               <div className="p-6 lg:p-8 bg-gradient-to-b from-[#18181c] to-transparent border-b border-zinc-800/80 flex flex-col lg:flex-row items-center lg:items-start justify-between gap-6 lg:gap-0">
                 <div className="flex flex-col sm:flex-row items-center gap-5 sm:gap-6 text-center sm:text-left">
@@ -9666,9 +9513,9 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
               </div>
 
               {/* Data Grid */}
-              <div className="flex-1 lg:overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-px bg-zinc-800/80 shrink-0">
+              <div className="flex-1 overflow-hidden grid grid-cols-1 lg:grid-cols-2 gap-px bg-zinc-800/80 shrink-0">
                 {/* DECK REPOSITORY */}
-                <div className={`flex flex-col bg-[#121215] lg:overflow-hidden ${adminSubTab === "decks" ? "flex" : "hidden lg:flex"}`}>
+                <div className={`flex flex-col bg-[#121215] overflow-hidden ${adminSubTab === "decks" ? "flex" : "hidden lg:flex"}`}>
                    <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-[#161619]">
                       <div className="flex items-center gap-2">
                         <Database className="w-4 h-4 text-orange-500" />
@@ -9677,7 +9524,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
                       <span className="text-xs font-mono font-bold text-orange-400 bg-orange-400/5 px-2 py-0.5 border border-orange-400/20 rounded">{userDecks.length} DECKS</span>
                    </div>
                    
-                   <div className="flex-1 lg:overflow-y-auto custom-scrollbar p-4 lg:p-6 space-y-4">
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-6 space-y-4">
                       {userDecks.length === 0 && (
                         <div className="h-60 flex flex-col items-center justify-center gap-3 opacity-30 border border-dashed border-zinc-800 rounded-2xl">
                           <Library className="w-10 h-10 text-zinc-500" />
@@ -9756,7 +9603,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
                 </div>
 
                 {/* DECKBOX ARTIFACTS */}
-                <div className={`flex flex-col bg-[#121215] border-l border-zinc-800/80 lg:overflow-hidden ${adminSubTab === "deckbox" ? "flex" : "hidden lg:flex"}`}>
+                <div className={`flex flex-col bg-[#121215] border-l border-zinc-800/80 overflow-hidden ${adminSubTab === "deckbox" ? "flex" : "hidden lg:flex"}`}>
                    <div className="p-4 border-b border-zinc-800 flex items-center justify-between bg-[#161619]">
                       <div className="flex items-center gap-2">
                         <Box className="w-4 h-4 text-cyan-400" />
@@ -9765,7 +9612,7 @@ function AdminMatrix({ setViewMode }: { setViewMode: (v: any) => void }) {
                       <span className="text-xs font-mono font-bold text-cyan-400 bg-cyan-400/5 px-2 py-0.5 border border-cyan-400/20 rounded">{userDeckbox.reduce((acc, curr) => acc + (curr.qty || curr.count || 1), 0)} CARDS</span>
                    </div>
 
-                   <div className="flex-1 lg:overflow-y-auto custom-scrollbar p-4 lg:p-6 text-left">
+                   <div className="flex-1 overflow-y-auto custom-scrollbar p-4 lg:p-6 text-left">
                       <div className="grid grid-cols-1 gap-2">
                         {userDeckbox.length === 0 && (
                           <div className="h-60 flex flex-col items-center justify-center gap-3 opacity-30 border border-dashed border-zinc-800 rounded-2xl">
