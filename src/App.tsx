@@ -8751,7 +8751,7 @@ function ReleaseCalendar({
   };
 
   return (
-    <div className="h-full relative overflow-hidden flex flex-col w-full bg-transparent">
+    <div className="h-full relative overflow-y-auto lg:overflow-y-hidden flex flex-col w-full bg-transparent">
       {/* Background Runes */}
       <div 
         className="absolute inset-0 opacity-[0.05] pointer-events-none mix-blend-screen bg-center bg-cover bg-no-repeat"
@@ -8780,7 +8780,7 @@ function ReleaseCalendar({
           <RotateCw className="w-10 h-10 text-orange-500 animate-spin" />
         </div>
       ) : (
-        <div className="flex-1 relative mt-4 lg:mt-6 overflow-x-auto lg:overflow-x-visible overflow-y-hidden w-full pb-32 lg:pb-0 touch-pan-x flex items-center justify-center">
+        <div className="flex-1 min-h-[520px] lg:min-h-0 relative mt-4 lg:mt-6 overflow-x-auto lg:overflow-x-visible overflow-y-visible w-full pb-32 lg:pb-0 touch-pan-x flex items-center justify-start lg:justify-center">
           {/* Main Horizontal Timeline Line */}
           <div className="absolute left-6 right-6 lg:left-12 lg:right-12 h-[2px] bg-gradient-to-r from-transparent via-orange-500 to-amber-500 top-1/2 -translate-y-1/2 opacity-35 shadow-[0_0_30px_rgba(249,115,22,0.5)] z-0 min-w-[1240px] lg:min-w-0 lg:w-[calc(100%-6rem)]" />
 
