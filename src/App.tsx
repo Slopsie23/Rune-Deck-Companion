@@ -481,6 +481,39 @@ export default function App() {
 
   const isMobile = windowWidth < 768;
 
+  const [dpr, setDpr] = useState(typeof window !== "undefined" ? window.devicePixelRatio : 1);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const updateDpi = () => {
+      setDpr(window.devicePixelRatio);
+    };
+    window.addEventListener("resize", updateDpi);
+    
+    // Listen to media query resolution changes for sub-pixel DPI transformations
+    let mq: MediaQueryList | null = null;
+    try {
+      mq = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+      mq.addEventListener("change", updateDpi);
+      return () => {
+        window.removeEventListener("resize", updateDpi);
+        mq?.removeEventListener("change", updateDpi);
+      };
+    } catch {
+      return () => window.removeEventListener("resize", updateDpi);
+    }
+  }, [dpr]);
+
+  const computedCardMinWidth = useMemo(() => {
+    if (isMobile) return "100%";
+    // On regular HD monitors (low dpr/low scale), increase minimum width so text/art stay legible.
+    if (dpr <= 1.25) {
+      return "235px"; 
+    }
+    // UHD monitors often have higher dpr. Let standard auto recalculate.
+    return "210px";
+  }, [dpr, isMobile]);
+
   const [showRoadmap, setShowRoadmap] = useState(false);
   const [activeDeckDetailTab, setActiveDeckDetailTab] = useState<'list' | 'preview' | 'stats'>('list');
   const [roadmapInitialChangelog, setRoadmapInitialChangelog] = useState(false);
@@ -4908,7 +4941,7 @@ Return ONLY JSON. No markdown backticks.`;
                   gridTemplateColumns: isMobile 
                     ? `repeat(${cardsPerRowMobile}, 1fr)`
                     : cardsPerRowDesktop === 0 
-                      ? 'repeat(auto-fill, minmax(200px, 1fr))' 
+                      ? `repeat(auto-fill, minmax(${computedCardMinWidth}, 1fr))` 
                       : `repeat(${cardsPerRowDesktop}, 1fr)`
                 }}
               >
@@ -5029,7 +5062,7 @@ Return ONLY JSON. No markdown backticks.`;
                         onMouseEnter={() => {
                           const imgs = getCardImages(card);
                           setHoveredPreviewCard(
-                            imgs.normal || imgs.border_crop || null,
+                            imgs.large || imgs.normal || imgs.border_crop || null,
                           );
                           setHoveredPreviewPrice(card.prices?.eur || null);
                         }}
@@ -5038,12 +5071,18 @@ Return ONLY JSON. No markdown backticks.`;
                           setHoveredPreviewPrice(null);
                         }}
                         className={`
-                        h-full w-full rounded-[14px] overflow-hidden border-2 transition-all duration-300 cursor-pointer
-                        ${isSelected ? "border-orange-500 shadow-[0_0_40px_rgba(249,115,22,0.5)]" : "border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(6,182,212,0.4)]"}
-                      `}
+                          h-full w-full rounded-[14px] overflow-hidden border-2 transition-all duration-300 cursor-pointer
+                          ${isSelected ? "border-orange-500 shadow-[0_0_40px_rgba(249,115,22,0.5)]" : "border-white/10 group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(6,182,212,0.4)]"}
+                        `}
                       >
                         <img
                           src={images.normal || images.border_crop}
+                          srcSet={[
+                            images.small ? `${images.small} 150w` : "",
+                            images.normal ? `${images.normal} 488w` : "",
+                            images.large ? `${images.large} 672w` : ""
+                          ].filter(Boolean).join(", ")}
+                          sizes="(max-width: 639px) 150px, (max-width: 1023px) 235px, 280px"
                           alt={card.name}
                           className="w-full h-full object-cover"
                           loading="lazy"
@@ -5643,7 +5682,7 @@ Return ONLY JSON. No markdown backticks.`;
                           <img
                             src={hoveredPreviewCard}
                             alt="Optic Focus"
-                            className="w-[23vh] xl:w-[26vh] max-w-[70vw] h-auto object-contain rounded-[1.5rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
+                            className="w-[245px] sm:w-[275px] lg:w-[260px] xl:w-[290px] 2xl:w-[330px] max-w-[85vw] h-auto object-contain rounded-[1.5rem] shadow-[0_30px_70px_rgba(0,0,0,0.9),0_0_50px_rgba(6,182,212,0.5)] border-2 border-cyan-500/50 relative z-10 transition-transform duration-700"
                             referrerPolicy="no-referrer"
                           />
                           {hoveredPreviewPrice && (
@@ -7070,49 +7109,38 @@ function RoadmapModal({
             initial={{ scale: 0.98, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.98, opacity: 0 }}
-            className="w-full max-w-7xl bg-[#030704] border border-green-500/30 rounded-lg overflow-hidden shadow-[0_0_120px_rgba(34,197,94,0.15)] relative flex flex-col max-h-[92vh]"
+            className="w-full max-w-7xl bg-[#030704] border border-green-500/30 rounded-lg overflow-hidden shadow-[0_0_120px_rgba(34,197,94,0.15)] relative flex flex-col max-h-[95vh]"
           >
             {/* Header: Tech Bar */}
-            <div className="p-8 border-b border-green-500/20 flex items-center justify-between bg-white/[0.01]">
-              <div className="flex items-center gap-12">
-                <div className="w-16 h-16 border border-green-500/30 bg-green-500/5 flex items-center justify-center relative">
+            <div className="px-6 py-4 border-b border-green-500/20 flex items-center justify-between bg-white/[0.01] shrink-0">
+              <div className="flex items-center gap-6">
+                <div className="w-11 h-11 border border-green-500/30 bg-green-500/5 flex items-center justify-center relative">
                   <div className="absolute inset-[-1px] border border-green-500 animate-pulse opacity-20" />
-                  <Compass className="w-8 h-8 text-green-500" />
+                  <Compass className="w-5.5 h-5.5 text-green-500" />
                 </div>
                 <div>
-                  <h2 className="text-2xl font-magic font-black text-green-400 uppercase tracking-[0.5em] leading-none mb-3">
+                  <h2 className="text-lg font-magic font-black text-green-400 uppercase tracking-[0.4em] leading-none mb-1.5">
                     Deck Companion Manual // {VERSION}
                   </h2>
-                  <div className="flex items-center gap-8">
-                    <div className="flex items-center gap-4">
-                      <div className="w-2 h-2 bg-amber-500 shadow-[0_0_10px_orange]" />
-                      <p className="text-[10px] font-mono text-cyan-500/40 uppercase tracking-[0.8em]">
+                  <div className="flex items-center gap-6">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1.5 h-1.5 bg-amber-500 shadow-[0_0_8px_orange]" />
+                      <p className="text-[9px] font-mono text-cyan-500/40 uppercase tracking-[0.4em]">
                         Library_Active // Companion_Active
                       </p>
-                    </div>
-                    <div className="hidden xl:flex items-center gap-4 border-l border-white/5 pl-8">
-                      {manualSections.map((s, i) => (
-                        <button
-                          key={i}
-                          onClick={() => document.getElementById(`manual-${i}`)?.scrollIntoView({ behavior: 'smooth' })}
-                          className="text-[8px] font-magic font-black text-white/20 hover:text-green-400 uppercase tracking-widest transition-colors"
-                        >
-                          {s.group.split(' ')[0]}
-                        </button>
-                      ))}
                     </div>
                   </div>
                 </div>
               </div>
-                <button
-                  onClick={onClose}
-                  className="flex-1 lg:flex-none px-8 py-3 bg-white/5 border border-white/10 rounded-xl hover:border-red-500/40 hover:text-red-400 transition-all font-magic font-black text-[10px] text-white/40 uppercase tracking-widest"
-                >
-                  Close Manual
-                </button>
+              <button
+                onClick={onClose}
+                className="px-6 py-2 bg-white/5 border border-white/10 rounded-lg hover:border-red-500/40 hover:text-red-400 transition-all font-magic font-black text-[9px] text-white/40 uppercase tracking-widest shrink-0"
+              >
+                Close Manual
+              </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto no-scrollbar p-12 lg:p-16">
+            <div className="flex-1 overflow-y-auto no-scrollbar px-6 lg:px-8 py-5">
               <AnimatePresence mode="wait">
                 {showChangelog ? (
                   <motion.div
@@ -7120,26 +7148,26 @@ function RoadmapModal({
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -20 }}
-                    className="space-y-12"
+                    className="space-y-6"
                   >
-                    <div className="flex items-center gap-4 border-b border-white/5 pb-4">
-                      <History className="w-5 h-5 text-cyan-400" />
-                      <h3 className="text-xl font-magic font-black uppercase tracking-[0.4em] text-cyan-400">
+                    <div className="flex items-center gap-3 border-b border-white/5 pb-2">
+                      <History className="w-4 h-4 text-cyan-400" />
+                      <h3 className="text-base font-magic font-black uppercase tracking-[0.3em] text-cyan-400">
                         Release Archive
                       </h3>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {releaseHistory.map((release) => (
-                        <div key={release.version} className="rune-panel p-8 bg-white/[0.01] hover:bg-white/[0.03] transition-all group border-l-4 border-l-cyan-500/40 shadow-xl shadow-cyan-950/10">
-                          <div className="flex items-center justify-between mb-6">
-                            <span className="text-2xl font-magic font-black text-white group-hover:text-cyan-400 transition-colors uppercase tracking-widest">{release.version}</span>
-                            <span className="text-[10px] font-mono text-cyan-500/60 font-bold uppercase tracking-[0.4em]">{release.date}</span>
+                        <div key={release.version} className="rune-panel p-5 bg-white/[0.01] hover:bg-white/[0.02] transition-all group border-l-4 border-l-cyan-500/40 shadow-xl shadow-cyan-950/10">
+                          <div className="flex items-center justify-between mb-4">
+                            <span className="text-lg font-magic font-black text-white group-hover:text-cyan-400 transition-colors uppercase tracking-widest">{release.version}</span>
+                            <span className="text-[9px] font-mono text-cyan-500/60 font-bold uppercase tracking-[0.25em]">{release.date}</span>
                           </div>
-                          <ul className="space-y-4">
+                          <ul className="space-y-2.5">
                             {release.changes.map((change, i) => (
-                              <li key={i} className="flex gap-4 group/item">
-                                <span className="text-cyan-500/20 font-mono mt-1 group-hover/item:text-cyan-500 transition-colors">0{i+1}</span>
-                                <span className="text-white/40 font-sans text-sm leading-relaxed group-hover/item:text-white/70 transition-colors">{change}</span>
+                              <li key={i} className="flex gap-3 group/item">
+                                <span className="text-cyan-500/20 font-mono text-xs mt-0.5 group-hover/item:text-cyan-500 transition-colors">0{i+1}</span>
+                                <span className="text-white/40 font-sans text-xs leading-relaxed group-hover/item:text-white/70 transition-colors">{change}</span>
                               </li>
                             ))}
                           </ul>
@@ -7153,36 +7181,36 @@ function RoadmapModal({
                     initial={{ opacity: 0, x: -20 }}
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: 20 }}
-                    className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-8 gap-y-12"
+                    className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
                   >
                     {manualSections.map((section, idx) => (
-                      <div key={idx} id={`manual-${idx}`} className="flex flex-col gap-8">
-                        <div className="flex items-center gap-4 border-b border-white/5 pb-4 cursor-pointer group" onClick={() => document.getElementById(`manual-${idx}`)?.scrollIntoView({ behavior: 'smooth' })}>
+                      <div key={idx} id={`manual-${idx}`} className="flex flex-col h-full bg-white/[0.015] border border-white/5 rounded-xl shadow-lg shadow-black/30 overflow-hidden">
+                        <div className="px-4 py-2.5 bg-white/[0.03] border-b border-white/5 flex items-center justify-between">
                           <h3
-                            className={`text-[10px] font-magic font-black uppercase tracking-[0.4em] group-hover:translate-x-2 transition-all ${idx % 2 === 0 ? "text-green-400" : "text-cyan-400"}`}
+                            className={`text-[9.5px] font-magic font-black uppercase tracking-[0.25em] ${idx % 2 === 0 ? "text-green-400" : "text-cyan-400"}`}
                           >
                             {section.group}
                           </h3>
                         </div>
 
-                        <div className="flex flex-col gap-6 font-sans">
+                        <div className="flex-1 divide-y divide-white/5">
                           {section.nodes.map((node, nIdx) => (
                             <motion.div
-                              initial={{ opacity: 0, y: 10 }}
+                              initial={{ opacity: 0, y: 5 }}
                               animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: idx * 0.05 + nIdx * 0.02 }}
+                              transition={{ delay: idx * 0.03 + nIdx * 0.02 }}
                               key={nIdx}
-                              className="rune-panel p-5 bg-white/[0.02] border border-white/5 hover:border-white/10 transition-all group flex flex-col h-full"
+                              className="p-3 hover:bg-white/[0.02] transition-all group flex flex-col gap-1"
                             >
-                              <div className="flex items-center justify-between mb-3 min-h-[30px]">
-                                <span className="text-[11px] font-magic font-black text-white group-hover:text-green-400 transition-colors uppercase tracking-[0.1em]">
+                              <div className="flex items-center justify-between min-h-[16px]">
+                                <span className="text-[10px] font-magic font-black text-white group-hover:text-green-400 transition-colors uppercase tracking-[0.05em]">
                                   {node.term}
                                 </span>
                                 <span className="text-[7px] font-mono text-white/20 uppercase tracking-widest font-black">
                                   {node.flow}
                                 </span>
                               </div>
-                              <p className="text-[11px] text-white/30 leading-relaxed group-hover:text-white/50 transition-colors">
+                              <p className="text-[9.5px] text-white/30 leading-relaxed font-sans group-hover:text-white/60 transition-colors">
                                 {node.desc}
                               </p>
                             </motion.div>
@@ -7193,47 +7221,43 @@ function RoadmapModal({
                   </motion.div>
                 )}
               </AnimatePresence>
-            </div>
 
               {/* System Logic Banner */}
-              <div className="mt-24 p-12 border border-green-500/10 bg-white/[0.01] flex flex-col md:flex-row items-center justify-between gap-12 relative overflow-hidden">
-                <div className="absolute inset-0 bg-gradient-to-r from-green-500/[0.02] to-transparent pointer-events-none" />
-                <div className="flex items-center gap-10 relative z-10">
-                  <Zap className="w-12 h-12 text-green-500 animate-pulse shadow-[0_0_30px_rgba(34,197,94,0.2)]" />
+              <div className="mt-4 p-3.5 border border-green-500/15 bg-green-950/20 flex flex-col sm:flex-row items-center justify-between gap-4 rounded-xl relative overflow-hidden backdrop-blur-md">
+                <div className="absolute inset-0 bg-gradient-to-r from-green-500/[0.03] to-transparent pointer-events-none" />
+                <div className="flex items-center gap-3 relative z-10">
+                  <Zap className="w-5 h-5 text-green-400 animate-pulse shadow-[0_0_15px_rgba(34,197,94,0.3)] shrink-0" />
                   <div>
-                    <h4 className="text-xs font-magic font-black text-green-400 uppercase tracking-[0.4em] mb-3">
+                    <h4 className="text-[10px] font-magic font-black text-green-400 uppercase tracking-[0.25em] leading-none">
                       Deck Integrity Check
                     </h4>
-                    <div className="flex items-center gap-6 text-[10px] font-mono text-white/20 uppercase tracking-[0.5em]">
-                      <span>Discovery</span>
-                      <div className="w-8 h-px bg-white/5" />
-                      <span>Library</span>
-                      <div className="w-8 h-px bg-white/5" />
-                      <span>Execution</span>
-                    </div>
+                    <p className="text-[8px] font-mono text-white/30 uppercase tracking-[0.3em] mt-1 leading-none">
+                      Leyline status: Standard aligned // Protocol active
+                    </p>
                   </div>
                 </div>
-                <div className="flex gap-6 relative z-10">
+                <div className="flex gap-1.5 relative z-10">
                   {["ᚠ", "ᚢ", "ᚦ", "ᚨ", "ᚱ"].map((r) => (
                     <div
                       key={r}
-                      className="w-12 h-12 border border-white/5 flex items-center justify-center font-magic text-green-500/10 text-2xl hover:text-green-500/40 hover:border-green-500/20 transition-all cursor-default"
+                      className="w-7 h-7 border border-white/5 flex items-center justify-center font-magic text-green-500/20 text-xs hover:text-green-500/60 hover:border-green-500/30 transition-all cursor-default select-none rounded bg-black/40 shrink-0"
                     >
                       {r}
                     </div>
                   ))}
                 </div>
               </div>
+            </div>
 
             {/* Footer Bottom Bar */}
-            <div className="px-10 py-6 border-t border-white/5 bg-black/80 flex items-center justify-between">
-              <div className="flex items-center gap-8">
-                <span className="text-[10px] font-mono text-white/10 uppercase tracking-[0.8em]">
+            <div className="px-6 py-3 border-t border-white/5 bg-black/80 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-6">
+                <span className="text-[9px] font-mono text-white/10 uppercase tracking-[0.6em]">
                   My Decks Command Centre
                 </span>
                 <button
                   onClick={() => setShowChangelog(!showChangelog)}
-                  className={`flex items-center gap-2 px-4 py-1.5 rounded-lg border transition-all text-[9px] font-magic font-bold uppercase tracking-widest ${showChangelog ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-400" : "bg-white/5 border-white/10 text-white/20 hover:text-white"}`}
+                  className={`flex items-center gap-1.5 px-3 py-1 rounded-lg border transition-all text-[8px] font-magic font-bold uppercase tracking-widest ${showChangelog ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-400" : "bg-white/5 border-white/10 text-white/20 hover:text-white"}`}
                 >
                   <History className="w-3 h-3" />
                   {showChangelog ? "Show Manual" : "View History"}
@@ -7242,7 +7266,7 @@ function RoadmapModal({
               <div className="flex items-center gap-6">
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
-                  <span className="text-[10px] font-magic text-green-500/40 uppercase tracking-widest">
+                  <span className="text-[9px] font-magic text-green-500/40 uppercase tracking-widest">
                     Library Secured
                   </span>
                 </div>
@@ -9195,6 +9219,8 @@ function ManaSpinner({ className = "w-12 h-12" }: { className?: string }) {
 function getCardImages(card: any): {
   small: string;
   normal: string;
+  large: string;
+  png: string;
   border_crop: string;
   art_crop: string;
 } {
@@ -9206,6 +9232,8 @@ function getCardImages(card: any): {
   return {
     small: images.small || "",
     normal: images.normal || "",
+    large: images.large || "",
+    png: images.png || "",
     border_crop: images.border_crop || "",
     art_crop: images.art_crop || "",
   };
